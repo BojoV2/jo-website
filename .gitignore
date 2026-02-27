@@ -1,0 +1,9 @@
+node_modules
+frontend/node_modules
+frontend/dist
+.env
+npm-debug.log
+storage/templates/*
+storage/generated/*
+!storage/templates/.gitkeep
+!storage/generated/.gitkeep
