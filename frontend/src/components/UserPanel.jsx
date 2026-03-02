@@ -26,6 +26,10 @@ function toDatetimeLocal(value) {
   return `${yyyy}-${mm}-${dd}T${hh}:${min}`;
 }
 
+function nowDatetimeLocal() {
+  return toDatetimeLocal(new Date().toISOString());
+}
+
 function parseFieldOptions(raw) {
   if (Array.isArray(raw)) {
     return raw.map((v) => String(v).trim()).filter(Boolean);
@@ -338,7 +342,7 @@ export default function UserPanel({ token, user, onLogout }) {
     if (field === 'status_note') {
       setEditingValue(item.status_note || '');
     } else if (field === 'reschedule_date') {
-      setEditingValue(toDatetimeLocal(item.reschedule_date));
+      setEditingValue(toDatetimeLocal(item.reschedule_date) || nowDatetimeLocal());
     }
   }
 
@@ -435,7 +439,7 @@ export default function UserPanel({ token, user, onLogout }) {
                 <input
                   type="date"
                   value={formValues[field.field_name] || todayIsoDate()}
-                  readOnly
+                  onChange={(e) => setFormValues({ ...formValues, [field.field_name]: e.target.value })}
                   required={field.required || isRequiredIfTriggered(field, formValues)}
                 />
               ) : field.field_type === 'order_number' ? (
