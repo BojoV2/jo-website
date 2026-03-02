@@ -422,10 +422,6 @@ router.patch('/:generatedPdfId/status', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'Generated PDF not found' });
     }
 
-    if (req.user.role === 'user' && current.rows[0].user_id !== req.user.id) {
-      return res.status(403).json({ error: 'Forbidden' });
-    }
-
     const oldStatus = current.rows[0].status;
 
     const updated = await query(
@@ -517,10 +513,6 @@ router.get('/:generatedPdfId/history', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'Generated PDF not found' });
     }
 
-    if (req.user.role === 'user' && generatedPdf.rows[0].user_id !== req.user.id) {
-      return res.status(403).json({ error: 'Forbidden' });
-    }
-
     const history = await query(
       `SELECT h.id, h.generated_pdf_id, h.old_status, h.new_status, h.changed_by, h.note, h.created_at, u.name AS changed_by_name
        FROM status_history h
@@ -541,10 +533,6 @@ router.get('/:generatedPdfId/download', requireAuth, async (req, res) => {
     const record = await query('SELECT id, user_id, file_path FROM generated_pdfs WHERE id = $1', [req.params.generatedPdfId]);
     if (record.rowCount === 0) {
       return res.status(404).json({ error: 'Generated PDF not found' });
-    }
-
-    if (req.user.role === 'user' && record.rows[0].user_id !== req.user.id) {
-      return res.status(403).json({ error: 'Forbidden' });
     }
 
     const absolutePath = path.join(storageRoot, record.rows[0].file_path);

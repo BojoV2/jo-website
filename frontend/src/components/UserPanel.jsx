@@ -558,8 +558,8 @@ export default function UserPanel({ token, user, onLogout }) {
                     <td key={`${item.id}-${index}-${column}`}>{pickFieldValue(item.submitted_data, column)}</td>
                   ))}
                   <td>{new Date(item.created_at).toLocaleString()}</td>
-                  <td onDoubleClick={item.user_id === user.id ? () => startCellEdit(item, 'status_note') : undefined}>
-                    {editingCell?.id === item.id && editingCell.field === 'status_note' && item.user_id === user.id ? (
+                  <td onDoubleClick={() => startCellEdit(item, 'status_note')}>
+                    {editingCell?.id === item.id && editingCell.field === 'status_note' ? (
                       <input
                         autoFocus
                         value={editingValue}
@@ -573,8 +573,8 @@ export default function UserPanel({ token, user, onLogout }) {
                       />
                     ) : (item.status_note || '-')}
                   </td>
-                  <td onDoubleClick={item.user_id === user.id ? () => startCellEdit(item, 'reschedule_date') : undefined}>
-                    {editingCell?.id === item.id && editingCell.field === 'reschedule_date' && item.user_id === user.id ? (
+                  <td onDoubleClick={() => startCellEdit(item, 'reschedule_date')}>
+                    {editingCell?.id === item.id && editingCell.field === 'reschedule_date' ? (
                       <input
                         autoFocus
                         type="datetime-local"
@@ -593,14 +593,13 @@ export default function UserPanel({ token, user, onLogout }) {
                     <select
                       value={statusDrafts[item.id] || item.status}
                       onChange={(e) => setStatusDrafts({ ...statusDrafts, [item.id]: e.target.value })}
-                      disabled={item.user_id !== user.id}
                     >
                       {statusTabs.map((status) => (
                         <option key={status} value={status}>{status}</option>
                       ))}
                     </select>
-                    <button type="button" onClick={() => applyStatusChange(item)} disabled={item.user_id !== user.id}>Move</button>
-                    <button type="button" onClick={() => downloadWithToken(`/generated-pdfs/${item.id}/download`, token)} disabled={item.user_id !== user.id}>Download</button>
+                    <button type="button" onClick={() => applyStatusChange(item)}>Move</button>
+                    <button type="button" onClick={() => downloadWithToken(`/generated-pdfs/${item.id}/download`, token)}>Download</button>
                   </td>
                 </tr>
               ))}
