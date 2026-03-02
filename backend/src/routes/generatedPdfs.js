@@ -207,10 +207,7 @@ router.get('/', requireAuth, async (req, res) => {
       where.push(`(g.id::text ILIKE $${params.length} OR g.submitted_data::text ILIKE $${params.length} OR t.title ILIKE $${params.length} OR COALESCE(u.name,'') ILIKE $${params.length})`);
     }
 
-    if (req.user.role === 'user') {
-      params.push(req.user.id);
-      where.push(`g.user_id = $${params.length}`);
-    } else if (user_id) {
+    if (user_id) {
       params.push(user_id);
       where.push(`g.user_id = $${params.length}`);
     }
