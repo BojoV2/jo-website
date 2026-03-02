@@ -57,18 +57,22 @@ function normalizeSubmittedData(raw) {
   return {};
 }
 
-function pickFieldValue(submittedData, candidates) {
+function normalizeFieldKey(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/\s+/g, '_')
+    .replace(/[^a-z0-9_]/g, '');
+}
+
+function pickFieldValue(submittedData, fieldName) {
   const source = normalizeSubmittedData(submittedData);
-  const entries = Object.entries(source);
-  for (const candidate of candidates) {
-    const exact = source[candidate];
-    if (exact !== undefined && exact !== null && String(exact).trim() !== '') {
-      return String(exact);
-    }
+  const exact = source[fieldName];
+  if (exact !== undefined && exact !== null && String(exact).trim() !== '') {
+    return String(exact);
   }
-  for (const [key, value] of entries) {
-    const lowered = key.toLowerCase().replace(/\s+/g, '_');
-    if (candidates.includes(lowered) && value !== undefined && value !== null && String(value).trim() !== '') {
+  const target = normalizeFieldKey(fieldName);
+  for (const [key, value] of Object.entries(source)) {
+    if (normalizeFieldKey(key) === target && value !== undefined && value !== null && String(value).trim() !== '') {
       return String(value);
     }
   }
@@ -111,6 +115,10 @@ export default function UserPanel({ token, user, onLogout }) {
   const selectedTemplate = useMemo(
     () => templates.find((t) => t.id === selectedTemplateId),
     [templates, selectedTemplateId]
+  );
+  const listColumns = useMemo(
+    () => fields.slice(0, 3).map((field) => field.field_name),
+    [fields]
   );
 
   async function loadTemplates() {
@@ -534,9 +542,9 @@ export default function UserPanel({ token, user, onLogout }) {
           <table>
             <thead>
               <tr>
-                <th>Name</th>
-                <th>Address</th>
-                <th>Template</th>
+                {listColumns.map((column, index) => (
+                  <th key={`head-${index}-${column}`}>{column}</th>
+                ))}
                 <th>Created</th>
                 <th>Note</th>
                 <th>Reschedule Date</th>
@@ -546,12 +554,12 @@ export default function UserPanel({ token, user, onLogout }) {
             <tbody>
               {generated.map((item) => (
                 <tr key={item.id}>
-                  <td>{pickFieldValue(item.submitted_data, ['name', 'full_name', 'customer_name'])}</td>
-                  <td>{pickFieldValue(item.submitted_data, ['address', 'full_address', 'customer_address'])}</td>
-                  <td>{item.template_title || item.template_id}</td>
+                  {listColumns.map((column, index) => (
+                    <td key={`${item.id}-${index}-${column}`}>{pickFieldValue(item.submitted_data, column)}</td>
+                  ))}
                   <td>{new Date(item.created_at).toLocaleString()}</td>
-                  <td onDoubleClick={() => startCellEdit(item, 'status_note')}>
-                    {editingCell?.id === item.id && editingCell.field === 'status_note' ? (
+                  <td onDoubleClick={item.user_id === user.id ? () => startCellEdit(item, 'status_note') : undefined}>
+                    {editingCell?.id === item.id && editingCell.field === 'status_note' && item.user_id === user.id ? (
                       <input
                         autoFocus
                         value={editingValue}
@@ -565,8 +573,8 @@ export default function UserPanel({ token, user, onLogout }) {
                       />
                     ) : (item.status_note || '-')}
                   </td>
-                  <td onDoubleClick={() => startCellEdit(item, 'reschedule_date')}>
-                    {editingCell?.id === item.id && editingCell.field === 'reschedule_date' ? (
+                  <td onDoubleClick={item.user_id === user.id ? () => startCellEdit(item, 'reschedule_date') : undefined}>
+                    {editingCell?.id === item.id && editingCell.field === 'reschedule_date' && item.user_id === user.id ? (
                       <input
                         autoFocus
                         type="datetime-local"
@@ -585,19 +593,20 @@ export default function UserPanel({ token, user, onLogout }) {
                     <select
                       value={statusDrafts[item.id] || item.status}
                       onChange={(e) => setStatusDrafts({ ...statusDrafts, [item.id]: e.target.value })}
+                      disabled={item.user_id !== user.id}
                     >
                       {statusTabs.map((status) => (
                         <option key={status} value={status}>{status}</option>
                       ))}
                     </select>
-                    <button type="button" onClick={() => applyStatusChange(item)}>Move</button>
-                    <button type="button" onClick={() => downloadWithToken(`/generated-pdfs/${item.id}/download`, token)}>Download</button>
+                    <button type="button" onClick={() => applyStatusChange(item)} disabled={item.user_id !== user.id}>Move</button>
+                    <button type="button" onClick={() => downloadWithToken(`/generated-pdfs/${item.id}/download`, token)} disabled={item.user_id !== user.id}>Download</button>
                   </td>
                 </tr>
               ))}
               {generated.length === 0 && (
                 <tr>
-                  <td colSpan="7">No generated PDFs in this status.</td>
+                  <td colSpan={listColumns.length + 4}>No generated PDFs in this status.</td>
                 </tr>
               )}
             </tbody>
