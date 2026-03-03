@@ -1130,6 +1130,7 @@ export default function AdminPanel({ token, user, onLogout, theme = 'light', onT
 
       <section className="card">
         <h3>Template Analytics</h3>
+        <p className="muted">Monthly metrics (reset every 1st day of the month).</p>
         {analytics ? (
           <div className="grid two">
             <div className="card">

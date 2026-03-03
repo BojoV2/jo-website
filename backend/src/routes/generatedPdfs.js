@@ -13,6 +13,7 @@ const generatedDir = path.join(storageRoot, 'generated');
 fs.mkdirSync(generatedDir, { recursive: true });
 
 const allowedStatus = ['pending', 'done', 'cancelled', 'rescheduled'];
+const autoDoneNote = 'Auto-moved to done after 30 days in pending';
 
 function normalizeSubmittedData(raw) {
   if (!raw) return {};
@@ -86,6 +87,42 @@ function validateFieldValue(field, value) {
     }
   }
   return null;
+}
+
+async function autoMovePendingToDone() {
+  const moved = await query(
+    `UPDATE generated_pdfs
+     SET status = 'done',
+         status_note = CASE
+           WHEN status_note IS NULL OR status_note = '' THEN $1
+           ELSE status_note
+         END,
+         updated_at = NOW()
+     WHERE status = 'pending'
+       AND created_at <= NOW() - INTERVAL '30 days'
+     RETURNING id`,
+    [autoDoneNote]
+  );
+
+  if (moved.rowCount === 0) {
+    return 0;
+  }
+
+  const values = [];
+  const params = [];
+  for (const row of moved.rows) {
+    const base = params.length;
+    params.push(uuidv4(), row.id, autoDoneNote);
+    values.push(`($${base + 1}, $${base + 2}, 'pending', 'done', NULL, $${base + 3})`);
+  }
+
+  await query(
+    `INSERT INTO status_history (id, generated_pdf_id, old_status, new_status, changed_by, note)
+     VALUES ${values.join(',')}`,
+    params
+  );
+
+  return moved.rowCount;
 }
 
 router.post('/generate', requireAuth, async (req, res) => {
@@ -167,6 +204,8 @@ router.post('/generate', requireAuth, async (req, res) => {
 
 router.get('/', requireAuth, async (req, res) => {
   try {
+    await autoMovePendingToDone();
+
     const { template_id, status, user_id, keyword, date_from, date_to } = req.query;
     const params = [];
     const where = [];
@@ -234,9 +273,11 @@ router.get('/', requireAuth, async (req, res) => {
 
 router.get('/analytics/template/:templateId', requireAuth, async (req, res) => {
   try {
+    await autoMovePendingToDone();
+
     const { templateId } = req.params;
     const params = [templateId];
-    const where = ['template_id = $1'];
+    const where = ['template_id = $1', `created_at >= date_trunc('month', NOW())`];
 
     if (req.user.role === 'user') {
       params.push(req.user.id);
@@ -262,7 +303,8 @@ router.get('/analytics/template/:templateId', requireAuth, async (req, res) => {
 
     return res.json({
       template_id: templateId,
-      ...summary.rows[0]
+      ...summary.rows[0],
+      analytics_scope: 'month_to_date'
     });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -271,12 +313,13 @@ router.get('/analytics/template/:templateId', requireAuth, async (req, res) => {
 
 router.get('/analytics/templates', requireAuth, async (req, res) => {
   try {
+    await autoMovePendingToDone();
+
     const params = [];
-    const userFilter = req.user.role === 'user'
-      ? 'WHERE g.user_id = $1'
-      : '';
+    const where = [`g.created_at >= date_trunc('month', NOW())`];
     if (req.user.role === 'user') {
       params.push(req.user.id);
+      where.push(`g.user_id = $${params.length}`);
     }
 
     const result = await query(
@@ -291,7 +334,7 @@ router.get('/analytics/templates', requireAuth, async (req, res) => {
           END AS cancellation_rate
        FROM generated_pdfs g
        LEFT JOIN pdf_templates t ON t.id = g.template_id
-       ${userFilter}
+       WHERE ${where.join(' AND ')}
        GROUP BY g.template_id, t.title
        ORDER BY total_generated DESC`,
       params
@@ -305,6 +348,8 @@ router.get('/analytics/templates', requireAuth, async (req, res) => {
 
 router.get('/export', requireAuth, async (req, res) => {
   try {
+    await autoMovePendingToDone();
+
     const { template_id, status, format = 'csv' } = req.query;
 
     if (!template_id) {
