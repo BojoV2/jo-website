@@ -108,6 +108,10 @@ export default function UserPanel({ token, user, onLogout, theme = 'light', onTo
   const [previewPage, setPreviewPage] = useState(1);
   const [editingCell, setEditingCell] = useState(null);
   const [editingValue, setEditingValue] = useState('');
+  const [showPreviewMapper, setShowPreviewMapper] = useState(false);
+  const [analytics, setAnalytics] = useState(null);
+  const [pendingPageSize, setPendingPageSize] = useState('20');
+  const [pendingPage, setPendingPage] = useState(1);
   const [listFilters, setListFilters] = useState({
     keyword: '',
     date_from: '',
@@ -124,6 +128,21 @@ export default function UserPanel({ token, user, onLogout, theme = 'light', onTo
     () => fields.slice(0, 3).map((field) => field.field_name),
     [fields]
   );
+  const pendingTotalPages = useMemo(() => {
+    if (activeStatus !== 'pending' || pendingPageSize === 'all') {
+      return 1;
+    }
+    const pageSize = Number(pendingPageSize) || 20;
+    return Math.max(1, Math.ceil(generated.length / pageSize));
+  }, [activeStatus, pendingPageSize, generated.length]);
+  const visibleGenerated = useMemo(() => {
+    if (activeStatus !== 'pending' || pendingPageSize === 'all') {
+      return generated;
+    }
+    const pageSize = Number(pendingPageSize) || 20;
+    const start = (pendingPage - 1) * pageSize;
+    return generated.slice(start, start + pageSize);
+  }, [activeStatus, generated, pendingPage, pendingPageSize]);
 
   async function loadTemplates() {
     const data = await apiRequest('/templates', { token });
@@ -184,6 +203,15 @@ export default function UserPanel({ token, user, onLogout, theme = 'light', onTo
     setStatusDrafts(nextDrafts);
   }
 
+  async function loadAnalytics(templateId = selectedTemplateId) {
+    if (!templateId) {
+      setAnalytics(null);
+      return;
+    }
+    const data = await apiRequest(`/generated-pdfs/analytics/template/${templateId}`, { token });
+    setAnalytics(data);
+  }
+
   async function loadPdfPreview(templateId) {
     if (!templateId) {
       setPdfDoc(null);
@@ -222,9 +250,15 @@ export default function UserPanel({ token, user, onLogout, theme = 'light', onTo
   useEffect(() => {
     if (!selectedTemplateId) return;
     loadFields(selectedTemplateId).catch((err) => setMessage(err.message));
-    loadPdfPreview(selectedTemplateId).catch((err) => setMessage(err.message));
+    loadAnalytics(selectedTemplateId).catch((err) => setMessage(err.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTemplateId]);
+
+  useEffect(() => {
+    if (!selectedTemplateId || !showPreviewMapper) return;
+    loadPdfPreview(selectedTemplateId).catch((err) => setMessage(err.message));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTemplateId, showPreviewMapper]);
 
   useEffect(() => {
     if (!selectedTemplateId) {
@@ -232,9 +266,16 @@ export default function UserPanel({ token, user, onLogout, theme = 'light', onTo
       setStatusDrafts({});
       return;
     }
+    setPendingPage(1);
     loadGenerated(activeStatus, selectedTemplateId).catch((err) => setMessage(err.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeStatus, selectedTemplateId, listFilters.keyword, listFilters.date_from, listFilters.date_to]);
+
+  useEffect(() => {
+    if (pendingPage > pendingTotalPages) {
+      setPendingPage(pendingTotalPages);
+    }
+  }, [pendingPage, pendingTotalPages]);
 
   useEffect(() => {
     renderPage().catch((err) => setMessage(err.message));
@@ -306,6 +347,7 @@ export default function UserPanel({ token, user, onLogout, theme = 'light', onTo
           : 'PDF generated, auto-downloaded, and queued as pending.'
       );
       await loadGenerated('pending', selectedTemplateId);
+      await loadAnalytics(selectedTemplateId);
       setActiveStatus('pending');
     } catch (err) {
       setMessage(err.message);
@@ -329,6 +371,7 @@ export default function UserPanel({ token, user, onLogout, theme = 'light', onTo
         }
       });
       await loadGenerated(activeStatus, selectedTemplateId);
+      await loadAnalytics(selectedTemplateId);
       setMessage(`Status updated to ${nextStatus}.`);
     } catch (err) {
       setMessage(err.message);
@@ -381,6 +424,7 @@ export default function UserPanel({ token, user, onLogout, theme = 'light', onTo
       setEditingCell(null);
       setEditingValue('');
       await loadGenerated(activeStatus, selectedTemplateId);
+      await loadAnalytics(selectedTemplateId);
       setMessage('Saved.');
     } catch (err) {
       setMessage(err.message);
@@ -476,39 +520,73 @@ export default function UserPanel({ token, user, onLogout, theme = 'light', onTo
       </section>
 
       <section className="card">
-        <h3>Template Preview Mapper</h3>
-        <p className="muted">Preview where each field is placed on the PDF.</p>
-        <label>Preview Page</label>
-        <input
-          type="number"
-          min="1"
-          max={pdfMeta.pages || 1}
-          value={previewPage}
-          onChange={(e) => setPreviewPage(Number(e.target.value || 1))}
-        />
-        <div className="pdf-stage">
-          <canvas ref={canvasRef} className="pdf-canvas" />
-          <div className="pdf-overlay" style={{ width: `${renderMeta.width}px`, height: `${renderMeta.height}px` }}>
-            {fields
-              .filter((field) => Number(field.page_number) === Number(previewPage))
-              .map((field) => {
-                const left = (Number(field.x_position) / pdfMeta.width) * renderMeta.width;
-                const top = ((pdfMeta.height - Number(field.y_position) - Number(field.box_height || 0)) / pdfMeta.height) * renderMeta.height;
-                const width = (Number(field.box_width || 0) / pdfMeta.width) * renderMeta.width;
-                const height = (Number(field.box_height || 0) / pdfMeta.height) * renderMeta.height;
-                return (
-                  <div
-                    key={field.id}
-                    className="field-rect existing"
-                    style={{ left, top, width, height }}
-                    title={field.field_name}
-                  >
-                    <span>{field.field_name}</span>
-                  </div>
-                );
-              })}
+        <h3>Template Analytics</h3>
+        <p className="muted">Monthly metrics for selected template.</p>
+        {analytics ? (
+          <div className="grid two">
+            <div className="card">
+              <div><strong>Total Generated:</strong> {analytics.total_generated}</div>
+              <div><strong>Pending Backlog:</strong> {analytics.pending_backlog}</div>
+              <div><strong>Done:</strong> {analytics.done_count}</div>
+              <div><strong>Cancelled:</strong> {analytics.cancelled_count}</div>
+              <div><strong>Rescheduled:</strong> {analytics.rescheduled_count}</div>
+            </div>
+            <div className="card">
+              <div><strong>Avg Processing:</strong> {Math.round(Number(analytics.avg_processing_seconds || 0))} sec</div>
+              <div><strong>Cancellation Rate:</strong> {Number(analytics.cancellation_rate || 0).toFixed(2)}%</div>
+            </div>
           </div>
+        ) : (
+          <p className="muted">Select a template to view analytics.</p>
+        )}
+      </section>
+
+      <section className="card">
+        <div className="actions" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+          <h3>Template Preview Mapper</h3>
+          <button type="button" onClick={() => setShowPreviewMapper((prev) => !prev)}>
+            {showPreviewMapper ? 'Hide Preview' : 'Show Preview'}
+          </button>
         </div>
+        {!showPreviewMapper && (
+          <p className="muted">Preview is hidden. Click "Show Preview" if you want to see mapped field positions.</p>
+        )}
+        {showPreviewMapper && (
+          <>
+            <p className="muted">Preview where each field is placed on the PDF.</p>
+            <label>Preview Page</label>
+            <input
+              type="number"
+              min="1"
+              max={pdfMeta.pages || 1}
+              value={previewPage}
+              onChange={(e) => setPreviewPage(Number(e.target.value || 1))}
+            />
+            <div className="pdf-stage">
+              <canvas ref={canvasRef} className="pdf-canvas" />
+              <div className="pdf-overlay" style={{ width: `${renderMeta.width}px`, height: `${renderMeta.height}px` }}>
+                {fields
+                  .filter((field) => Number(field.page_number) === Number(previewPage))
+                  .map((field) => {
+                    const left = (Number(field.x_position) / pdfMeta.width) * renderMeta.width;
+                    const top = ((pdfMeta.height - Number(field.y_position) - Number(field.box_height || 0)) / pdfMeta.height) * renderMeta.height;
+                    const width = (Number(field.box_width || 0) / pdfMeta.width) * renderMeta.width;
+                    const height = (Number(field.box_height || 0) / pdfMeta.height) * renderMeta.height;
+                    return (
+                      <div
+                        key={field.id}
+                        className="field-rect existing"
+                        style={{ left, top, width, height }}
+                        title={field.field_name}
+                      >
+                        <span>{field.field_name}</span>
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+          </>
+        )}
       </section>
 
       <section className="card">
@@ -550,6 +628,29 @@ export default function UserPanel({ token, user, onLogout, theme = 'light', onTo
             </button>
           ))}
         </div>
+        {activeStatus === 'pending' && (
+          <div className="actions" style={{ alignItems: 'center', marginBottom: '10px' }}>
+            <label style={{ marginTop: 0 }}>Rows</label>
+            <select
+              value={pendingPageSize}
+              onChange={(e) => {
+                setPendingPageSize(e.target.value);
+                setPendingPage(1);
+              }}
+            >
+              <option value="20">20</option>
+              <option value="50">50</option>
+              <option value="all">All</option>
+            </select>
+            {pendingPageSize !== 'all' && (
+              <>
+                <button type="button" onClick={() => setPendingPage((p) => Math.max(1, p - 1))} disabled={pendingPage <= 1}>Prev</button>
+                <span className="muted">Page {pendingPage} / {pendingTotalPages}</span>
+                <button type="button" onClick={() => setPendingPage((p) => Math.min(pendingTotalPages, p + 1))} disabled={pendingPage >= pendingTotalPages}>Next</button>
+              </>
+            )}
+          </div>
+        )}
 
         <div className="table-wrap">
           <table>
@@ -565,7 +666,7 @@ export default function UserPanel({ token, user, onLogout, theme = 'light', onTo
               </tr>
             </thead>
             <tbody>
-              {generated.map((item) => (
+              {visibleGenerated.map((item) => (
                 <tr key={item.id}>
                   {listColumns.map((column, index) => (
                     <td key={`${item.id}-${index}-${column}`}>{pickFieldValue(item.submitted_data, column)}</td>
@@ -616,7 +717,7 @@ export default function UserPanel({ token, user, onLogout, theme = 'light', onTo
                   </td>
                 </tr>
               ))}
-              {generated.length === 0 && (
+              {visibleGenerated.length === 0 && (
                 <tr>
                   <td colSpan={listColumns.length + 4}>No generated PDFs in this status.</td>
                 </tr>

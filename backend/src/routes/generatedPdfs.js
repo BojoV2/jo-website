@@ -279,11 +279,6 @@ router.get('/analytics/template/:templateId', requireAuth, async (req, res) => {
     const params = [templateId];
     const where = ['template_id = $1', `created_at >= date_trunc('month', NOW())`];
 
-    if (req.user.role === 'user') {
-      params.push(req.user.id);
-      where.push(`user_id = $${params.length}`);
-    }
-
     const baseWhere = where.join(' AND ');
     const summary = await query(
       `SELECT
@@ -315,12 +310,7 @@ router.get('/analytics/templates', requireAuth, async (req, res) => {
   try {
     await autoMovePendingToDone();
 
-    const params = [];
     const where = [`g.created_at >= date_trunc('month', NOW())`];
-    if (req.user.role === 'user') {
-      params.push(req.user.id);
-      where.push(`g.user_id = $${params.length}`);
-    }
 
     const result = await query(
       `SELECT
@@ -337,7 +327,7 @@ router.get('/analytics/templates', requireAuth, async (req, res) => {
        WHERE ${where.join(' AND ')}
        GROUP BY g.template_id, t.title
        ORDER BY total_generated DESC`,
-      params
+      []
     );
 
     return res.json(result.rows);
