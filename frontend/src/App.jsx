@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { apiRequest, getApiBase } from './api.js';
 import LoginForm from './components/LoginForm.jsx';
 import AdminPanel from './components/AdminPanel.jsx';
@@ -14,12 +14,27 @@ function readSession() {
   }
 }
 
+function readTheme() {
+  const value = localStorage.getItem('pdfwf.theme');
+  return value === 'dark' ? 'dark' : 'light';
+}
+
 export default function App() {
   const [session, setSession] = useState(readSession());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [theme, setTheme] = useState(readTheme());
 
   const apiBase = useMemo(() => getApiBase(), []);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('pdfwf.theme', theme);
+  }, [theme]);
+
+  function toggleTheme() {
+    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+  }
 
   async function handleLogin(credentials) {
     setLoading(true);
@@ -56,14 +71,25 @@ export default function App() {
   if (!session) {
     return (
       <>
-        <LoginForm onLogin={handleLogin} loading={loading} />
+        <LoginForm
+          onLogin={handleLogin}
+          loading={loading}
+          error={error}
+          theme={theme}
+          onToggleTheme={toggleTheme}
+        />
         <div className="meta">API: {apiBase}</div>
-        {error && <div className="error-floating">{error}</div>}
       </>
     );
   }
 
-  const sharedProps = { token: session.token, user: session.user, onLogout: logout };
+  const sharedProps = {
+    token: session.token,
+    user: session.user,
+    onLogout: logout,
+    theme,
+    onToggleTheme: toggleTheme
+  };
 
   if (session.user.role === 'super_admin' || session.user.role === 'admin') {
     return <AdminPanel {...sharedProps} />;

@@ -92,7 +92,7 @@ function isRequiredIfTriggered(field, formValues) {
   return String(formValues[key] ?? '') === String(requiredIf.equals ?? '');
 }
 
-export default function UserPanel({ token, user, onLogout }) {
+export default function UserPanel({ token, user, onLogout, theme = 'light', onToggleTheme }) {
   const [templates, setTemplates] = useState([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
   const [fields, setFields] = useState([]);
@@ -396,7 +396,12 @@ export default function UserPanel({ token, user, onLogout }) {
           <h2>User Portal</h2>
           <p className="muted">{user.name} ({user.role})</p>
         </div>
-        <button onClick={onLogout}>Logout</button>
+        <div className="topbar-actions">
+          <button type="button" className="theme-btn" onClick={onToggleTheme}>
+            {theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
+          </button>
+          <button type="button" className="logout-btn" onClick={onLogout}>Logout</button>
+        </div>
       </header>
 
       {message && <div className="notice">{message}</div>}
@@ -425,20 +430,24 @@ export default function UserPanel({ token, user, onLogout }) {
             <div key={field.id}>
               <label>{field.field_name}{(field.required || isRequiredIfTriggered(field, formValues)) ? ' *' : ''}</label>
               {field.field_type === 'dropdown' ? (
-                <select
-                  value={formValues[field.field_name] || ''}
-                  onChange={(e) => setFormValues({ ...formValues, [field.field_name]: e.target.value })}
-                  required={field.required || isRequiredIfTriggered(field, formValues)}
-                >
-                  <option value="">Select {field.field_name}</option>
-                  {parseFieldOptions(field.field_options).map((option) => (
-                    <option key={option} value={option}>{option}</option>
-                  ))}
-                </select>
+                <>
+                  <input
+                    list={`dropdown-options-${field.id}`}
+                    value={formValues[field.field_name] || ''}
+                    onChange={(e) => setFormValues({ ...formValues, [field.field_name]: e.target.value })}
+                    placeholder={`Type to search or pick ${field.field_name}`}
+                    required={field.required || isRequiredIfTriggered(field, formValues)}
+                  />
+                  <datalist id={`dropdown-options-${field.id}`}>
+                    {parseFieldOptions(field.field_options).map((option) => (
+                      <option key={option} value={option} />
+                    ))}
+                  </datalist>
+                </>
               ) : field.field_type === 'date' ? (
                 <input
                   type="date"
-                  value={formValues[field.field_name] || todayIsoDate()}
+                  value={formValues[field.field_name] || ''}
                   onChange={(e) => setFormValues({ ...formValues, [field.field_name]: e.target.value })}
                   required={field.required || isRequiredIfTriggered(field, formValues)}
                 />

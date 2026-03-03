@@ -14,7 +14,7 @@ function clampRect(rect) {
   return { ...rect, width, height };
 }
 
-export default function AdminPanel({ token, user, onLogout }) {
+export default function AdminPanel({ token, user, onLogout, theme = 'light', onToggleTheme }) {
   const [templates, setTemplates] = useState([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
   const [fields, setFields] = useState([]);
@@ -691,7 +691,12 @@ export default function AdminPanel({ token, user, onLogout }) {
           <h2>Admin Console</h2>
           <p className="muted">{user.name} ({user.role})</p>
         </div>
-        <button onClick={onLogout}>Logout</button>
+        <div className="topbar-actions">
+          <button type="button" className="theme-btn" onClick={onToggleTheme}>
+            {theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
+          </button>
+          <button type="button" className="logout-btn" onClick={onLogout}>Logout</button>
+        </div>
       </header>
 
       {message && <div className="notice">{message}</div>}
