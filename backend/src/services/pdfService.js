@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 
-function computeAutoFontSize(font, text, boxWidth, boxHeight) {
+function computeAutoFontSize(font, text, boxWidth, boxHeight, manualSize = 12) {
   const heightBased = Math.max(6, Number(boxHeight) * 0.75);
   if (!boxWidth || Number(boxWidth) <= 0) {
     return heightBased;
@@ -14,7 +14,11 @@ function computeAutoFontSize(font, text, boxWidth, boxHeight) {
   }
 
   const widthBased = Number(boxWidth) / widthAtSizeOne;
-  return Math.max(6, Math.min(heightBased, widthBased));
+  const fitted = Math.min(heightBased, widthBased);
+
+  // Keep text readable: avoid shrinking too aggressively for long values.
+  const minReadable = Math.max(6, Math.min(heightBased, Number(manualSize || 12) * 0.75));
+  return Math.max(minReadable, fitted);
 }
 
 function generateOrderNumber() {
@@ -51,13 +55,15 @@ export async function generatePdfFromTemplate({ templatePath, fields, payload, o
     const autoFontEnabled = field.auto_font !== false;
 
     const resolvedSize = autoFontEnabled && field.box_height
-      ? computeAutoFontSize(font, text, field.box_width, field.box_height)
+      ? computeAutoFontSize(font, text, field.box_width, field.box_height, manualSize)
       : manualSize;
 
     page.drawText(text, {
       x: Number(field.x_position),
       y: Number(field.y_position),
       size: resolvedSize,
+      lineHeight: resolvedSize * 1.15,
+      wordBreaks: [' ', '-', '_', '/'],
       maxWidth: field.box_width ? Number(field.box_width) : undefined,
       font,
       color: rgb(0, 0, 0)

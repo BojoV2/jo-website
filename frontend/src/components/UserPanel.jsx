@@ -92,6 +92,37 @@ function isRequiredIfTriggered(field, formValues) {
   return String(formValues[key] ?? '') === String(requiredIf.equals ?? '');
 }
 
+function avatarUrl(name) {
+  const seed = encodeURIComponent(String(name || 'User'));
+  return `https://api.dicebear.com/9.x/notionists/svg?seed=${seed}`;
+}
+
+function messageTone(message) {
+  const text = String(message || '').toLowerCase();
+  if (!text) return 'is-info';
+  if (text.includes('error') || text.includes('failed') || text.includes('invalid') || text.includes('not found') || text.includes('required') || text.includes('forbidden')) {
+    return 'is-error';
+  }
+  if (text.includes('cancel') || text.includes('reschedule')) {
+    return 'is-warning';
+  }
+  return 'is-success';
+}
+
+function buildPageItems(totalPages, currentPage) {
+  const pages = [];
+  for (let i = 1; i <= totalPages; i += 1) {
+    const isEdge = i === 1 || i === totalPages;
+    const isNearCurrent = Math.abs(i - currentPage) <= 1;
+    if (isEdge || isNearCurrent) {
+      pages.push(i);
+    } else if (pages[pages.length - 1] !== '...') {
+      pages.push('...');
+    }
+  }
+  return pages;
+}
+
 export default function UserPanel({ token, user, onLogout, theme = 'light', onToggleTheme }) {
   const [templates, setTemplates] = useState([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
@@ -110,6 +141,7 @@ export default function UserPanel({ token, user, onLogout, theme = 'light', onTo
   const [editingValue, setEditingValue] = useState('');
   const [showPreviewMapper, setShowPreviewMapper] = useState(false);
   const [analytics, setAnalytics] = useState(null);
+  const [monthlyReport, setMonthlyReport] = useState([]);
   const [pendingPageSize, setPendingPageSize] = useState('20');
   const [pendingPage, setPendingPage] = useState(1);
   const [listFilters, setListFilters] = useState({
@@ -143,6 +175,10 @@ export default function UserPanel({ token, user, onLogout, theme = 'light', onTo
     const start = (pendingPage - 1) * pageSize;
     return generated.slice(start, start + pageSize);
   }, [activeStatus, generated, pendingPage, pendingPageSize]);
+  const pendingPageItems = useMemo(
+    () => buildPageItems(pendingTotalPages, pendingPage),
+    [pendingTotalPages, pendingPage]
+  );
 
   async function loadTemplates() {
     const data = await apiRequest('/templates', { token });
@@ -212,6 +248,11 @@ export default function UserPanel({ token, user, onLogout, theme = 'light', onTo
     setAnalytics(data);
   }
 
+  async function loadMonthlyReport() {
+    const data = await apiRequest('/generated-pdfs/analytics/templates/monthly?months=6', { token });
+    setMonthlyReport(data.templates || []);
+  }
+
   async function loadPdfPreview(templateId) {
     if (!templateId) {
       setPdfDoc(null);
@@ -244,6 +285,7 @@ export default function UserPanel({ token, user, onLogout, theme = 'light', onTo
 
   useEffect(() => {
     loadTemplates().catch((err) => setMessage(err.message));
+    loadMonthlyReport().catch((err) => setMessage(err.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -251,6 +293,7 @@ export default function UserPanel({ token, user, onLogout, theme = 'light', onTo
     if (!selectedTemplateId) return;
     loadFields(selectedTemplateId).catch((err) => setMessage(err.message));
     loadAnalytics(selectedTemplateId).catch((err) => setMessage(err.message));
+    loadMonthlyReport().catch((err) => setMessage(err.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTemplateId]);
 
@@ -348,6 +391,7 @@ export default function UserPanel({ token, user, onLogout, theme = 'light', onTo
       );
       await loadGenerated('pending', selectedTemplateId);
       await loadAnalytics(selectedTemplateId);
+      await loadMonthlyReport();
       setActiveStatus('pending');
     } catch (err) {
       setMessage(err.message);
@@ -372,6 +416,7 @@ export default function UserPanel({ token, user, onLogout, theme = 'light', onTo
       });
       await loadGenerated(activeStatus, selectedTemplateId);
       await loadAnalytics(selectedTemplateId);
+      await loadMonthlyReport();
       setMessage(`Status updated to ${nextStatus}.`);
     } catch (err) {
       setMessage(err.message);
@@ -425,6 +470,7 @@ export default function UserPanel({ token, user, onLogout, theme = 'light', onTo
       setEditingValue('');
       await loadGenerated(activeStatus, selectedTemplateId);
       await loadAnalytics(selectedTemplateId);
+      await loadMonthlyReport();
       setMessage('Saved.');
     } catch (err) {
       setMessage(err.message);
@@ -436,9 +482,12 @@ export default function UserPanel({ token, user, onLogout, theme = 'light', onTo
   return (
     <div className="layout">
       <header className="topbar">
-        <div>
+        <div className="profile-head">
+          <img className="avatar avatar-md" src={avatarUrl(user.name)} alt={user.name} />
+          <div>
           <h2>User Portal</h2>
           <p className="muted">{user.name} ({user.role})</p>
+          </div>
         </div>
         <div className="topbar-actions">
           <button type="button" className="theme-btn" onClick={onToggleTheme}>
@@ -448,7 +497,12 @@ export default function UserPanel({ token, user, onLogout, theme = 'light', onTo
         </div>
       </header>
 
-      {message && <div className="notice">{message}</div>}
+      {message && (
+        <div className={`notice ${messageTone(message)}`}>
+          <div className="notice-title">{messageTone(message) === 'is-error' ? 'Attention needed' : 'Update'}</div>
+          <div>{message}</div>
+        </div>
+      )}
 
       <section className="grid two">
         <div className="card">
@@ -542,6 +596,32 @@ export default function UserPanel({ token, user, onLogout, theme = 'light', onTo
       </section>
 
       <section className="card">
+        <h3>Monthly Report By Template</h3>
+        <p className="muted">How many PDFs were created per month for every template.</p>
+        <div className="report-grid">
+          {monthlyReport.map((template) => {
+            const maxValue = Math.max(1, ...template.months.map((m) => Number(m.total_generated || 0)));
+            return (
+              <div key={template.template_id} className="report-card">
+                <div className="report-head">{template.template_title}</div>
+                <div className="report-bars">
+                  {template.months.map((month) => (
+                    <div key={`${template.template_id}-${month.month_key}`} className="report-col" title={`${month.month_label}: ${month.total_generated}`}>
+                      <div className="report-bar" style={{ height: `${Math.max(8, (Number(month.total_generated || 0) / maxValue) * 100)}%` }} />
+                      <span>{month.month_label}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+          {monthlyReport.length === 0 && (
+            <p className="muted">No template report data yet.</p>
+          )}
+        </div>
+      </section>
+
+      <section className="card">
         <div className="actions" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
           <h3>Template Preview Mapper</h3>
           <button type="button" onClick={() => setShowPreviewMapper((prev) => !prev)}>
@@ -629,25 +709,46 @@ export default function UserPanel({ token, user, onLogout, theme = 'light', onTo
           ))}
         </div>
         {activeStatus === 'pending' && (
-          <div className="actions" style={{ alignItems: 'center', marginBottom: '10px' }}>
-            <label style={{ marginTop: 0 }}>Rows</label>
-            <select
-              value={pendingPageSize}
-              onChange={(e) => {
-                setPendingPageSize(e.target.value);
-                setPendingPage(1);
-              }}
-            >
-              <option value="20">20</option>
-              <option value="50">50</option>
-              <option value="all">All</option>
-            </select>
+          <div className="pagination-stack">
+            <div className="actions" style={{ alignItems: 'center', marginBottom: '8px' }}>
+              <label style={{ marginTop: 0 }}>Rows</label>
+              <select
+                value={pendingPageSize}
+                onChange={(e) => {
+                  setPendingPageSize(e.target.value);
+                  setPendingPage(1);
+                }}
+              >
+                <option value="20">20</option>
+                <option value="50">50</option>
+                <option value="all">All</option>
+              </select>
+            </div>
             {pendingPageSize !== 'all' && (
-              <>
-                <button type="button" onClick={() => setPendingPage((p) => Math.max(1, p - 1))} disabled={pendingPage <= 1}>Prev</button>
-                <span className="muted">Page {pendingPage} / {pendingTotalPages}</span>
-                <button type="button" onClick={() => setPendingPage((p) => Math.min(pendingTotalPages, p + 1))} disabled={pendingPage >= pendingTotalPages}>Next</button>
-              </>
+              <div className="pager-shell">
+                <button type="button" className="pager-nav" onClick={() => setPendingPage((p) => Math.max(1, p - 1))} disabled={pendingPage <= 1}>
+                  Previous
+                </button>
+                <div className="pager-pages">
+                  {pendingPageItems.map((item, index) => (
+                    item === '...'
+                      ? <span key={`dots-${index}`} className="pager-dots">...</span>
+                      : (
+                        <button
+                          key={`page-${item}`}
+                          type="button"
+                          className={Number(item) === pendingPage ? 'pager-page active' : 'pager-page'}
+                          onClick={() => setPendingPage(Number(item))}
+                        >
+                          {item}
+                        </button>
+                      )
+                  ))}
+                </div>
+                <button type="button" className="pager-nav" onClick={() => setPendingPage((p) => Math.min(pendingTotalPages, p + 1))} disabled={pendingPage >= pendingTotalPages}>
+                  Next
+                </button>
+              </div>
             )}
           </div>
         )}

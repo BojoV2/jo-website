@@ -336,6 +336,74 @@ router.get('/analytics/templates', requireAuth, async (req, res) => {
   }
 });
 
+router.get('/analytics/templates/monthly', requireAuth, async (req, res) => {
+  try {
+    await autoMovePendingToDone();
+
+    const rawMonths = Number(req.query.months || 6);
+    const months = Number.isFinite(rawMonths)
+      ? Math.min(Math.max(Math.trunc(rawMonths), 1), 24)
+      : 6;
+
+    const result = await query(
+      `WITH month_series AS (
+          SELECT date_trunc('month', NOW()) - (gs * INTERVAL '1 month') AS month_start
+          FROM generate_series($1::int - 1, 0, -1) AS gs
+       ),
+       template_list AS (
+          SELECT id, title
+          FROM pdf_templates
+       ),
+       counts AS (
+          SELECT
+            g.template_id,
+            date_trunc('month', g.created_at) AS month_start,
+            COUNT(*)::int AS total_generated
+          FROM generated_pdfs g
+          WHERE g.created_at >= date_trunc('month', NOW()) - (($1::int - 1) * INTERVAL '1 month')
+          GROUP BY g.template_id, date_trunc('month', g.created_at)
+       )
+       SELECT
+         t.id AS template_id,
+         t.title AS template_title,
+         TO_CHAR(m.month_start, 'YYYY-MM') AS month_key,
+         TO_CHAR(m.month_start, 'Mon YY') AS month_label,
+         COALESCE(c.total_generated, 0)::int AS total_generated
+       FROM template_list t
+       CROSS JOIN month_series m
+       LEFT JOIN counts c
+         ON c.template_id = t.id
+        AND c.month_start = m.month_start
+       ORDER BY t.title ASC, m.month_start ASC`,
+      [months]
+    );
+
+    const grouped = new Map();
+    for (const row of result.rows) {
+      const key = row.template_id;
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          template_id: row.template_id,
+          template_title: row.template_title,
+          months: []
+        });
+      }
+      grouped.get(key).months.push({
+        month_key: row.month_key,
+        month_label: row.month_label,
+        total_generated: Number(row.total_generated || 0)
+      });
+    }
+
+    return res.json({
+      months,
+      templates: Array.from(grouped.values())
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/export', requireAuth, async (req, res) => {
   try {
     await autoMovePendingToDone();

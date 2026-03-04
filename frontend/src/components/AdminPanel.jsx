@@ -14,12 +14,30 @@ function clampRect(rect) {
   return { ...rect, width, height };
 }
 
+function avatarUrl(name) {
+  const seed = encodeURIComponent(String(name || 'User'));
+  return `https://api.dicebear.com/9.x/notionists/svg?seed=${seed}`;
+}
+
+function messageTone(message) {
+  const text = String(message || '').toLowerCase();
+  if (!text) return 'is-info';
+  if (text.includes('error') || text.includes('failed') || text.includes('invalid') || text.includes('not found') || text.includes('required') || text.includes('forbidden')) {
+    return 'is-error';
+  }
+  if (text.includes('deleted') || text.includes('cancel')) {
+    return 'is-warning';
+  }
+  return 'is-success';
+}
+
 export default function AdminPanel({ token, user, onLogout, theme = 'light', onToggleTheme }) {
   const [templates, setTemplates] = useState([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
   const [fields, setFields] = useState([]);
   const [items, setItems] = useState([]);
   const [analytics, setAnalytics] = useState(null);
+  const [monthlyReport, setMonthlyReport] = useState([]);
   const [activeStatus, setActiveStatus] = useState('pending');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -135,6 +153,11 @@ export default function AdminPanel({ token, user, onLogout, theme = 'light', onT
     setAnalytics(data);
   }
 
+  async function loadMonthlyReport() {
+    const data = await apiRequest('/generated-pdfs/analytics/templates/monthly?months=6', { token });
+    setMonthlyReport(data.templates || []);
+  }
+
   async function loadPdfPreview(templateId) {
     if (!templateId) {
       setPdfDoc(null);
@@ -176,6 +199,7 @@ export default function AdminPanel({ token, user, onLogout, theme = 'light', onT
     loadTemplates().catch((err) => setMessage(err.message));
     loadUsers().catch((err) => setMessage(err.message));
     loadPresets().catch((err) => setMessage(err.message));
+    loadMonthlyReport().catch((err) => setMessage(err.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -184,6 +208,7 @@ export default function AdminPanel({ token, user, onLogout, theme = 'light', onT
     loadFields(selectedTemplateId).catch((err) => setMessage(err.message));
     loadGenerated(selectedTemplateId, activeStatus).catch((err) => setMessage(err.message));
     loadAnalytics(selectedTemplateId).catch((err) => setMessage(err.message));
+    loadMonthlyReport().catch((err) => setMessage(err.message));
     loadPdfPreview(selectedTemplateId).catch((err) => setMessage(err.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTemplateId, activeStatus, listFilters.keyword, listFilters.user_id, listFilters.date_from, listFilters.date_to]);
@@ -554,6 +579,7 @@ export default function AdminPanel({ token, user, onLogout, theme = 'light', onT
       });
       await loadGenerated(selectedTemplateId, activeStatus);
       await loadAnalytics(selectedTemplateId);
+      await loadMonthlyReport();
       setMessage(`Bulk status updated: ${ids.length} records.`);
     } catch (err) {
       setMessage(err.message);
@@ -638,6 +664,8 @@ export default function AdminPanel({ token, user, onLogout, theme = 'light', onT
         }
       });
       await loadGenerated(selectedTemplateId, activeStatus);
+      await loadAnalytics(selectedTemplateId);
+      await loadMonthlyReport();
       setMessage(`Status updated to ${status}.`);
     } catch (err) {
       setMessage(err.message);
@@ -687,9 +715,12 @@ export default function AdminPanel({ token, user, onLogout, theme = 'light', onT
   return (
     <div className="layout">
       <header className="topbar">
-        <div>
+        <div className="profile-head">
+          <img className="avatar avatar-md" src={avatarUrl(user.name)} alt={user.name} />
+          <div>
           <h2>Admin Console</h2>
           <p className="muted">{user.name} ({user.role})</p>
+          </div>
         </div>
         <div className="topbar-actions">
           <button type="button" className="theme-btn" onClick={onToggleTheme}>
@@ -699,7 +730,12 @@ export default function AdminPanel({ token, user, onLogout, theme = 'light', onT
         </div>
       </header>
 
-      {message && <div className="notice">{message}</div>}
+      {message && (
+        <div className={`notice ${messageTone(message)}`}>
+          <div className="notice-title">{messageTone(message) === 'is-error' ? 'Attention needed' : 'Update'}</div>
+          <div>{message}</div>
+        </div>
+      )}
 
       <section className="grid two">
         <form className="card" onSubmit={submitTemplate}>
@@ -824,7 +860,12 @@ export default function AdminPanel({ token, user, onLogout, theme = 'light', onT
               <tbody>
                 {users.map((u) => (
                   <tr key={u.id}>
-                    <td>{u.name}</td>
+                    <td>
+                      <div className="user-cell">
+                        <img className="avatar avatar-sm" src={avatarUrl(u.name)} alt={u.name} />
+                        <span>{u.name}</span>
+                      </div>
+                    </td>
                     <td>{u.email}</td>
                     <td>{u.role}</td>
                     <td className="actions">
@@ -1151,6 +1192,32 @@ export default function AdminPanel({ token, user, onLogout, theme = 'light', onT
       </section>
 
       <section className="card">
+        <h3>Monthly Report By Template</h3>
+        <p className="muted">How many PDFs were created per month for every template.</p>
+        <div className="report-grid">
+          {monthlyReport.map((template) => {
+            const maxValue = Math.max(1, ...template.months.map((m) => Number(m.total_generated || 0)));
+            return (
+              <div key={template.template_id} className="report-card">
+                <div className="report-head">{template.template_title}</div>
+                <div className="report-bars">
+                  {template.months.map((month) => (
+                    <div key={`${template.template_id}-${month.month_key}`} className="report-col" title={`${month.month_label}: ${month.total_generated}`}>
+                      <div className="report-bar" style={{ height: `${Math.max(8, (Number(month.total_generated || 0) / maxValue) * 100)}%` }} />
+                      <span>{month.month_label}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+          {monthlyReport.length === 0 && (
+            <p className="muted">No template report data yet.</p>
+          )}
+        </div>
+      </section>
+
+      <section className="card">
         <h3>Workflow Board ({selectedTemplate?.title || 'Select template'})</h3>
 
         <div className="tabs">
@@ -1253,7 +1320,12 @@ export default function AdminPanel({ token, user, onLogout, theme = 'light', onT
                     />
                   </td>
                   <td className="mono">{item.id.slice(0, 8)}...</td>
-                  <td>{item.user_name || item.user_id || '-'}</td>
+                  <td>
+                    <div className="user-cell">
+                      <img className="avatar avatar-sm" src={avatarUrl(item.user_name || item.user_id || 'User')} alt={item.user_name || 'User'} />
+                      <span>{item.user_name || item.user_id || '-'}</span>
+                    </div>
+                  </td>
                   <td>{new Date(item.created_at).toLocaleString()}</td>
                   <td>{item.status_note || '-'}</td>
                   <td className="actions">
