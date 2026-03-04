@@ -47,7 +47,11 @@ router.post('/', async (req, res) => {
 
 router.get('/', async (_req, res) => {
   try {
-    const users = await query('SELECT id, name, email, role, created_at FROM users ORDER BY created_at DESC');
+    const users = await query(
+      `SELECT id, name, email, role, avatar_url, last_active_at, created_at
+       FROM users
+       ORDER BY created_at DESC`
+    );
     return res.json(users.rows);
   } catch (err) {
     return res.status(500).json({ error: err.message });

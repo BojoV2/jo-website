@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiRequest, downloadWithToken, fetchArrayBuffer } from '../api.js';
 import { GlobalWorkerOptions, getDocument } from 'pdfjs-dist/build/pdf.mjs';
 import workerSrc from 'pdfjs-dist/build/pdf.worker.mjs?url';
+import ProfileSidebar from './ProfileSidebar.jsx';
+import { resolveAvatar } from '../utils/avatar.js';
 
 GlobalWorkerOptions.workerSrc = workerSrc;
 
@@ -12,11 +14,6 @@ function clampRect(rect) {
   const width = Math.max(6, rect.width);
   const height = Math.max(6, rect.height);
   return { ...rect, width, height };
-}
-
-function avatarUrl(name) {
-  const seed = encodeURIComponent(String(name || 'User'));
-  return `https://api.dicebear.com/9.x/notionists/svg?seed=${seed}`;
 }
 
 function messageTone(message) {
@@ -31,7 +28,14 @@ function messageTone(message) {
   return 'is-success';
 }
 
-export default function AdminPanel({ token, user, onLogout, theme = 'light', onToggleTheme }) {
+export default function AdminPanel({
+  token,
+  user,
+  onLogout,
+  theme = 'light',
+  onToggleTheme,
+  onSessionUserUpdate
+}) {
   const [templates, setTemplates] = useState([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
   const [fields, setFields] = useState([]);
@@ -88,6 +92,7 @@ export default function AdminPanel({ token, user, onLogout, theme = 'light', onT
   const [selectedRows, setSelectedRows] = useState({});
   const [bulkStatus, setBulkStatus] = useState('done');
   const [bulkRescheduleDate, setBulkRescheduleDate] = useState('');
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [listFilters, setListFilters] = useState({
     keyword: '',
     user_id: '',
@@ -716,10 +721,17 @@ export default function AdminPanel({ token, user, onLogout, theme = 'light', onT
     <div className="layout">
       <header className="topbar">
         <div className="profile-head">
-          <img className="avatar avatar-md" src={avatarUrl(user.name)} alt={user.name} />
+          <button
+            type="button"
+            className="avatar-trigger"
+            onClick={() => setIsSidebarOpen(true)}
+            title="Open settings"
+          >
+            <img className="avatar avatar-md" src={resolveAvatar(user)} alt={user.name} />
+          </button>
           <div>
-          <h2>Admin Console</h2>
-          <p className="muted">{user.name} ({user.role})</p>
+            <h2>Admin Console</h2>
+            <p className="muted">{user.name} ({user.role})</p>
           </div>
         </div>
         <div className="topbar-actions">
@@ -729,6 +741,13 @@ export default function AdminPanel({ token, user, onLogout, theme = 'light', onT
           <button type="button" className="logout-btn" onClick={onLogout}>Logout</button>
         </div>
       </header>
+      <ProfileSidebar
+        open={isSidebarOpen}
+        onClose={() => setIsSidebarOpen(false)}
+        token={token}
+        user={user}
+        onUserUpdated={onSessionUserUpdate}
+      />
 
       {message && (
         <div className={`notice ${messageTone(message)}`}>
@@ -862,7 +881,7 @@ export default function AdminPanel({ token, user, onLogout, theme = 'light', onT
                   <tr key={u.id}>
                     <td>
                       <div className="user-cell">
-                        <img className="avatar avatar-sm" src={avatarUrl(u.name)} alt={u.name} />
+                        <img className="avatar avatar-sm" src={resolveAvatar(u)} alt={u.name} />
                         <span>{u.name}</span>
                       </div>
                     </td>
@@ -1322,7 +1341,7 @@ export default function AdminPanel({ token, user, onLogout, theme = 'light', onT
                   <td className="mono">{item.id.slice(0, 8)}...</td>
                   <td>
                     <div className="user-cell">
-                      <img className="avatar avatar-sm" src={avatarUrl(item.user_name || item.user_id || 'User')} alt={item.user_name || 'User'} />
+                      <img className="avatar avatar-sm" src={resolveAvatar({ name: item.user_name || item.user_id || 'User', avatar_url: item.user_avatar_url })} alt={item.user_name || 'User'} />
                       <span>{item.user_name || item.user_id || '-'}</span>
                     </div>
                   </td>

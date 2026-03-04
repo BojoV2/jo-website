@@ -3,9 +3,14 @@ CREATE TABLE IF NOT EXISTS users (
     name VARCHAR(150) NOT NULL,
     email VARCHAR(150) UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
+    avatar_url TEXT,
+    last_active_at TIMESTAMP,
     role VARCHAR(20) CHECK (role IN ('super_admin', 'admin', 'user')) NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active_at TIMESTAMP;
 
 CREATE TABLE IF NOT EXISTS pdf_templates (
     id UUID PRIMARY KEY,

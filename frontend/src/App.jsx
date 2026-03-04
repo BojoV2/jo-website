@@ -36,6 +36,25 @@ export default function App() {
     setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
   }
 
+  function storeSession(nextSession, mode = 'auto') {
+    const hasLocal = Boolean(localStorage.getItem('pdfwf.session'));
+    const target = mode === 'local'
+      ? 'local'
+      : mode === 'session'
+        ? 'session'
+        : hasLocal
+          ? 'local'
+          : 'session';
+
+    sessionStorage.removeItem('pdfwf.session');
+    localStorage.removeItem('pdfwf.session');
+    if (target === 'local') {
+      localStorage.setItem('pdfwf.session', JSON.stringify(nextSession));
+    } else {
+      sessionStorage.setItem('pdfwf.session', JSON.stringify(nextSession));
+    }
+  }
+
   async function handleLogin(credentials) {
     setLoading(true);
     setError('');
@@ -47,13 +66,7 @@ export default function App() {
       });
 
       const next = { token: data.token, user: data.user };
-      sessionStorage.removeItem('pdfwf.session');
-      localStorage.removeItem('pdfwf.session');
-      if (rememberMe) {
-        localStorage.setItem('pdfwf.session', JSON.stringify(next));
-      } else {
-        sessionStorage.setItem('pdfwf.session', JSON.stringify(next));
-      }
+      storeSession(next, rememberMe ? 'local' : 'session');
       setSession(next);
     } catch (err) {
       setError(err.message);
@@ -67,6 +80,35 @@ export default function App() {
     localStorage.removeItem('pdfwf.session');
     setSession(null);
   }
+
+  function handleSessionUserUpdate(nextUser) {
+    setSession((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, user: { ...prev.user, ...nextUser } };
+      storeSession(next, 'auto');
+      return next;
+    });
+  }
+
+  useEffect(() => {
+    if (!session?.token) return;
+    let cancelled = false;
+    apiRequest('/auth/me', { token: session.token })
+      .then((data) => {
+        if (cancelled || !data?.user) return;
+        handleSessionUserUpdate(data.user);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          logout();
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.token]);
 
   if (!session) {
     return (
@@ -88,7 +130,8 @@ export default function App() {
     user: session.user,
     onLogout: logout,
     theme,
-    onToggleTheme: toggleTheme
+    onToggleTheme: toggleTheme,
+    onSessionUserUpdate: handleSessionUserUpdate
   };
 
   if (session.user.role === 'super_admin' || session.user.role === 'admin') {

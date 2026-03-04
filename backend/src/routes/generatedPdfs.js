@@ -256,7 +256,8 @@ router.get('/', requireAuth, async (req, res) => {
     const result = await query(
       `SELECT g.id, g.template_id, g.user_id, g.file_path, g.submitted_data, g.status, g.status_note, g.reschedule_date, g.created_at, g.updated_at,
               t.title AS template_title,
-              u.name AS user_name
+              u.name AS user_name,
+              u.avatar_url AS user_avatar_url
        FROM generated_pdfs g
        LEFT JOIN pdf_templates t ON t.id = g.template_id
        LEFT JOIN users u ON u.id = g.user_id

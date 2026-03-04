@@ -21,6 +21,9 @@ services:
       - db
     env_file:
       - ./backend/.env
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@db:5432/pdf_workflow
+      STORAGE_ROOT: /app/storage
     ports:
       - "8080:8080"
     volumes:
