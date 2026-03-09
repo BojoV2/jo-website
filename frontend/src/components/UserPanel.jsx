@@ -207,6 +207,41 @@ export default function UserPanel({
     () => buildPageItems(pendingTotalPages, pendingPage),
     [pendingTotalPages, pendingPage]
   );
+  const analyticsItems = useMemo(() => {
+    if (!analytics) return [];
+    return [
+      {
+        label: 'Total Generated',
+        value: analytics.total_generated ?? 0,
+        meta: 'This month'
+      },
+      {
+        label: 'Pending Backlog',
+        value: analytics.pending_backlog ?? 0,
+        meta: 'Awaiting action'
+      },
+      {
+        label: 'Done',
+        value: analytics.done_count ?? 0,
+        meta: 'Completed'
+      },
+      {
+        label: 'Cancelled',
+        value: analytics.cancelled_count ?? 0,
+        meta: `${Number(analytics.cancellation_rate || 0).toFixed(2)}% rate`
+      },
+      {
+        label: 'Rescheduled',
+        value: analytics.rescheduled_count ?? 0,
+        meta: 'Moved forward'
+      },
+      {
+        label: 'Avg Processing',
+        value: `${Math.round(Number(analytics.avg_processing_seconds || 0))} sec`,
+        meta: 'Done records only'
+      }
+    ];
+  }, [analytics]);
 
   async function loadTemplates() {
     const data = await apiRequest('/templates', { token });
@@ -555,14 +590,29 @@ export default function UserPanel({
       <section className="grid two">
         <div className="card">
           <h3>Choose Template</h3>
-          <select value={selectedTemplateId} onChange={(e) => setSelectedTemplateId(e.target.value)}>
-            <option value="">Select template</option>
+          <div className="template-stack" role="list" aria-label="Templates">
             {templates.map((tpl) => (
-              <option key={tpl.id} value={tpl.id}>{tpl.title}</option>
+              <button
+                key={tpl.id}
+                type="button"
+                role="listitem"
+                className={tpl.id === selectedTemplateId ? 'template-stack-item active' : 'template-stack-item'}
+                onClick={() => setSelectedTemplateId(tpl.id)}
+                title={`${tpl.title}${tpl.description ? ` - ${tpl.description}` : ''}`}
+              >
+                <span className="template-stack-title">{tpl.title}</span>
+                <span className="template-stack-desc">{tpl.description || 'No description.'}</span>
+              </button>
             ))}
-          </select>
+            {templates.length === 0 && (
+              <div className="template-stack-empty">No templates available.</div>
+            )}
+          </div>
           {selectedTemplate && (
-            <p className="muted">{selectedTemplate.description || 'No description.'}</p>
+            <div className="template-stack-summary">
+              <span className="template-stack-summary-title">{selectedTemplate.title}</span>
+              <span className="template-stack-summary-desc">{selectedTemplate.description || 'No description.'}</span>
+            </div>
           )}
           <div className="actions" style={{ marginTop: '10px' }}>
             <button type="button" onClick={() => exportMyTemplateData('csv')} disabled={!selectedTemplateId}>Export My Data CSV</button>
@@ -632,20 +682,16 @@ export default function UserPanel({
 
       <section className="card">
         <h3>Template Analytics</h3>
-        <p className="muted">Monthly metrics for selected template.</p>
+        <p className="muted">Current month metrics for the selected template.</p>
         {analytics ? (
-          <div className="grid two">
-            <div className="card">
-              <div><strong>Total Generated:</strong> {analytics.total_generated}</div>
-              <div><strong>Pending Backlog:</strong> {analytics.pending_backlog}</div>
-              <div><strong>Done:</strong> {analytics.done_count}</div>
-              <div><strong>Cancelled:</strong> {analytics.cancelled_count}</div>
-              <div><strong>Rescheduled:</strong> {analytics.rescheduled_count}</div>
-            </div>
-            <div className="card">
-              <div><strong>Avg Processing:</strong> {Math.round(Number(analytics.avg_processing_seconds || 0))} sec</div>
-              <div><strong>Cancellation Rate:</strong> {Number(analytics.cancellation_rate || 0).toFixed(2)}%</div>
-            </div>
+          <div className="analytics-strip">
+            {analyticsItems.map((item) => (
+              <div key={item.label} className="analytics-strip-item">
+                <span className="analytics-strip-label">{item.label}</span>
+                <strong className="analytics-strip-value">{item.value}</strong>
+                <span className="analytics-strip-meta">{item.meta}</span>
+              </div>
+            ))}
           </div>
         ) : (
           <p className="muted">Select a template to view analytics.</p>
