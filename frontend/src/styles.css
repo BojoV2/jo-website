@@ -651,18 +651,16 @@ button.warn {
 
 .template-stack-item {
   display: grid;
-  gap: 4px;
-  text-align: left;
-  padding: 10px 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: #f8fbff;
-  color: var(--ink);
 }
 
 .template-stack-item:hover {
-  transform: none;
-  filter: none;
   border-color: #8ab5e4;
   background: #eef5ff;
 }
@@ -671,6 +669,26 @@ button.warn {
   border-color: #2f79ca;
   background: linear-gradient(180deg, #edf5ff 0%, #e2efff 100%);
   box-shadow: inset 3px 0 0 #1770ce;
+}
+
+.template-stack-select {
+  text-align: left;
+  padding: 2px 4px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+}
+
+.template-stack-select:hover {
+  transform: none;
+  filter: none;
+}
+
+.template-stack-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .template-stack-title,
@@ -696,6 +714,35 @@ button.warn {
   font-size: 12px;
   color: var(--muted);
   line-height: 1.45;
+}
+
+.template-badge {
+  width: auto;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #0f5eb3 0%, #1387e4 100%);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.template-favorite-btn {
+  width: auto;
+  min-width: 118px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #d9e9fb;
+  color: #0f4e92;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.template-favorite-btn.active {
+  background: linear-gradient(90deg, #0f5eb3 0%, #1387e4 100%);
+  color: #fff;
 }
 
 .template-stack-empty {
@@ -1044,6 +1091,20 @@ input[list]::-webkit-calendar-picker-indicator {
   background: linear-gradient(180deg, #142d4a 0%, #18365a 100%);
   border-color: #4f88c8;
   box-shadow: inset 3px 0 0 #4d9df7;
+}
+
+:root[data-theme='dark'] .template-stack-select {
+  color: #e2ecfb;
+}
+
+:root[data-theme='dark'] .template-badge,
+:root[data-theme='dark'] .template-favorite-btn.active {
+  background: linear-gradient(90deg, #2360ac 0%, #2f86e2 100%);
+}
+
+:root[data-theme='dark'] .template-favorite-btn {
+  background: #173150;
+  color: #dcecff;
 }
 
 :root[data-theme='dark'] .template-stack-empty,

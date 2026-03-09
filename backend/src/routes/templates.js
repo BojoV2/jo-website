@@ -158,6 +158,7 @@ router.delete('/:templateId', requireAuth, requireRole('super_admin', 'admin'), 
 
     const generatedFiles = await query('SELECT file_path FROM generated_pdfs WHERE template_id = $1', [req.params.templateId]);
 
+    await query('UPDATE users SET favorite_template_id = NULL WHERE favorite_template_id = $1', [req.params.templateId]);
     await query('DELETE FROM pdf_templates WHERE id = $1', [req.params.templateId]);
 
     const templateAbsolutePath = path.join(storageRoot, templateResult.rows[0].file_path);

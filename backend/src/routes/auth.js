@@ -16,6 +16,7 @@ function mapUser(row) {
     email: row.email,
     role: row.role,
     avatar_url: row.avatar_url || null,
+    favorite_template_id: row.favorite_template_id || null,
     last_active_at: row.last_active_at || null
   };
 }
@@ -58,6 +59,7 @@ router.post('/register', async (req, res) => {
       email: normalizedEmail,
       role: 'user',
       avatar_url: null,
+      favorite_template_id: null,
       last_active_at: null
     });
   } catch (err) {
@@ -76,13 +78,13 @@ router.post('/login', async (req, res) => {
 
     const normalizedLogin = loginValue.toLowerCase();
     let result = await query(
-      'SELECT id, name, email, password_hash, role, avatar_url, last_active_at FROM users WHERE LOWER(email) = $1',
+      'SELECT id, name, email, password_hash, role, avatar_url, favorite_template_id, last_active_at FROM users WHERE LOWER(email) = $1',
       [normalizedLogin]
     );
 
     if (result.rowCount === 0) {
       result = await query(
-        'SELECT id, name, email, password_hash, role, avatar_url, last_active_at FROM users WHERE LOWER(name) = $1',
+        'SELECT id, name, email, password_hash, role, avatar_url, favorite_template_id, last_active_at FROM users WHERE LOWER(name) = $1',
         [normalizedLogin]
       );
     }
@@ -109,8 +111,7 @@ router.post('/login', async (req, res) => {
         id: user.id,
         email: user.email,
         role: user.role,
-        name: user.name,
-        avatar_url: user.avatar_url || null
+        name: user.name
       },
       process.env.JWT_SECRET,
       { expiresIn: remember_me ? '30d' : '12h' }
@@ -128,7 +129,7 @@ router.post('/login', async (req, res) => {
 router.get('/me', requireAuth, async (req, res) => {
   try {
     const result = await query(
-      'SELECT id, name, email, role, avatar_url, last_active_at FROM users WHERE id = $1',
+      'SELECT id, name, email, role, avatar_url, favorite_template_id, last_active_at FROM users WHERE id = $1',
       [req.user.id]
     );
     if (result.rowCount === 0) {
@@ -175,6 +176,20 @@ router.patch('/me', requireAuth, async (req, res) => {
       updates.push(`avatar_url = $${params.length}`);
     }
 
+    if (req.body.favorite_template_id !== undefined) {
+      const nextFavorite = String(req.body.favorite_template_id || '').trim();
+      if (nextFavorite) {
+        const template = await query('SELECT id FROM pdf_templates WHERE id = $1', [nextFavorite]);
+        if (template.rowCount === 0) {
+          return res.status(404).json({ error: 'Favorite template not found' });
+        }
+        params.push(nextFavorite);
+      } else {
+        params.push(null);
+      }
+      updates.push(`favorite_template_id = $${params.length}`);
+    }
+
     if (updates.length === 0) {
       return res.status(400).json({ error: 'No profile fields to update' });
     }
@@ -184,7 +199,7 @@ router.patch('/me', requireAuth, async (req, res) => {
       `UPDATE users
        SET ${updates.join(', ')}
        WHERE id = $${params.length}
-       RETURNING id, name, email, role, avatar_url, last_active_at`,
+       RETURNING id, name, email, role, avatar_url, favorite_template_id, last_active_at`,
       params
     );
 

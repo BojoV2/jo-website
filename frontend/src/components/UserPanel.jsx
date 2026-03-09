@@ -184,6 +184,15 @@ export default function UserPanel({
     () => templates.find((t) => t.id === selectedTemplateId),
     [templates, selectedTemplateId]
   );
+  const orderedTemplates = useMemo(() => {
+    const favoriteId = user?.favorite_template_id || '';
+    if (!favoriteId) return templates;
+    return [...templates].sort((a, b) => {
+      if (a.id === favoriteId) return -1;
+      if (b.id === favoriteId) return 1;
+      return 0;
+    });
+  }, [templates, user?.favorite_template_id]);
   const listColumns = useMemo(
     () => fields.slice(0, 3).map((field) => field.field_name),
     [fields]
@@ -246,10 +255,31 @@ export default function UserPanel({
   async function loadTemplates() {
     const data = await apiRequest('/templates', { token });
     setTemplates(data);
-    if (!selectedTemplateId && data[0]?.id) {
-      setSelectedTemplateId(data[0].id);
-    }
+    const favoriteTemplateId = user?.favorite_template_id;
+    const defaultTemplateId = favoriteTemplateId && data.some((tpl) => tpl.id === favoriteTemplateId)
+      ? favoriteTemplateId
+      : data[0]?.id || '';
+    setSelectedTemplateId((prev) => (
+      prev && data.some((tpl) => tpl.id === prev)
+        ? prev
+        : defaultTemplateId
+    ));
     return data;
+  }
+
+  async function setFavoriteTemplate(templateId) {
+    try {
+      const result = await apiRequest('/auth/me', {
+        method: 'PATCH',
+        token,
+        body: { favorite_template_id: templateId }
+      });
+      onSessionUserUpdate?.(result.user);
+      setSelectedTemplateId(templateId);
+      setMessage('Favorite template saved. It will auto-select on your next login.');
+    } catch (err) {
+      setMessage(err.message);
+    }
   }
 
   async function exportMyTemplateData(format = 'csv') {
@@ -591,18 +621,35 @@ export default function UserPanel({
         <div className="card">
           <h3>Choose Template</h3>
           <div className="template-stack" role="list" aria-label="Templates">
-            {templates.map((tpl) => (
-              <button
+            {orderedTemplates.map((tpl) => (
+              <div
                 key={tpl.id}
-                type="button"
                 role="listitem"
                 className={tpl.id === selectedTemplateId ? 'template-stack-item active' : 'template-stack-item'}
-                onClick={() => setSelectedTemplateId(tpl.id)}
-                title={`${tpl.title}${tpl.description ? ` - ${tpl.description}` : ''}`}
               >
-                <span className="template-stack-title">{tpl.title}</span>
-                <span className="template-stack-desc">{tpl.description || 'No description.'}</span>
-              </button>
+                <button
+                  type="button"
+                  className="template-stack-select"
+                  onClick={() => setSelectedTemplateId(tpl.id)}
+                  title={`${tpl.title}${tpl.description ? ` - ${tpl.description}` : ''}`}
+                >
+                  <span className="template-stack-title-row">
+                    <span className="template-stack-title">{tpl.title}</span>
+                    {user?.favorite_template_id === tpl.id && (
+                      <span className="template-badge">Favorite</span>
+                    )}
+                  </span>
+                  <span className="template-stack-desc">{tpl.description || 'No description.'}</span>
+                </button>
+                <button
+                  type="button"
+                  className={user?.favorite_template_id === tpl.id ? 'template-favorite-btn active' : 'template-favorite-btn'}
+                  onClick={() => setFavoriteTemplate(tpl.id)}
+                  disabled={user?.favorite_template_id === tpl.id}
+                >
+                  {user?.favorite_template_id === tpl.id ? 'Auto-selected' : 'Set Favorite'}
+                </button>
+              </div>
             ))}
             {templates.length === 0 && (
               <div className="template-stack-empty">No templates available.</div>
