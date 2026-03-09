@@ -51,6 +51,8 @@ export default function AdminPanel({
 
   const [uploadForm, setUploadForm] = useState({ title: '', description: '', file: null });
   const [templateEditForm, setTemplateEditForm] = useState({ title: '', description: '' });
+  const [templateReplaceFile, setTemplateReplaceFile] = useState(null);
+  const [replaceFileInputKey, setReplaceFileInputKey] = useState(0);
   const [userForm, setUserForm] = useState({
     name: '',
     email: '',
@@ -119,6 +121,7 @@ export default function AdminPanel({
     if (!selectedTemplateId && data[0]?.id) {
       setSelectedTemplateId(data[0].id);
     }
+    return data;
   }
 
   async function loadFields(templateId) {
@@ -163,13 +166,14 @@ export default function AdminPanel({
     setMonthlyReport(data.templates || []);
   }
 
-  async function loadPdfPreview(templateId) {
+  async function loadPdfPreview(templateId, cacheKey) {
     if (!templateId) {
       setPdfDoc(null);
       return;
     }
 
-    const bytes = await fetchArrayBuffer(`/templates/${templateId}/file`, token);
+    const resolvedCacheKey = cacheKey || templates.find((template) => template.id === templateId)?.version || Date.now();
+    const bytes = await fetchArrayBuffer(`/templates/${templateId}/file?cache_key=${resolvedCacheKey}`, token);
     const doc = await getDocument({ data: bytes }).promise;
     const page = await doc.getPage(1);
     const base = page.getViewport({ scale: 1 });
@@ -214,9 +218,9 @@ export default function AdminPanel({
     loadGenerated(selectedTemplateId, activeStatus).catch((err) => setMessage(err.message));
     loadAnalytics(selectedTemplateId).catch((err) => setMessage(err.message));
     loadMonthlyReport().catch((err) => setMessage(err.message));
-    loadPdfPreview(selectedTemplateId).catch((err) => setMessage(err.message));
+    loadPdfPreview(selectedTemplateId, selectedTemplate?.version).catch((err) => setMessage(err.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTemplateId, activeStatus, listFilters.keyword, listFilters.user_id, listFilters.date_from, listFilters.date_to]);
+  }, [selectedTemplateId, selectedTemplate?.version, activeStatus, listFilters.keyword, listFilters.user_id, listFilters.date_from, listFilters.date_to]);
 
   useEffect(() => {
     renderPage().catch((err) => setMessage(err.message));
@@ -443,6 +447,40 @@ export default function AdminPanel({
       });
       await loadTemplates();
       setMessage('Template updated.');
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function replaceTemplateFile() {
+    if (!selectedTemplateId) {
+      setMessage('Select a template first.');
+      return;
+    }
+    if (!templateReplaceFile) {
+      setMessage('Choose a replacement PDF file first.');
+      return;
+    }
+
+    setBusy(true);
+    setMessage('');
+    try {
+      const formData = new FormData();
+      formData.append('template', templateReplaceFile);
+      await apiRequest(`/templates/${selectedTemplateId}/file`, {
+        method: 'PUT',
+        token,
+        formData
+      });
+      setTemplateReplaceFile(null);
+      setReplaceFileInputKey((prev) => prev + 1);
+      const nextTemplates = await loadTemplates();
+      await loadFields(selectedTemplateId);
+      const nextVersion = nextTemplates.find((template) => template.id === selectedTemplateId)?.version || Date.now();
+      await loadPdfPreview(selectedTemplateId, nextVersion);
+      setMessage('Template PDF replaced. Existing mapped fields were kept.');
     } catch (err) {
       setMessage(err.message);
     } finally {
@@ -793,6 +831,7 @@ export default function AdminPanel({
             <div className="template-meta">
               <div><strong>Title:</strong> {selectedTemplate.title}</div>
               <div><strong>Description:</strong> {selectedTemplate.description || '-'}</div>
+              <div><strong>Version:</strong> {selectedTemplate.version || 1}</div>
             </div>
           )}
           {selectedTemplate && (
@@ -808,8 +847,16 @@ export default function AdminPanel({
                 value={templateEditForm.description}
                 onChange={(e) => setTemplateEditForm({ ...templateEditForm, description: e.target.value })}
               />
+              <label>Replace PDF File</label>
+              <input
+                key={replaceFileInputKey}
+                type="file"
+                accept="application/pdf"
+                onChange={(e) => setTemplateReplaceFile(e.target.files?.[0] || null)}
+              />
               <div className="actions">
                 <button type="button" onClick={updateTemplate} disabled={busy || !templateEditForm.title}>Save Template</button>
+                <button type="button" onClick={replaceTemplateFile} disabled={busy || !templateReplaceFile}>Replace PDF</button>
                 <button type="button" className="warn" onClick={deleteTemplate} disabled={busy}>Delete Template</button>
                 <button type="button" onClick={() => exportTemplateData('csv')} disabled={busy}>Export Data CSV</button>
                 <button type="button" onClick={() => exportTemplateData('json')} disabled={busy}>Export Data JSON</button>
@@ -921,6 +968,7 @@ export default function AdminPanel({
             <option value="text">text</option>
             <option value="dropdown">dropdown</option>
             <option value="date">date</option>
+            <option value="checkbox">checkbox</option>
             <option value="order_number">order_number</option>
           </select>
           {presetForm.field_type === 'dropdown' && (
@@ -1006,6 +1054,7 @@ export default function AdminPanel({
             <option value="text">text</option>
             <option value="dropdown">dropdown</option>
             <option value="date">date (today default)</option>
+            <option value="checkbox">checkbox</option>
             <option value="order_number">order number (auto)</option>
           </select>
           {fieldForm.field_type === 'dropdown' && (

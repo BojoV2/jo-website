@@ -56,6 +56,23 @@ function normalizeValidationRules(raw) {
   return raw;
 }
 
+function isCheckedCheckboxValue(value) {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value === 1;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return ['true', '1', 'yes', 'checked', 'on'].includes(normalized);
+  }
+  return false;
+}
+
+function isMissingRequiredValue(field, value) {
+  if (field.field_type === 'checkbox') {
+    return !isCheckedCheckboxValue(value);
+  }
+  return value === undefined || value === null || value === '';
+}
+
 function isConditionMet(payload, requiredIf) {
   if (!requiredIf || typeof requiredIf !== 'object') return false;
   const field = String(requiredIf.field || '').trim();
@@ -66,6 +83,10 @@ function isConditionMet(payload, requiredIf) {
 function validateFieldValue(field, value) {
   const rules = normalizeValidationRules(field.validation_rules);
   if (value === undefined || value === null || value === '') {
+    return null;
+  }
+
+  if (field.field_type === 'checkbox') {
     return null;
   }
 
@@ -150,7 +171,7 @@ router.post('/generate', requireAuth, async (req, res) => {
       const fieldValue = submitted_data[field.field_name];
       const rules = normalizeValidationRules(field.validation_rules);
       const mustRequire = field.required || isConditionMet(submitted_data, rules.required_if);
-      if (mustRequire && (fieldValue === undefined || fieldValue === null || fieldValue === '')) {
+      if (mustRequire && isMissingRequiredValue(field, fieldValue)) {
         return res.status(400).json({ error: `Required field missing: ${field.field_name}` });
       }
 
@@ -407,8 +428,6 @@ router.get('/analytics/templates/monthly', requireAuth, async (req, res) => {
 
 router.get('/export', requireAuth, async (req, res) => {
   try {
-    await autoMovePendingToDone();
-
     const { template_id, status, format = 'csv' } = req.query;
 
     if (!template_id) {
@@ -420,6 +439,8 @@ router.get('/export', requireAuth, async (req, res) => {
     if (!['csv', 'json'].includes(format)) {
       return res.status(400).json({ error: 'format must be csv or json' });
     }
+
+    await autoMovePendingToDone();
 
     const params = [template_id];
     const where = ['g.template_id = $1'];

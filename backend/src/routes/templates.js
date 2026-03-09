@@ -28,6 +28,8 @@ const upload = multer({
   }
 });
 
+const allowedFieldTypes = ['text', 'dropdown', 'date', 'order_number', 'checkbox'];
+
 function normalizeFieldOptions(fieldType, rawOptions) {
   if (fieldType !== 'dropdown') {
     return [];
@@ -219,7 +221,7 @@ router.post('/:templateId/fields', requireAuth, requireRole('super_admin', 'admi
         error: 'box_width and box_height are required and must be > 0'
       });
     }
-    if (!['text', 'dropdown', 'date', 'order_number'].includes(field_type)) {
+    if (!allowedFieldTypes.includes(field_type)) {
       return res.status(400).json({ error: 'Invalid field_type' });
     }
 
@@ -286,7 +288,7 @@ router.put('/fields/:fieldId', requireAuth, requireRole('super_admin', 'admin'),
         error: 'box_width and box_height are required and must be > 0'
       });
     }
-    if (!['text', 'dropdown', 'date', 'order_number'].includes(field_type)) {
+    if (!allowedFieldTypes.includes(field_type)) {
       return res.status(400).json({ error: 'Invalid field_type' });
     }
     const normalizedOptions = normalizeFieldOptions(field_type, field_options);
@@ -369,6 +371,43 @@ router.get('/:templateId/file', requireAuth, async (req, res) => {
   }
 });
 
+router.put('/:templateId/file', requireAuth, requireRole('super_admin', 'admin'), upload.single('template'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'template file is required' });
+    }
+
+    const existing = await query(
+      'SELECT id, title, description, file_path, version, created_by, created_at FROM pdf_templates WHERE id = $1',
+      [req.params.templateId]
+    );
+
+    if (existing.rowCount === 0) {
+      fs.unlinkSync(req.file.path);
+      return res.status(404).json({ error: 'Template not found' });
+    }
+
+    const nextFilePath = path.join('templates', req.file.filename);
+    const result = await query(
+      `UPDATE pdf_templates
+       SET file_path = $1,
+           version = COALESCE(version, 1) + 1
+       WHERE id = $2
+       RETURNING id, title, description, file_path, version, created_by, created_at`,
+      [nextFilePath, req.params.templateId]
+    );
+
+    const previousAbsolutePath = path.join(storageRoot, existing.rows[0].file_path);
+    if (fs.existsSync(previousAbsolutePath)) {
+      fs.unlinkSync(previousAbsolutePath);
+    }
+
+    return res.json(result.rows[0]);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/presets', requireAuth, async (_req, res) => {
   try {
     const result = await query(
@@ -394,7 +433,7 @@ router.post('/presets', requireAuth, requireRole('super_admin', 'admin'), async 
     if (!name || !String(name).trim()) {
       return res.status(400).json({ error: 'name is required' });
     }
-    if (!['text', 'dropdown', 'date', 'order_number'].includes(field_type)) {
+    if (!allowedFieldTypes.includes(field_type)) {
       return res.status(400).json({ error: 'Invalid field_type' });
     }
 

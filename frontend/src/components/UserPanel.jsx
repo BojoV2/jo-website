@@ -74,11 +74,17 @@ function pickFieldValue(submittedData, fieldName) {
   const source = normalizeSubmittedData(submittedData);
   const exact = source[fieldName];
   if (exact !== undefined && exact !== null && String(exact).trim() !== '') {
+    if (typeof exact === 'boolean') {
+      return exact ? 'Checked' : 'Unchecked';
+    }
     return String(exact);
   }
   const target = normalizeFieldKey(fieldName);
   for (const [key, value] of Object.entries(source)) {
     if (normalizeFieldKey(key) === target && value !== undefined && value !== null && String(value).trim() !== '') {
+      if (typeof value === 'boolean') {
+        return value ? 'Checked' : 'Unchecked';
+      }
       return String(value);
     }
   }
@@ -92,6 +98,23 @@ function isRequiredIfTriggered(field, formValues) {
   const key = String(requiredIf.field || '').trim();
   if (!key) return false;
   return String(formValues[key] ?? '') === String(requiredIf.equals ?? '');
+}
+
+function isCheckedCheckboxValue(value) {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value === 1;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return ['true', '1', 'yes', 'checked', 'on'].includes(normalized);
+  }
+  return false;
+}
+
+function isMissingRequiredValue(field, value) {
+  if (field.field_type === 'checkbox') {
+    return !isCheckedCheckboxValue(value);
+  }
+  return value === undefined || value === null || String(value).trim() === '';
 }
 
 function messageTone(message) {
@@ -191,6 +214,7 @@ export default function UserPanel({
     if (!selectedTemplateId && data[0]?.id) {
       setSelectedTemplateId(data[0].id);
     }
+    return data;
   }
 
   async function exportMyTemplateData(format = 'csv') {
@@ -219,6 +243,10 @@ export default function UserPanel({
         const key = field.field_name;
         if (field.field_type === 'date') {
           next[key] = prev[key] || todayIsoDate();
+          continue;
+        }
+        if (field.field_type === 'checkbox') {
+          next[key] = prev[key] === undefined ? false : isCheckedCheckboxValue(prev[key]);
           continue;
         }
         next[key] = prev[key] ?? '';
@@ -258,12 +286,13 @@ export default function UserPanel({
     setMonthlyReport(data.templates || []);
   }
 
-  async function loadPdfPreview(templateId) {
+  async function loadPdfPreview(templateId, cacheKey) {
     if (!templateId) {
       setPdfDoc(null);
       return;
     }
-    const bytes = await fetchArrayBuffer(`/templates/${templateId}/file`, token);
+    const resolvedCacheKey = cacheKey || templates.find((template) => template.id === templateId)?.version || Date.now();
+    const bytes = await fetchArrayBuffer(`/templates/${templateId}/file?cache_key=${resolvedCacheKey}`, token);
     const doc = await getDocument({ data: bytes }).promise;
     const page = await doc.getPage(1);
     const base = page.getViewport({ scale: 1 });
@@ -304,9 +333,9 @@ export default function UserPanel({
 
   useEffect(() => {
     if (!selectedTemplateId || !showPreviewMapper) return;
-    loadPdfPreview(selectedTemplateId).catch((err) => setMessage(err.message));
+    loadPdfPreview(selectedTemplateId, selectedTemplate?.version).catch((err) => setMessage(err.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTemplateId, showPreviewMapper]);
+  }, [selectedTemplateId, selectedTemplate?.version, showPreviewMapper]);
 
   useEffect(() => {
     if (!selectedTemplateId) {
@@ -353,10 +382,10 @@ export default function UserPanel({
         const value = formValues[field.field_name];
         const rules = field.validation_rules || {};
         const requiredNow = field.required || isRequiredIfTriggered(field, formValues);
-        if (requiredNow && (value === undefined || value === null || String(value).trim() === '')) {
+        if (requiredNow && isMissingRequiredValue(field, value)) {
           throw new Error(`Required field missing: ${field.field_name}`);
         }
-        if (value !== undefined && value !== null && String(value) !== '') {
+        if (field.field_type !== 'checkbox' && value !== undefined && value !== null && String(value) !== '') {
           const str = String(value);
           if (rules.min_length !== undefined && str.length < Number(rules.min_length)) {
             throw new Error(`${field.field_name} must be at least ${rules.min_length} characters`);
@@ -568,6 +597,15 @@ export default function UserPanel({
                   onChange={(e) => setFormValues({ ...formValues, [field.field_name]: e.target.value })}
                   required={field.required || isRequiredIfTriggered(field, formValues)}
                 />
+              ) : field.field_type === 'checkbox' ? (
+                <label className="checkbox-line">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(formValues[field.field_name])}
+                    onChange={(e) => setFormValues({ ...formValues, [field.field_name]: e.target.checked })}
+                  />
+                  Check on generated PDF
+                </label>
               ) : field.field_type === 'order_number' ? (
                 <input
                   value="Auto-generated on submit"
