@@ -8,6 +8,11 @@ import { resolveAvatar } from '../utils/avatar.js';
 GlobalWorkerOptions.workerSrc = workerSrc;
 
 const statusTabs = ['pending', 'done', 'cancelled', 'rescheduled'];
+const emptyListFilters = {
+  keyword: '',
+  date_from: '',
+  date_to: ''
+};
 
 function todayIsoDate() {
   const d = new Date();
@@ -172,11 +177,7 @@ export default function UserPanel({
   const [pendingPageSize, setPendingPageSize] = useState('20');
   const [pendingPage, setPendingPage] = useState(1);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [listFilters, setListFilters] = useState({
-    keyword: '',
-    date_from: '',
-    date_to: ''
-  });
+  const [listFilters, setListFilters] = useState(emptyListFilters);
 
   const canvasRef = useRef(null);
 
@@ -320,14 +321,14 @@ export default function UserPanel({
     });
   }
 
-  async function loadGenerated(status, templateId = selectedTemplateId) {
+  async function loadGenerated(status, templateId = selectedTemplateId, filters = listFilters) {
     const params = new URLSearchParams({ status });
     if (templateId) {
       params.set('template_id', templateId);
     }
-    if (listFilters.keyword) params.set('keyword', listFilters.keyword);
-    if (listFilters.date_from) params.set('date_from', listFilters.date_from);
-    if (listFilters.date_to) params.set('date_to', listFilters.date_to);
+    if (filters.keyword) params.set('keyword', filters.keyword);
+    if (filters.date_from) params.set('date_from', filters.date_from);
+    if (filters.date_to) params.set('date_to', filters.date_to);
     const data = await apiRequest(`/generated-pdfs?${params.toString()}`, { token });
     setGenerated(data);
     const nextDrafts = {};
@@ -387,6 +388,13 @@ export default function UserPanel({
     loadMonthlyReport().catch((err) => setMessage(err.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    const favoriteTemplateId = user?.favorite_template_id;
+    if (!favoriteTemplateId) return;
+    if (!templates.some((template) => template.id === favoriteTemplateId)) return;
+    setSelectedTemplateId((current) => (current === favoriteTemplateId ? current : favoriteTemplateId));
+  }, [templates, user?.favorite_template_id]);
 
   useEffect(() => {
     if (!selectedTemplateId) return;
@@ -488,10 +496,12 @@ export default function UserPanel({
           ? 'PDF generated. Auto-download did not start, use manual Download button in Pending.'
           : 'PDF generated, auto-downloaded, and queued as pending.'
       );
-      await loadGenerated('pending', selectedTemplateId);
+      setActiveStatus('pending');
+      setPendingPage(1);
+      setListFilters(emptyListFilters);
+      await loadGenerated('pending', selectedTemplateId, emptyListFilters);
       await loadAnalytics(selectedTemplateId);
       await loadMonthlyReport();
-      setActiveStatus('pending');
     } catch (err) {
       setMessage(err.message);
     } finally {
