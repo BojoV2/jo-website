@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { apiRequest, getApiBase } from './api.js';
 import LoginForm from './components/LoginForm.jsx';
-import AdminPanel from './components/AdminPanel.jsx';
-import UserPanel from './components/UserPanel.jsx';
+
+const AdminPanel = lazy(() => import('./components/AdminPanel.jsx'));
+const UserPanel = lazy(() => import('./components/UserPanel.jsx'));
 
 function readSession() {
   const raw = localStorage.getItem('pdfwf.session') || sessionStorage.getItem('pdfwf.session');
@@ -135,8 +136,16 @@ export default function App() {
   };
 
   if (session.user.role === 'super_admin' || session.user.role === 'admin') {
-    return <AdminPanel {...sharedProps} />;
+    return (
+      <Suspense fallback={<div className="meta">Loading admin console...</div>}>
+        <AdminPanel {...sharedProps} />
+      </Suspense>
+    );
   }
 
-  return <UserPanel {...sharedProps} />;
+  return (
+    <Suspense fallback={<div className="meta">Loading user portal...</div>}>
+      <UserPanel {...sharedProps} />
+    </Suspense>
+  );
 }

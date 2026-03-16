@@ -190,7 +190,6 @@ export default function UserPanel({
   const [editingValue, setEditingValue] = useState('');
   const [showPreviewMapper, setShowPreviewMapper] = useState(false);
   const [analytics, setAnalytics] = useState(null);
-  const [monthlyReport, setMonthlyReport] = useState([]);
   const [pendingPageSize, setPendingPageSize] = useState('20');
   const [pendingPage, setPendingPage] = useState(1);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -364,11 +363,6 @@ export default function UserPanel({
     setAnalytics(data);
   }
 
-  async function loadMonthlyReport() {
-    const data = await apiRequest('/generated-pdfs/analytics/templates/monthly?months=6', { token });
-    setMonthlyReport(data.templates || []);
-  }
-
   async function loadPdfPreview(templateId, cacheKey) {
     if (!templateId) {
       setPdfDoc(null);
@@ -402,7 +396,6 @@ export default function UserPanel({
 
   useEffect(() => {
     loadTemplates().catch((err) => setMessage(err.message));
-    loadMonthlyReport().catch((err) => setMessage(err.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -417,7 +410,6 @@ export default function UserPanel({
     if (!selectedTemplateId) return;
     loadFields(selectedTemplateId).catch((err) => setMessage(err.message));
     loadAnalytics(selectedTemplateId).catch((err) => setMessage(err.message));
-    loadMonthlyReport().catch((err) => setMessage(err.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTemplateId]);
 
@@ -520,7 +512,6 @@ export default function UserPanel({
     setListFilters(emptyListFilters);
     await loadGenerated('pending', selectedTemplateId, emptyListFilters);
     await loadAnalytics(selectedTemplateId);
-    await loadMonthlyReport();
   }
 
   function renderFormField(field, values, setValues, fieldSetKey = 'main') {
@@ -634,7 +625,6 @@ export default function UserPanel({
       });
       await loadGenerated(activeStatus, selectedTemplateId);
       await loadAnalytics(selectedTemplateId);
-      await loadMonthlyReport();
       setMessage(`Status updated to ${nextStatus}.`);
     } catch (err) {
       setMessage(err.message);
@@ -688,7 +678,6 @@ export default function UserPanel({
       setEditingValue('');
       await loadGenerated(activeStatus, selectedTemplateId);
       await loadAnalytics(selectedTemplateId);
-      await loadMonthlyReport();
       setMessage('Saved.');
     } catch (err) {
       setMessage(err.message);
@@ -816,32 +805,6 @@ export default function UserPanel({
         ) : (
           <p className="muted">Select a template to view analytics.</p>
         )}
-      </section>
-
-      <section className="card">
-        <h3>Monthly Report By Template</h3>
-        <p className="muted">How many PDFs were created per month for every template.</p>
-        <div className="report-grid">
-          {monthlyReport.map((template) => {
-            const maxValue = Math.max(1, ...template.months.map((m) => Number(m.total_generated || 0)));
-            return (
-              <div key={template.template_id} className="report-card">
-                <div className="report-head">{template.template_title}</div>
-                <div className="report-bars">
-                  {template.months.map((month) => (
-                    <div key={`${template.template_id}-${month.month_key}`} className="report-col" title={`${month.month_label}: ${month.total_generated}`}>
-                      <div className="report-bar" style={{ height: `${Math.max(8, (Number(month.total_generated || 0) / maxValue) * 100)}%` }} />
-                      <span>{month.month_label}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-          {monthlyReport.length === 0 && (
-            <p className="muted">No template report data yet.</p>
-          )}
-        </div>
       </section>
 
       <section className="card">

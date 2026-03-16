@@ -8,6 +8,13 @@ import { resolveAvatar } from '../utils/avatar.js';
 GlobalWorkerOptions.workerSrc = workerSrc;
 
 const statusTabs = ['pending', 'done', 'cancelled', 'rescheduled'];
+const adminTabs = [
+  { id: 'home', label: 'Home' },
+  { id: 'templates', label: 'Templates' },
+  { id: 'mapping', label: 'Field Mapping' },
+  { id: 'workflow', label: 'Workflow' },
+  { id: 'users', label: 'Users' }
+];
 
 function clampRect(rect) {
   if (!rect) return null;
@@ -42,6 +49,7 @@ export default function AdminPanel({
   const [items, setItems] = useState([]);
   const [analytics, setAnalytics] = useState(null);
   const [monthlyReport, setMonthlyReport] = useState([]);
+  const [activeAdminTab, setActiveAdminTab] = useState('home');
   const [activeStatus, setActiveStatus] = useState('pending');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -114,6 +122,61 @@ export default function AdminPanel({
     () => fields.filter((field) => Number(field.page_number) === Number(fieldForm.page_number)),
     [fields, fieldForm.page_number]
   );
+
+  const adminAnalyticsItems = useMemo(() => {
+    if (!analytics) return [];
+    return [
+      {
+        label: 'Total Generated',
+        value: analytics.total_generated ?? 0,
+        meta: 'This month',
+        tone: 'primary'
+      },
+      {
+        label: 'Pending Backlog',
+        value: analytics.pending_backlog ?? 0,
+        meta: 'Awaiting admin action',
+        tone: 'warning'
+      },
+      {
+        label: 'Generated Today',
+        value: analytics.today_generated ?? 0,
+        meta: 'Since midnight',
+        tone: 'accent'
+      },
+      {
+        label: 'Done',
+        value: analytics.done_count ?? 0,
+        meta: 'Completed',
+        tone: 'success'
+      },
+      {
+        label: 'Cancelled',
+        value: analytics.cancelled_count ?? 0,
+        meta: `${Number(analytics.cancellation_rate || 0).toFixed(2)}% rate`,
+        tone: 'danger'
+      },
+      {
+        label: 'Rescheduled',
+        value: analytics.rescheduled_count ?? 0,
+        meta: 'Moved forward',
+        tone: 'muted'
+      },
+      {
+        label: 'Avg Processing',
+        value: `${Math.round(Number(analytics.avg_processing_seconds || 0))} sec`,
+        meta: 'Done records only',
+        tone: 'primary'
+      }
+    ];
+  }, [analytics]);
+
+  const adminOverviewStats = useMemo(() => ([
+    { label: 'Templates', value: templates.length, meta: 'Configured PDFs' },
+    { label: 'Users', value: users.length, meta: 'Portal accounts' },
+    { label: 'Mapped Fields', value: fields.length, meta: selectedTemplate?.title || 'Current template' },
+    { label: 'Workflow Rows', value: items.length, meta: `${activeStatus} records` }
+  ]), [activeStatus, fields.length, items.length, selectedTemplate?.title, templates.length, users.length]);
 
   async function loadTemplates() {
     const data = await apiRequest('/templates', { token });
@@ -794,6 +857,58 @@ export default function AdminPanel({
         </div>
       )}
 
+      <section className="admin-hero">
+        <div className="card admin-hero-card">
+          <span className="admin-hero-kicker">Admin home</span>
+          <h3>Template operations dashboard</h3>
+          <p className="muted">Use this dashboard to monitor template activity, switch templates quickly, and open the tools for uploads, field mapping, workflow, and user management.</p>
+          <div className="actions">
+            <button type="button" onClick={() => setActiveAdminTab('templates')}>Manage Templates</button>
+            <button type="button" onClick={() => setActiveAdminTab('mapping')}>Map Fields</button>
+            <button type="button" onClick={() => setActiveAdminTab('workflow')}>Open Workflow</button>
+          </div>
+        </div>
+
+        <div className="card admin-focus-card">
+          <div className="section-heading">
+            <div>
+              <h3>Focus Template</h3>
+              <p className="muted">Pick the template used by analytics, mapping, and workflow tabs.</p>
+            </div>
+          </div>
+          <label>Selected Template</label>
+          <select value={selectedTemplateId} onChange={(e) => setSelectedTemplateId(e.target.value)}>
+            <option value="">Select template</option>
+            {templates.map((tpl) => (
+              <option key={tpl.id} value={tpl.id}>{tpl.title}</option>
+            ))}
+          </select>
+          {selectedTemplate ? (
+            <div className="template-meta">
+              <div><strong>Title:</strong> {selectedTemplate.title}</div>
+              <div><strong>Description:</strong> {selectedTemplate.description || '-'}</div>
+              <div><strong>Version:</strong> {selectedTemplate.version || 1}</div>
+            </div>
+          ) : (
+            <p className="muted">Select a template to load analytics and workflow data.</p>
+          )}
+        </div>
+      </section>
+
+      <section className="admin-nav">
+        {adminTabs.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            className={activeAdminTab === tab.id ? 'admin-nav-btn active' : 'admin-nav-btn'}
+            onClick={() => setActiveAdminTab(tab.id)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </section>
+
+      {activeAdminTab === 'templates' && (
       <section className="grid two">
         <form className="card" onSubmit={submitTemplate}>
           <h3>Upload Template</h3>
@@ -865,7 +980,9 @@ export default function AdminPanel({
           )}
         </div>
       </section>
+      )}
 
+      {activeAdminTab === 'users' && (
       <section className="grid two">
         <form className="card" onSubmit={submitUser}>
           <h3>Create User Account</h3>
@@ -948,6 +1065,19 @@ export default function AdminPanel({
               </tbody>
             </table>
           </div>
+        </div>
+      </section>
+      )}
+
+      {activeAdminTab === 'mapping' && (
+      <>
+      <section className="card admin-context-card">
+        <div>
+          <h3>Field Mapping Workspace</h3>
+          <p className="muted">{selectedTemplate ? `Currently editing ${selectedTemplate.title}.` : 'Select a template in the Templates tab before mapping fields.'}</p>
+        </div>
+        <div className="actions">
+          <button type="button" onClick={() => setActiveAdminTab('templates')}>Open Templates Tab</button>
         </div>
       </section>
 
@@ -1236,24 +1366,42 @@ export default function AdminPanel({
           </table>
         </div>
       </section>
+      </>
+      )}
+
+      {activeAdminTab === 'home' && (
+      <>
+      <section className="admin-stats-grid">
+        {adminOverviewStats.map((stat) => (
+          <div key={stat.label} className="card admin-stat-card">
+            <span className="admin-stat-label">{stat.label}</span>
+            <strong className="admin-stat-value">{stat.value}</strong>
+            <span className="admin-stat-meta">{stat.meta}</span>
+          </div>
+        ))}
+      </section>
 
       <section className="card">
-        <h3>Template Analytics</h3>
-        <p className="muted">Monthly metrics (reset every 1st day of the month).</p>
+        <div className="section-heading">
+          <div>
+            <h3>Template Analytics</h3>
+            <p className="muted">Current month metrics for the selected template.</p>
+          </div>
+          <span className="section-chip">{selectedTemplate?.title || 'No template selected'}</span>
+        </div>
         {analytics ? (
-          <div className="grid two">
-            <div className="card">
-              <div><strong>Total Generated:</strong> {analytics.total_generated}</div>
-              <div><strong>Generated Today:</strong> {analytics.today_generated ?? 0}</div>
-              <div><strong>Pending Backlog:</strong> {analytics.pending_backlog}</div>
-              <div><strong>Done:</strong> {analytics.done_count}</div>
-              <div><strong>Cancelled:</strong> {analytics.cancelled_count}</div>
-              <div><strong>Rescheduled:</strong> {analytics.rescheduled_count}</div>
-            </div>
-            <div className="card">
-              <div><strong>Avg Processing:</strong> {Math.round(Number(analytics.avg_processing_seconds || 0))} sec</div>
-              <div><strong>Cancellation Rate:</strong> {Number(analytics.cancellation_rate || 0).toFixed(2)}%</div>
-            </div>
+          <div className="analytics-strip">
+            {adminAnalyticsItems.map((item, index) => (
+              <div
+                key={item.label}
+                className={`analytics-strip-item analytics-tone-${item.tone || 'primary'}${index === 0 ? ' analytics-strip-item-featured' : ''}`}
+              >
+                <span className="analytics-strip-kicker">{selectedTemplate?.title || 'Template'}</span>
+                <span className="analytics-strip-label">{item.label}</span>
+                <strong className="analytics-strip-value">{item.value}</strong>
+                <span className="analytics-strip-meta">{item.meta}</span>
+              </div>
+            ))}
           </div>
         ) : (
           <p className="muted">Select a template to view analytics.</p>
@@ -1261,8 +1409,12 @@ export default function AdminPanel({
       </section>
 
       <section className="card">
-        <h3>Monthly Report By Template</h3>
-        <p className="muted">How many PDFs were created per month for every template.</p>
+        <div className="section-heading">
+          <div>
+            <h3>Monthly Report By Template</h3>
+            <p className="muted">How many PDFs were created per month for every template.</p>
+          </div>
+        </div>
         <div className="report-grid">
           {monthlyReport.map((template) => {
             const maxValue = Math.max(1, ...template.months.map((m) => Number(m.total_generated || 0)));
@@ -1283,6 +1435,20 @@ export default function AdminPanel({
           {monthlyReport.length === 0 && (
             <p className="muted">No template report data yet.</p>
           )}
+        </div>
+      </section>
+      </>
+      )}
+
+      {activeAdminTab === 'workflow' && (
+      <>
+      <section className="card admin-context-card">
+        <div>
+          <h3>Workflow Workspace</h3>
+          <p className="muted">{selectedTemplate ? `Managing ${selectedTemplate.title}.` : 'Select a template in the Templates tab before managing workflow.'}</p>
+        </div>
+        <div className="actions">
+          <button type="button" onClick={() => setActiveAdminTab('templates')}>Open Templates Tab</button>
         </div>
       </section>
 
@@ -1415,6 +1581,8 @@ export default function AdminPanel({
           </table>
         </div>
       </section>
+      </>
+      )}
     </div>
   );
 }

@@ -278,6 +278,133 @@ tbody tr:nth-child(even) {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.admin-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(320px, 0.9fr);
+  gap: 16px;
+}
+
+.admin-hero-card {
+  min-height: 220px;
+  display: grid;
+  align-content: end;
+  gap: 10px;
+  background:
+    radial-gradient(circle at top right, rgba(30, 140, 240, 0.18), transparent 32%),
+    linear-gradient(135deg, #0e2f57 0%, #114b86 58%, #1b7fe0 100%);
+  color: #eff7ff;
+  border: 0;
+  box-shadow: 0 22px 40px rgba(12, 45, 84, 0.2);
+}
+
+.admin-hero-card h3,
+.admin-hero-card .muted {
+  color: inherit;
+}
+
+.admin-hero-kicker {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #c7defd;
+}
+
+.admin-focus-card {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.admin-nav-btn {
+  width: auto;
+  min-width: 72px;
+  min-height: 56px;
+  padding: 0 18px;
+  border: 1px solid #b8d0ec;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--heading);
+  backdrop-filter: blur(10px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.admin-nav-btn.active {
+  border-color: #0f5eb3;
+  background: linear-gradient(90deg, #0f5eb3 0%, #1387e4 100%);
+  color: #fff;
+}
+
+.admin-nav-btn:hover,
+.admin-nav-btn:focus-visible,
+.admin-nav-btn.active:hover,
+.admin-nav-btn.active:focus-visible {
+  transform: none;
+}
+
+.admin-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.admin-stat-card {
+  display: grid;
+  gap: 6px;
+  min-height: 120px;
+  align-content: start;
+}
+
+.admin-stat-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.admin-stat-value {
+  font-family: 'Outfit', 'Plus Jakarta Sans', sans-serif;
+  font-size: 36px;
+  line-height: 1;
+  color: var(--heading);
+}
+
+.admin-stat-meta {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.admin-context-card,
+.section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.section-chip {
+  width: auto;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--primary-strong);
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+}
+
 .notice,
 .error-floating,
 .meta {
@@ -1099,6 +1226,28 @@ input[list]::-webkit-calendar-picker-indicator {
   border-color: #3474bd;
 }
 
+:root[data-theme='dark'] .admin-hero-card {
+  background:
+    radial-gradient(circle at top right, rgba(82, 162, 255, 0.18), transparent 34%),
+    linear-gradient(135deg, #122643 0%, #17365e 54%, #1d58a0 100%);
+}
+
+:root[data-theme='dark'] .admin-nav-btn {
+  background: rgba(15, 30, 51, 0.82);
+  border-color: #35577f;
+  color: #dcecff;
+}
+
+:root[data-theme='dark'] .admin-nav-btn.active {
+  background: linear-gradient(90deg, #2360ac 0%, #2f86e2 100%);
+  border-color: #4b84ca;
+}
+
+:root[data-theme='dark'] .section-chip {
+  background: #173150;
+  color: #d9eaff;
+}
+
 :root[data-theme='dark'] .pager-shell {
   background: #0f1e33;
   border-color: #2f4e72;
@@ -1217,6 +1366,11 @@ input[list]::-webkit-calendar-picker-indicator {
 }
 
 @media (max-width: 1024px) {
+  .admin-hero,
+  .admin-stats-grid {
+    grid-template-columns: 1fr;
+  }
+
   .grid.two {
     grid-template-columns: 1fr;
   }
@@ -1236,6 +1390,12 @@ input[list]::-webkit-calendar-picker-indicator {
 }
 
 @media (max-width: 720px) {
+  .admin-context-card,
+  .section-heading {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
   .analytics-strip {
     grid-template-columns: 1fr;
   }
