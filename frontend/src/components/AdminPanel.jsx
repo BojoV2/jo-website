@@ -1244,6 +1244,7 @@ export default function AdminPanel({
           <div className="grid two">
             <div className="card">
               <div><strong>Total Generated:</strong> {analytics.total_generated}</div>
+              <div><strong>Generated Today:</strong> {analytics.today_generated ?? 0}</div>
               <div><strong>Pending Backlog:</strong> {analytics.pending_backlog}</div>
               <div><strong>Done:</strong> {analytics.done_count}</div>
               <div><strong>Cancelled:</strong> {analytics.cancelled_count}</div>

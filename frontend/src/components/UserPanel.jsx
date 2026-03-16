@@ -148,6 +148,23 @@ function buildPageItems(totalPages, currentPage) {
   return pages;
 }
 
+function buildFieldValues(fieldList, previousValues = {}) {
+  const next = {};
+  for (const field of fieldList) {
+    const key = field.field_name;
+    if (field.field_type === 'date') {
+      next[key] = previousValues[key] || todayIsoDate();
+      continue;
+    }
+    if (field.field_type === 'checkbox') {
+      next[key] = previousValues[key] === undefined ? false : isCheckedCheckboxValue(previousValues[key]);
+      continue;
+    }
+    next[key] = previousValues[key] ?? '';
+  }
+  return next;
+}
+
 export default function UserPanel({
   token,
   user,
@@ -178,6 +195,8 @@ export default function UserPanel({
   const [pendingPage, setPendingPage] = useState(1);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [listFilters, setListFilters] = useState(emptyListFilters);
+  const [showManualAddModal, setShowManualAddModal] = useState(false);
+  const [manualAddValues, setManualAddValues] = useState({});
 
   const canvasRef = useRef(null);
 
@@ -223,32 +242,44 @@ export default function UserPanel({
       {
         label: 'Total Generated',
         value: analytics.total_generated ?? 0,
-        meta: 'This month'
+        meta: 'This month',
+        tone: 'primary'
       },
       {
         label: 'Pending Backlog',
         value: analytics.pending_backlog ?? 0,
-        meta: 'Awaiting action'
+        meta: 'Awaiting action',
+        tone: 'warning'
+      },
+      {
+        label: 'Generated Today',
+        value: analytics.today_generated ?? 0,
+        meta: 'Since midnight',
+        tone: 'accent'
       },
       {
         label: 'Done',
         value: analytics.done_count ?? 0,
-        meta: 'Completed'
+        meta: 'Completed',
+        tone: 'success'
       },
       {
         label: 'Cancelled',
         value: analytics.cancelled_count ?? 0,
-        meta: `${Number(analytics.cancellation_rate || 0).toFixed(2)}% rate`
+        meta: `${Number(analytics.cancellation_rate || 0).toFixed(2)}% rate`,
+        tone: 'danger'
       },
       {
         label: 'Rescheduled',
         value: analytics.rescheduled_count ?? 0,
-        meta: 'Moved forward'
+        meta: 'Moved forward',
+        tone: 'muted'
       },
       {
         label: 'Avg Processing',
         value: `${Math.round(Number(analytics.avg_processing_seconds || 0))} sec`,
-        meta: 'Done records only'
+        meta: 'Done records only',
+        tone: 'primary'
       }
     ];
   }, [analytics]);
@@ -303,22 +334,8 @@ export default function UserPanel({
     if (!templateId) return;
     const data = await apiRequest(`/templates/${templateId}/fields`, { token });
     setFields(data);
-    setFormValues((prev) => {
-      const next = {};
-      for (const field of data) {
-        const key = field.field_name;
-        if (field.field_type === 'date') {
-          next[key] = prev[key] || todayIsoDate();
-          continue;
-        }
-        if (field.field_type === 'checkbox') {
-          next[key] = prev[key] === undefined ? false : isCheckedCheckboxValue(prev[key]);
-          continue;
-        }
-        next[key] = prev[key] ?? '';
-      }
-      return next;
-    });
+    setFormValues((prev) => buildFieldValues(data, prev));
+    setManualAddValues((prev) => buildFieldValues(data, prev));
   }
 
   async function loadGenerated(status, templateId = selectedTemplateId, filters = listFilters) {
@@ -441,6 +458,129 @@ export default function UserPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pdfDoc, previewPage]);
 
+  function validateSubmissionValues(values) {
+    for (const field of fields) {
+      const value = values[field.field_name];
+      const rules = field.validation_rules || {};
+      const requiredNow = field.required || isRequiredIfTriggered(field, values);
+      if (requiredNow && isMissingRequiredValue(field, value)) {
+        throw new Error(`Required field missing: ${field.field_name}`);
+      }
+      if (field.field_type !== 'checkbox' && value !== undefined && value !== null && String(value) !== '') {
+        const str = String(value);
+        if (rules.min_length !== undefined && str.length < Number(rules.min_length)) {
+          throw new Error(`${field.field_name} must be at least ${rules.min_length} characters`);
+        }
+        if (rules.max_length !== undefined && str.length > Number(rules.max_length)) {
+          throw new Error(`${field.field_name} must be at most ${rules.max_length} characters`);
+        }
+        if (rules.regex) {
+          const re = new RegExp(String(rules.regex));
+          if (!re.test(str)) {
+            throw new Error(`${field.field_name} has invalid format`);
+          }
+        }
+      }
+    }
+  }
+
+  async function createGeneratedPdf(values, { autoDownload = true, successMessage } = {}) {
+    validateSubmissionValues(values);
+
+    const created = await apiRequest('/generated-pdfs/generate', {
+      method: 'POST',
+      token,
+      body: {
+        template_id: selectedTemplateId,
+        submitted_data: values
+      }
+    });
+
+    let autoDownloadFailed = false;
+    if (autoDownload) {
+      try {
+        await downloadWithToken(`/generated-pdfs/${created.id}/download`, token);
+      } catch (_downloadErr) {
+        autoDownloadFailed = true;
+      }
+    }
+
+    setMessage(
+      successMessage || (
+        autoDownload
+          ? (autoDownloadFailed
+            ? 'PDF generated. Auto-download did not start, use manual Download button in Pending.'
+            : 'PDF generated, auto-downloaded, and queued as pending.')
+          : 'PDF added to My Generated PDFs. Download it anytime from the list.'
+      )
+    );
+
+    setActiveStatus('pending');
+    setPendingPage(1);
+    setListFilters(emptyListFilters);
+    await loadGenerated('pending', selectedTemplateId, emptyListFilters);
+    await loadAnalytics(selectedTemplateId);
+    await loadMonthlyReport();
+  }
+
+  function renderFormField(field, values, setValues, fieldSetKey = 'main') {
+    const requiredNow = field.required || isRequiredIfTriggered(field, values);
+    const setFieldValue = (nextValue) => setValues((prev) => ({ ...prev, [field.field_name]: nextValue }));
+    const optionsListId = `${fieldSetKey}-dropdown-options-${field.id}`;
+
+    return (
+      <div key={field.id}>
+        <label>{field.field_name}{requiredNow ? ' *' : ''}</label>
+        {field.field_type === 'dropdown' ? (
+          <>
+            <input
+              list={optionsListId}
+              value={values[field.field_name] || ''}
+              onChange={(e) => setFieldValue(e.target.value)}
+              placeholder={`Type to search or pick ${field.field_name}`}
+              required={requiredNow}
+            />
+            <datalist id={optionsListId}>
+              {parseFieldOptions(field.field_options).map((option) => (
+                <option key={option} value={option} />
+              ))}
+            </datalist>
+          </>
+        ) : field.field_type === 'date' ? (
+          <input
+            type="date"
+            value={values[field.field_name] || ''}
+            onChange={(e) => setFieldValue(e.target.value)}
+            required={requiredNow}
+          />
+        ) : field.field_type === 'checkbox' ? (
+          <label className="checkbox-line">
+            <input
+              type="checkbox"
+              checked={Boolean(values[field.field_name])}
+              onChange={(e) => setFieldValue(e.target.checked)}
+            />
+            Check on generated PDF
+          </label>
+        ) : field.field_type === 'order_number' ? (
+          <input
+            value="Auto-generated on submit"
+            readOnly
+          />
+        ) : (
+          <input
+            value={values[field.field_name] || ''}
+            onChange={(e) => setFieldValue(e.target.value)}
+            minLength={field.validation_rules?.min_length ?? undefined}
+            maxLength={field.validation_rules?.max_length ?? undefined}
+            pattern={field.validation_rules?.regex || undefined}
+            required={requiredNow}
+          />
+        )}
+      </div>
+    );
+  }
+
   async function submitGeneration(e) {
     e.preventDefault();
     if (!selectedTemplateId) {
@@ -451,57 +591,26 @@ export default function UserPanel({
     setLoading(true);
     setMessage('');
     try {
-      for (const field of fields) {
-        const value = formValues[field.field_name];
-        const rules = field.validation_rules || {};
-        const requiredNow = field.required || isRequiredIfTriggered(field, formValues);
-        if (requiredNow && isMissingRequiredValue(field, value)) {
-          throw new Error(`Required field missing: ${field.field_name}`);
-        }
-        if (field.field_type !== 'checkbox' && value !== undefined && value !== null && String(value) !== '') {
-          const str = String(value);
-          if (rules.min_length !== undefined && str.length < Number(rules.min_length)) {
-            throw new Error(`${field.field_name} must be at least ${rules.min_length} characters`);
-          }
-          if (rules.max_length !== undefined && str.length > Number(rules.max_length)) {
-            throw new Error(`${field.field_name} must be at most ${rules.max_length} characters`);
-          }
-          if (rules.regex) {
-            const re = new RegExp(String(rules.regex));
-            if (!re.test(str)) {
-              throw new Error(`${field.field_name} has invalid format`);
-            }
-          }
-        }
-      }
+      await createGeneratedPdf(formValues, { autoDownload: true });
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
 
-      const created = await apiRequest('/generated-pdfs/generate', {
-        method: 'POST',
-        token,
-        body: {
-          template_id: selectedTemplateId,
-          submitted_data: formValues
-        }
-      });
+  async function submitManualAdd(e) {
+    e.preventDefault();
+    if (!selectedTemplateId) {
+      setMessage('Please select a template.');
+      return;
+    }
 
-      let autoDownloadFailed = false;
-      try {
-        await downloadWithToken(`/generated-pdfs/${created.id}/download`, token);
-      } catch (_downloadErr) {
-        autoDownloadFailed = true;
-      }
-
-      setMessage(
-        autoDownloadFailed
-          ? 'PDF generated. Auto-download did not start, use manual Download button in Pending.'
-          : 'PDF generated, auto-downloaded, and queued as pending.'
-      );
-      setActiveStatus('pending');
-      setPendingPage(1);
-      setListFilters(emptyListFilters);
-      await loadGenerated('pending', selectedTemplateId, emptyListFilters);
-      await loadAnalytics(selectedTemplateId);
-      await loadMonthlyReport();
+    setLoading(true);
+    setMessage('');
+    try {
+      await createGeneratedPdf(manualAddValues, { autoDownload: false });
+      setShowManualAddModal(false);
     } catch (err) {
       setMessage(err.message);
     } finally {
@@ -679,57 +788,7 @@ export default function UserPanel({
 
         <form className="card" onSubmit={submitGeneration}>
           <h3>Fill Form Fields</h3>
-          {fields.map((field) => (
-            <div key={field.id}>
-              <label>{field.field_name}{(field.required || isRequiredIfTriggered(field, formValues)) ? ' *' : ''}</label>
-              {field.field_type === 'dropdown' ? (
-                <>
-                  <input
-                    list={`dropdown-options-${field.id}`}
-                    value={formValues[field.field_name] || ''}
-                    onChange={(e) => setFormValues({ ...formValues, [field.field_name]: e.target.value })}
-                    placeholder={`Type to search or pick ${field.field_name}`}
-                    required={field.required || isRequiredIfTriggered(field, formValues)}
-                  />
-                  <datalist id={`dropdown-options-${field.id}`}>
-                    {parseFieldOptions(field.field_options).map((option) => (
-                      <option key={option} value={option} />
-                    ))}
-                  </datalist>
-                </>
-              ) : field.field_type === 'date' ? (
-                <input
-                  type="date"
-                  value={formValues[field.field_name] || ''}
-                  onChange={(e) => setFormValues({ ...formValues, [field.field_name]: e.target.value })}
-                  required={field.required || isRequiredIfTriggered(field, formValues)}
-                />
-              ) : field.field_type === 'checkbox' ? (
-                <label className="checkbox-line">
-                  <input
-                    type="checkbox"
-                    checked={Boolean(formValues[field.field_name])}
-                    onChange={(e) => setFormValues({ ...formValues, [field.field_name]: e.target.checked })}
-                  />
-                  Check on generated PDF
-                </label>
-              ) : field.field_type === 'order_number' ? (
-                <input
-                  value="Auto-generated on submit"
-                  readOnly
-                />
-              ) : (
-                <input
-                  value={formValues[field.field_name] || ''}
-                  onChange={(e) => setFormValues({ ...formValues, [field.field_name]: e.target.value })}
-                  minLength={field.validation_rules?.min_length ?? undefined}
-                  maxLength={field.validation_rules?.max_length ?? undefined}
-                  pattern={field.validation_rules?.regex || undefined}
-                  required={field.required || isRequiredIfTriggered(field, formValues)}
-                />
-              )}
-            </div>
-          ))}
+          {fields.map((field) => renderFormField(field, formValues, setFormValues, 'main'))}
           {fields.length === 0 && <p className="muted">No mapped fields for this template yet.</p>}
           <button disabled={loading || fields.length === 0}>
             {loading ? 'Generating...' : 'Generate PDF'}
@@ -742,8 +801,12 @@ export default function UserPanel({
         <p className="muted">Current month metrics for the selected template.</p>
         {analytics ? (
           <div className="analytics-strip">
-            {analyticsItems.map((item) => (
-              <div key={item.label} className="analytics-strip-item">
+            {analyticsItems.map((item, index) => (
+              <div
+                key={item.label}
+                className={`analytics-strip-item analytics-tone-${item.tone || 'primary'}${index === 0 ? ' analytics-strip-item-featured' : ''}`}
+              >
+                <span className="analytics-strip-kicker">{selectedTemplate?.title || 'Template'}</span>
                 <span className="analytics-strip-label">{item.label}</span>
                 <strong className="analytics-strip-value">{item.value}</strong>
                 <span className="analytics-strip-meta">{item.meta}</span>
@@ -830,7 +893,19 @@ export default function UserPanel({
       </section>
 
       <section className="card">
-        <h3>My Generated PDFs</h3>
+        <div className="actions" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+          <h3>My Generated PDFs</h3>
+          <button
+            type="button"
+            onClick={() => {
+              setManualAddValues(buildFieldValues(fields, formValues));
+              setShowManualAddModal(true);
+            }}
+            disabled={!selectedTemplateId || fields.length === 0}
+          >
+            Manual Add PDF
+          </button>
+        </div>
         <p className="muted">Double click Note or Reschedule Date to edit and auto-save.</p>
         <div className="grid two">
           <div className="card">
@@ -987,6 +1062,27 @@ export default function UserPanel({
           </table>
         </div>
       </section>
+
+      {showManualAddModal && (
+        <div className="modal-backdrop" onClick={() => setShowManualAddModal(false)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <h3>Manual Add To My Generated PDFs</h3>
+            <p className="muted">This creates the PDF record without auto-downloading it. Use the Download button later from the list.</p>
+            <form className="sidebar-form" onSubmit={submitManualAdd}>
+              {fields.map((field) => renderFormField(field, manualAddValues, setManualAddValues, 'manual'))}
+              {fields.length === 0 && <p className="muted">No mapped fields for this template yet.</p>}
+              <div className="actions">
+                <button type="submit" disabled={loading || fields.length === 0}>
+                  {loading ? 'Adding...' : 'Add To List'}
+                </button>
+                <button type="button" className="sidebar-close" onClick={() => setShowManualAddModal(false)}>
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

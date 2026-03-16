@@ -305,6 +305,7 @@ router.get('/analytics/template/:templateId', requireAuth, async (req, res) => {
     const summary = await query(
       `SELECT
           COUNT(*)::int AS total_generated,
+          COUNT(*) FILTER (WHERE created_at >= date_trunc('day', NOW()))::int AS today_generated,
           COUNT(*) FILTER (WHERE status = 'pending')::int AS pending_backlog,
           COUNT(*) FILTER (WHERE status = 'done')::int AS done_count,
           COUNT(*) FILTER (WHERE status = 'cancelled')::int AS cancelled_count,
