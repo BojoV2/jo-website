@@ -9,6 +9,36 @@ import { resolveAvatar } from '../utils/avatar.js';
 GlobalWorkerOptions.workerSrc = workerSrc;
 
 const statusTabs = ['pending', 'done', 'cancelled', 'rescheduled'];
+const userSections = [
+  {
+    id: 'create',
+    label: 'Create PDF',
+    chip: 'CP',
+    title: 'Generate a new document',
+    description: 'Select a template, fill the mapped fields, and open the PDF instantly.'
+  },
+  {
+    id: 'analytics',
+    label: 'Analytics',
+    chip: 'AN',
+    title: 'Track template activity',
+    description: 'Review the selected template metrics and the monthly chart across your templates.'
+  },
+  {
+    id: 'preview',
+    label: 'Preview',
+    chip: 'PV',
+    title: 'Check mapped positions',
+    description: 'Preview where the template fields land on the PDF before you generate.'
+  },
+  {
+    id: 'history',
+    label: 'My PDFs',
+    chip: 'MY',
+    title: 'Manage generated PDFs',
+    description: 'Search, update status, and reopen any file you already generated.'
+  }
+];
 const emptyListFilters = {
   keyword: '',
   date_from: '',
@@ -216,6 +246,7 @@ export default function UserPanel({
   const [pendingPageSize, setPendingPageSize] = useState('20');
   const [pendingPage, setPendingPage] = useState(1);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [activeUserSection, setActiveUserSection] = useState('create');
   const [listFilters, setListFilters] = useState(emptyListFilters);
   const [showManualAddModal, setShowManualAddModal] = useState(false);
   const [manualAddValues, setManualAddValues] = useState({});
@@ -309,6 +340,11 @@ export default function UserPanel({
     const templateIds = new Set(templates.map((template) => template.id));
     return monthlyReport.filter((template) => templateIds.has(template.template_id));
   }, [monthlyReport, templates]);
+  const activeSectionMeta = useMemo(
+    () => userSections.find((section) => section.id === activeUserSection) || userSections[0],
+    [activeUserSection]
+  );
+  const compactAnalyticsItems = useMemo(() => analyticsItems.slice(0, 3), [analyticsItems]);
 
   async function loadTemplates() {
     const data = await apiRequest('/templates', { token });
@@ -757,30 +793,16 @@ export default function UserPanel({
     }
   }
 
+  function focusUserSection(sectionId) {
+    setActiveUserSection(sectionId);
+    const node = document.getElementById(`user-section-${sectionId}`);
+    if (node) {
+      node.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }
+
   return (
-    <div className="layout">
-      <header className="topbar">
-        <div className="profile-head">
-          <button
-            type="button"
-            className="avatar-trigger"
-            onClick={() => setIsSidebarOpen(true)}
-            title="Open settings"
-          >
-            <img className="avatar avatar-md" src={resolveAvatar(user)} alt={user.name} />
-          </button>
-          <div>
-            <h2>User Portal</h2>
-            <p className="muted">{user.name} ({user.role})</p>
-          </div>
-        </div>
-        <div className="topbar-actions">
-          <button type="button" className="theme-btn" onClick={onToggleTheme}>
-            {theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
-          </button>
-          <button type="button" className="logout-btn" onClick={onLogout}>Logout</button>
-        </div>
-      </header>
+    <div className="layout user-shell">
       <ProfileSidebar
         open={isSidebarOpen}
         onClose={() => setIsSidebarOpen(false)}
@@ -789,16 +811,44 @@ export default function UserPanel({
         onUserUpdated={onSessionUserUpdate}
       />
 
-      {message && (
-        <div className={`notice ${messageTone(message)}`}>
-          <div className="notice-title">{messageTone(message) === 'is-error' ? 'Attention needed' : 'Update'}</div>
-          <div>{message}</div>
+      <aside className="user-sidebar">
+        <div className="user-sidebar-brand">
+          <button
+            type="button"
+            className="avatar-trigger user-sidebar-avatar"
+            onClick={() => setIsSidebarOpen(true)}
+            title="Open settings"
+          >
+            <img className="avatar avatar-md" src={resolveAvatar(user)} alt={user.name} />
+          </button>
+          <div className="user-sidebar-brand-copy">
+            <strong>Imperial Network</strong>
+            <span>User portal</span>
+          </div>
         </div>
-      )}
 
-      <section className="grid two">
-        <div className="card">
-          <h3>Choose Template</h3>
+        <div className="user-sidebar-group">
+          <span className="user-sidebar-label">Workspace</span>
+          <nav className="user-nav">
+            {userSections.map((section) => (
+              <button
+                key={section.id}
+                type="button"
+                className={activeUserSection === section.id ? 'user-nav-btn active' : 'user-nav-btn'}
+                onClick={() => focusUserSection(section.id)}
+              >
+                <span className="user-nav-chip">{section.chip}</span>
+                <span>{section.label}</span>
+              </button>
+            ))}
+          </nav>
+        </div>
+
+        <div className="user-sidebar-group user-sidebar-templates">
+          <div className="user-sidebar-heading">
+            <span className="user-sidebar-label">Templates</span>
+            <span className="user-sidebar-count">{orderedTemplates.length}</span>
+          </div>
           <div className="template-stack" role="list" aria-label="Templates">
             {orderedTemplates.map((tpl) => (
               <div
@@ -826,7 +876,7 @@ export default function UserPanel({
                   onClick={() => setFavoriteTemplate(tpl.id)}
                   disabled={user?.favorite_template_id === tpl.id}
                 >
-                  {user?.favorite_template_id === tpl.id ? 'Auto-selected' : 'Set Favorite'}
+                  {user?.favorite_template_id === tpl.id ? 'Pinned' : 'Pin'}
                 </button>
               </div>
             ))}
@@ -834,20 +884,94 @@ export default function UserPanel({
               <div className="template-stack-empty">No templates available.</div>
             )}
           </div>
-          {selectedTemplate && (
-            <div className="template-stack-summary">
-              <span className="template-stack-summary-title">{selectedTemplate.title}</span>
-              <span className="template-stack-summary-desc">{selectedTemplate.description || 'No description.'}</span>
-            </div>
-          )}
-          <div className="actions" style={{ marginTop: '10px' }}>
-            <button type="button" onClick={() => exportMyTemplateData('csv')} disabled={!selectedTemplateId}>Export My Data CSV</button>
-            <button type="button" onClick={() => exportMyTemplateData('json')} disabled={!selectedTemplateId}>Export My Data JSON</button>
-          </div>
         </div>
 
-        <form className="card" onSubmit={submitGeneration}>
-          <h3>Fill Form Fields</h3>
+        <div className="user-sidebar-footer">
+          <button type="button" className="user-sidebar-profile" onClick={() => setIsSidebarOpen(true)}>
+            <img className="avatar avatar-sm" src={resolveAvatar(user)} alt={user.name} />
+            <span>
+              <strong>{user.name}</strong>
+              <small>{user.email || user.role}</small>
+            </span>
+          </button>
+          <div className="topbar-actions user-sidebar-actions">
+            <button type="button" className="theme-btn" onClick={onToggleTheme}>
+              {theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
+            </button>
+            <button type="button" className="logout-btn" onClick={onLogout}>Logout</button>
+          </div>
+        </div>
+      </aside>
+
+      <main className="user-main">
+        <header className="topbar user-main-topbar">
+          <div>
+            <div className="user-breadcrumb">
+              <span>User portal</span>
+              <span>/</span>
+              <span>{activeSectionMeta.label}</span>
+              <span>/</span>
+              <strong>{selectedTemplate?.title || 'Select template'}</strong>
+            </div>
+            <h2>{activeSectionMeta.title}</h2>
+          </div>
+          <button
+            type="button"
+            className="avatar-trigger user-main-settings"
+            onClick={() => setIsSidebarOpen(true)}
+            title="Open settings"
+          >
+            <img className="avatar avatar-md" src={resolveAvatar(user)} alt={user.name} />
+          </button>
+        </header>
+
+      {message && (
+        <div className={`notice ${messageTone(message)}`}>
+          <div className="notice-title">{messageTone(message) === 'is-error' ? 'Attention needed' : 'Update'}</div>
+          <div>{message}</div>
+        </div>
+      )}
+
+      <section id="user-section-create" className="grid two user-create-grid">
+        <div className="card user-summary-card">
+          <div className="section-heading">
+            <div>
+              <h3>Template workspace</h3>
+              <p className="muted">Quick details and exports for the selected template.</p>
+            </div>
+          </div>
+          {selectedTemplate ? (
+            <>
+              <div className="template-stack-summary">
+                <span className="template-stack-summary-title">{selectedTemplate.title}</span>
+                <span className="template-stack-summary-desc">{selectedTemplate.description || 'No description.'}</span>
+              </div>
+              <div className="user-quick-metrics">
+                {compactAnalyticsItems.map((item) => (
+                  <div key={item.label} className="user-quick-metric">
+                    <span>{item.label}</span>
+                    <strong>{item.value}</strong>
+                    <small>{item.meta}</small>
+                  </div>
+                ))}
+              </div>
+              <div className="actions user-export-actions">
+                <button type="button" onClick={() => exportMyTemplateData('csv')} disabled={!selectedTemplateId}>Export My Data CSV</button>
+                <button type="button" onClick={() => exportMyTemplateData('json')} disabled={!selectedTemplateId}>Export My Data JSON</button>
+              </div>
+            </>
+          ) : (
+            <p className="muted">Select a template from the sidebar to load exports and the form.</p>
+          )}
+        </div>
+
+        <form className="card user-form-card" onSubmit={submitGeneration}>
+          <div className="section-heading">
+            <div>
+              <h3>Fill Form Fields</h3>
+              <p className="muted">Complete the mapped fields and generate the PDF in one step.</p>
+            </div>
+          </div>
           {fields.map((field) => renderFormField(field, formValues, setFormValues, 'main'))}
           {fields.length === 0 && <p className="muted">No mapped fields for this template yet.</p>}
           <button disabled={loading || fields.length === 0}>
@@ -856,7 +980,7 @@ export default function UserPanel({
         </form>
       </section>
 
-      <section className="card">
+      <section id="user-section-analytics" className="card">
         <h3>Template Analytics</h3>
         <p className="muted">Current month metrics for the selected template.</p>
         {analytics ? (
@@ -889,7 +1013,7 @@ export default function UserPanel({
         )}
       </section>
 
-      <section className="card">
+      <section id="user-section-preview" className="card">
         <div className="actions" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
           <h3>Template Preview Mapper</h3>
           <button type="button" onClick={() => setShowPreviewMapper((prev) => !prev)}>
@@ -939,7 +1063,7 @@ export default function UserPanel({
         )}
       </section>
 
-      <section className="card">
+      <section id="user-section-history" className="card">
         <div className="actions" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
           <h3>My Generated PDFs</h3>
           <button
@@ -1127,11 +1251,13 @@ export default function UserPanel({
         </div>
       </section>
 
+      </main>
+
       {showManualAddModal && (
         <div className="modal-backdrop" onClick={() => setShowManualAddModal(false)}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
             <h3>Manual Add To My Generated PDFs</h3>
-            <p className="muted">This creates the PDF record without auto-downloading it. Use the Download button later from the list.</p>
+            <p className="muted">This creates the PDF record without opening it immediately. Use Open PDF later from the list.</p>
             <form className="sidebar-form" onSubmit={submitManualAdd}>
               {fields.map((field) => renderFormField(field, manualAddValues, setManualAddValues, 'manual'))}
               {fields.length === 0 && <p className="muted">No mapped fields for this template yet.</p>}
