@@ -1,0 +1,13 @@
+<svg width="2200" height="680" viewBox="0 0 2200 680" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <g fill="#2FA8D6">
+    <path d="M31 45v544h64V282l283 314 46-42L77 168v421H31V45Z"/>
+    <path d="M244 208c30 28 51 69 51 115s-21 87-51 115l-43-54c17-17 27-39 27-61s-10-44-27-61l43-54Z"/>
+    <path d="M337 115c62 56 100 130 100 208s-38 152-100 208l-47-49c49-44 79-99 79-159s-30-115-79-159l47-49Z"/>
+    <path d="M413 31c75 79 121 181 121 292s-46 213-121 292l-53-45c66-69 107-156 107-247S426 145 360 76l53-45Z"/>
+  </g>
+  <g fill="#2FA8D6" font-family="Arial, Helvetica, sans-serif" font-weight="800">
+    <text x="630" y="244" font-size="272" letter-spacing="2">IMPERIAL</text>
+    <text x="630" y="465" font-size="272" letter-spacing="2">NETWORK</text>
+    <text x="636" y="618" font-size="126" letter-spacing="6">INCORPORATED</text>
+  </g>
+</svg>

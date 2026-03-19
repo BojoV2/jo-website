@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { apiRequest, downloadWithToken, fetchArrayBuffer } from '../api.js';
+import { apiRequest, downloadWithToken, fetchArrayBuffer, openWithTokenInNewTab } from '../api.js';
 import { GlobalWorkerOptions, getDocument } from 'pdfjs-dist/build/pdf.mjs';
 import workerSrc from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import ProfileSidebar from './ProfileSidebar.jsx';
+import TemplateMonthlyAreaChart from './TemplateMonthlyAreaChart.jsx';
 import { resolveAvatar } from '../utils/avatar.js';
 
 GlobalWorkerOptions.workerSrc = workerSrc;
@@ -13,6 +14,26 @@ const emptyListFilters = {
   date_from: '',
   date_to: ''
 };
+const DEFAULT_MONTHLY_RANGE = '3';
+
+function getUserTemplateStorageKey(userId) {
+  return `user-panel:selected-template:${userId || 'anonymous'}`;
+}
+
+function readStoredTemplateId(userId) {
+  if (typeof window === 'undefined') return '';
+  return window.localStorage.getItem(getUserTemplateStorageKey(userId)) || '';
+}
+
+function writeStoredTemplateId(userId, templateId) {
+  if (typeof window === 'undefined') return;
+  const key = getUserTemplateStorageKey(userId);
+  if (templateId) {
+    window.localStorage.setItem(key, templateId);
+    return;
+  }
+  window.localStorage.removeItem(key);
+}
 
 function todayIsoDate() {
   const d = new Date();
@@ -190,6 +211,8 @@ export default function UserPanel({
   const [editingValue, setEditingValue] = useState('');
   const [showPreviewMapper, setShowPreviewMapper] = useState(false);
   const [analytics, setAnalytics] = useState(null);
+  const [monthlyReport, setMonthlyReport] = useState([]);
+  const [monthlyReportRange, setMonthlyReportRange] = useState(DEFAULT_MONTHLY_RANGE);
   const [pendingPageSize, setPendingPageSize] = useState('20');
   const [pendingPage, setPendingPage] = useState(1);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -282,14 +305,22 @@ export default function UserPanel({
       }
     ];
   }, [analytics]);
+  const visibleMonthlyReport = useMemo(() => {
+    const templateIds = new Set(templates.map((template) => template.id));
+    return monthlyReport.filter((template) => templateIds.has(template.template_id));
+  }, [monthlyReport, templates]);
 
   async function loadTemplates() {
     const data = await apiRequest('/templates', { token });
     setTemplates(data);
+    const storedTemplateId = readStoredTemplateId(user?.id);
     const favoriteTemplateId = user?.favorite_template_id;
-    const defaultTemplateId = favoriteTemplateId && data.some((tpl) => tpl.id === favoriteTemplateId)
-      ? favoriteTemplateId
-      : data[0]?.id || '';
+    const defaultTemplateId =
+      storedTemplateId && data.some((tpl) => tpl.id === storedTemplateId)
+        ? storedTemplateId
+        : favoriteTemplateId && data.some((tpl) => tpl.id === favoriteTemplateId)
+          ? favoriteTemplateId
+          : data[0]?.id || '';
     setSelectedTemplateId((prev) => (
       prev && data.some((tpl) => tpl.id === prev)
         ? prev
@@ -363,6 +394,11 @@ export default function UserPanel({
     setAnalytics(data);
   }
 
+  async function loadMonthlyReport(months = Number(monthlyReportRange) || Number(DEFAULT_MONTHLY_RANGE)) {
+    const data = await apiRequest(`/generated-pdfs/analytics/templates/monthly?months=${months}`, { token });
+    setMonthlyReport(data.templates || []);
+  }
+
   async function loadPdfPreview(templateId, cacheKey) {
     if (!templateId) {
       setPdfDoc(null);
@@ -400,11 +436,31 @@ export default function UserPanel({
   }, []);
 
   useEffect(() => {
+    loadMonthlyReport(Number(monthlyReportRange) || Number(DEFAULT_MONTHLY_RANGE)).catch((err) => setMessage(err.message));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [monthlyReportRange]);
+
+  useEffect(() => {
     const favoriteTemplateId = user?.favorite_template_id;
-    if (!favoriteTemplateId) return;
-    if (!templates.some((template) => template.id === favoriteTemplateId)) return;
-    setSelectedTemplateId((current) => (current === favoriteTemplateId ? current : favoriteTemplateId));
-  }, [templates, user?.favorite_template_id]);
+    const storedTemplateId = readStoredTemplateId(user?.id);
+    const hasCurrent = selectedTemplateId && templates.some((template) => template.id === selectedTemplateId);
+    if (hasCurrent) return;
+    if (storedTemplateId && templates.some((template) => template.id === storedTemplateId)) {
+      setSelectedTemplateId(storedTemplateId);
+      return;
+    }
+    if (favoriteTemplateId && templates.some((template) => template.id === favoriteTemplateId)) {
+      setSelectedTemplateId(favoriteTemplateId);
+      return;
+    }
+    if (!selectedTemplateId && templates[0]?.id) {
+      setSelectedTemplateId(templates[0].id);
+    }
+  }, [templates, user?.favorite_template_id, user?.id, selectedTemplateId]);
+
+  useEffect(() => {
+    writeStoredTemplateId(user?.id, selectedTemplateId);
+  }, [selectedTemplateId, user?.id]);
 
   useEffect(() => {
     if (!selectedTemplateId) return;
@@ -491,7 +547,7 @@ export default function UserPanel({
     let autoDownloadFailed = false;
     if (autoDownload) {
       try {
-        await downloadWithToken(`/generated-pdfs/${created.id}/download`, token);
+        await openWithTokenInNewTab(`/generated-pdfs/${created.id}/download`, token);
       } catch (_downloadErr) {
         autoDownloadFailed = true;
       }
@@ -501,8 +557,8 @@ export default function UserPanel({
       successMessage || (
         autoDownload
           ? (autoDownloadFailed
-            ? 'PDF generated. Auto-download did not start, use manual Download button in Pending.'
-            : 'PDF generated, auto-downloaded, and queued as pending.')
+            ? 'PDF generated. It could not be opened automatically, use Open PDF in Pending.'
+            : 'PDF generated, opened in a new tab, and queued as pending.')
           : 'PDF added to My Generated PDFs. Download it anytime from the list.'
       )
     );
@@ -512,19 +568,24 @@ export default function UserPanel({
     setListFilters(emptyListFilters);
     await loadGenerated('pending', selectedTemplateId, emptyListFilters);
     await loadAnalytics(selectedTemplateId);
+    await loadMonthlyReport();
   }
 
   function renderFormField(field, values, setValues, fieldSetKey = 'main') {
     const requiredNow = field.required || isRequiredIfTriggered(field, values);
     const setFieldValue = (nextValue) => setValues((prev) => ({ ...prev, [field.field_name]: nextValue }));
     const optionsListId = `${fieldSetKey}-dropdown-options-${field.id}`;
+    const inputId = `${fieldSetKey}-field-${field.id}`;
+    const inputName = `field_${normalizeFieldKey(field.field_name) || field.id}`;
 
     return (
       <div key={field.id}>
-        <label>{field.field_name}{requiredNow ? ' *' : ''}</label>
+        <label htmlFor={inputId}>{field.field_name}{requiredNow ? ' *' : ''}</label>
         {field.field_type === 'dropdown' ? (
           <>
             <input
+              id={inputId}
+              name={inputName}
               list={optionsListId}
               value={values[field.field_name] || ''}
               onChange={(e) => setFieldValue(e.target.value)}
@@ -539,14 +600,18 @@ export default function UserPanel({
           </>
         ) : field.field_type === 'date' ? (
           <input
+            id={inputId}
+            name={inputName}
             type="date"
             value={values[field.field_name] || ''}
             onChange={(e) => setFieldValue(e.target.value)}
             required={requiredNow}
           />
         ) : field.field_type === 'checkbox' ? (
-          <label className="checkbox-line">
+          <label className="checkbox-line" htmlFor={inputId}>
             <input
+              id={inputId}
+              name={inputName}
               type="checkbox"
               checked={Boolean(values[field.field_name])}
               onChange={(e) => setFieldValue(e.target.checked)}
@@ -555,11 +620,15 @@ export default function UserPanel({
           </label>
         ) : field.field_type === 'order_number' ? (
           <input
+            id={inputId}
+            name={inputName}
             value="Auto-generated on submit"
             readOnly
           />
         ) : (
           <input
+            id={inputId}
+            name={inputName}
             value={values[field.field_name] || ''}
             onChange={(e) => setFieldValue(e.target.value)}
             minLength={field.validation_rules?.min_length ?? undefined}
@@ -625,6 +694,7 @@ export default function UserPanel({
       });
       await loadGenerated(activeStatus, selectedTemplateId);
       await loadAnalytics(selectedTemplateId);
+      await loadMonthlyReport();
       setMessage(`Status updated to ${nextStatus}.`);
     } catch (err) {
       setMessage(err.message);
@@ -678,6 +748,7 @@ export default function UserPanel({
       setEditingValue('');
       await loadGenerated(activeStatus, selectedTemplateId);
       await loadAnalytics(selectedTemplateId);
+      await loadMonthlyReport();
       setMessage('Saved.');
     } catch (err) {
       setMessage(err.message);
@@ -789,19 +860,30 @@ export default function UserPanel({
         <h3>Template Analytics</h3>
         <p className="muted">Current month metrics for the selected template.</p>
         {analytics ? (
-          <div className="analytics-strip">
-            {analyticsItems.map((item, index) => (
-              <div
-                key={item.label}
-                className={`analytics-strip-item analytics-tone-${item.tone || 'primary'}${index === 0 ? ' analytics-strip-item-featured' : ''}`}
-              >
-                <span className="analytics-strip-kicker">{selectedTemplate?.title || 'Template'}</span>
-                <span className="analytics-strip-label">{item.label}</span>
-                <strong className="analytics-strip-value">{item.value}</strong>
-                <span className="analytics-strip-meta">{item.meta}</span>
-              </div>
-            ))}
-          </div>
+          <>
+            <div className="analytics-strip">
+              {analyticsItems.map((item, index) => (
+                <div
+                  key={item.label}
+                  className={`analytics-strip-item analytics-tone-${item.tone || 'primary'}${index === 0 ? ' analytics-strip-item-featured' : ''}`}
+                >
+                  <span className="analytics-strip-kicker">{selectedTemplate?.title || 'Template'}</span>
+                  <span className="analytics-strip-label">{item.label}</span>
+                  <strong className="analytics-strip-value">{item.value}</strong>
+                  <span className="analytics-strip-meta">{item.meta}</span>
+                </div>
+              ))}
+            </div>
+            <div className="analytics-chart-block">
+              <TemplateMonthlyAreaChart
+                monthlyReport={visibleMonthlyReport}
+                timeRange={monthlyReportRange}
+                onTimeRangeChange={setMonthlyReportRange}
+                description="Monthly generated PDFs across the templates available to your account."
+                emptyText="No monthly report data is available for your templates yet."
+              />
+            </div>
+          </>
         ) : (
           <p className="muted">Select a template to view analytics.</p>
         )}
@@ -820,8 +902,10 @@ export default function UserPanel({
         {showPreviewMapper && (
           <>
             <p className="muted">Preview where each field is placed on the PDF.</p>
-            <label>Preview Page</label>
+            <label htmlFor="user-preview-page">Preview Page</label>
             <input
+              id="user-preview-page"
+              name="preview_page"
               type="number"
               min="1"
               max={pdfMeta.pages || 1}
@@ -872,22 +956,28 @@ export default function UserPanel({
         <p className="muted">Double click Note or Reschedule Date to edit and auto-save.</p>
         <div className="grid two">
           <div className="card">
-            <label>Keyword</label>
+            <label htmlFor="user-filter-keyword">Keyword</label>
             <input
+              id="user-filter-keyword"
+              name="keyword"
               value={listFilters.keyword}
               onChange={(e) => setListFilters({ ...listFilters, keyword: e.target.value })}
               placeholder="Search data/notes"
             />
           </div>
           <div className="card">
-            <label>Date From</label>
+            <label htmlFor="user-filter-date-from">Date From</label>
             <input
+              id="user-filter-date-from"
+              name="date_from"
               type="date"
               value={listFilters.date_from}
               onChange={(e) => setListFilters({ ...listFilters, date_from: e.target.value })}
             />
-            <label>Date To</label>
+            <label htmlFor="user-filter-date-to">Date To</label>
             <input
+              id="user-filter-date-to"
+              name="date_to"
               type="date"
               value={listFilters.date_to}
               onChange={(e) => setListFilters({ ...listFilters, date_to: e.target.value })}
@@ -909,8 +999,10 @@ export default function UserPanel({
         {activeStatus === 'pending' && (
           <div className="pagination-stack">
             <div className="actions" style={{ alignItems: 'center', marginBottom: '8px' }}>
-              <label style={{ marginTop: 0 }}>Rows</label>
+              <label htmlFor="user-pending-rows" style={{ marginTop: 0 }}>Rows</label>
               <select
+                id="user-pending-rows"
+                name="pending_page_size"
                 value={pendingPageSize}
                 onChange={(e) => {
                   setPendingPageSize(e.target.value);
@@ -975,6 +1067,9 @@ export default function UserPanel({
                     {editingCell?.id === item.id && editingCell.field === 'status_note' ? (
                       <input
                         autoFocus
+                        id={`user-note-${item.id}`}
+                        name={`status_note_${item.id}`}
+                        aria-label={`Status note for ${item.id}`}
                         value={editingValue}
                         onChange={(e) => setEditingValue(e.target.value)}
                         onBlur={() => saveCellEdit(item)}
@@ -990,6 +1085,9 @@ export default function UserPanel({
                     {editingCell?.id === item.id && editingCell.field === 'reschedule_date' ? (
                       <input
                         autoFocus
+                        id={`user-reschedule-${item.id}`}
+                        name={`reschedule_date_${item.id}`}
+                        aria-label={`Reschedule date for ${item.id}`}
                         type="datetime-local"
                         value={editingValue}
                         onChange={(e) => setEditingValue(e.target.value)}
@@ -1004,6 +1102,9 @@ export default function UserPanel({
                   </td>
                   <td className="actions">
                     <select
+                      id={`user-status-${item.id}`}
+                      name={`status_${item.id}`}
+                      aria-label={`Status for ${item.id}`}
                       value={statusDrafts[item.id] || item.status}
                       onChange={(e) => setStatusDrafts({ ...statusDrafts, [item.id]: e.target.value })}
                     >
@@ -1012,7 +1113,7 @@ export default function UserPanel({
                       ))}
                     </select>
                     <button type="button" onClick={() => applyStatusChange(item)}>Move</button>
-                    <button type="button" onClick={() => downloadWithToken(`/generated-pdfs/${item.id}/download`, token)}>Download</button>
+                    <button type="button" onClick={() => openWithTokenInNewTab(`/generated-pdfs/${item.id}/download`, token)}>Open PDF</button>
                   </td>
                 </tr>
               ))}

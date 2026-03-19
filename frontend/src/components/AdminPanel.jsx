@@ -4,6 +4,7 @@ import { GlobalWorkerOptions, getDocument } from 'pdfjs-dist/build/pdf.mjs';
 import workerSrc from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import ProfileSidebar from './ProfileSidebar.jsx';
 import { resolveAvatar } from '../utils/avatar.js';
+import TemplateMonthlyAreaChart from './TemplateMonthlyAreaChart.jsx';
 
 GlobalWorkerOptions.workerSrc = workerSrc;
 
@@ -15,6 +16,7 @@ const adminTabs = [
   { id: 'workflow', label: 'Workflow' },
   { id: 'users', label: 'Users' }
 ];
+const DEFAULT_MONTHLY_RANGE = '3';
 
 function clampRect(rect) {
   if (!rect) return null;
@@ -49,6 +51,7 @@ export default function AdminPanel({
   const [items, setItems] = useState([]);
   const [analytics, setAnalytics] = useState(null);
   const [monthlyReport, setMonthlyReport] = useState([]);
+  const [monthlyReportRange, setMonthlyReportRange] = useState(DEFAULT_MONTHLY_RANGE);
   const [activeAdminTab, setActiveAdminTab] = useState('home');
   const [activeStatus, setActiveStatus] = useState('pending');
   const [busy, setBusy] = useState(false);
@@ -112,6 +115,7 @@ export default function AdminPanel({
 
   const canvasRef = useRef(null);
   const overlayRef = useRef(null);
+  const stageRef = useRef(null);
 
   const selectedTemplate = useMemo(
     () => templates.find((t) => t.id === selectedTemplateId),
@@ -178,6 +182,20 @@ export default function AdminPanel({
     { label: 'Workflow Rows', value: items.length, meta: `${activeStatus} records` }
   ]), [activeStatus, fields.length, items.length, selectedTemplate?.title, templates.length, users.length]);
 
+  const visibleMonthlyReport = useMemo(() => {
+    const ownedTemplateIds = new Set(
+      templates
+        .filter((template) => template.created_by === user.id)
+        .map((template) => template.id)
+    );
+
+    if (ownedTemplateIds.size === 0) {
+      return monthlyReport;
+    }
+
+    return monthlyReport.filter((template) => ownedTemplateIds.has(template.template_id));
+  }, [monthlyReport, templates, user.id]);
+
   async function loadTemplates() {
     const data = await apiRequest('/templates', { token });
     setTemplates(data);
@@ -224,8 +242,8 @@ export default function AdminPanel({
     setAnalytics(data);
   }
 
-  async function loadMonthlyReport() {
-    const data = await apiRequest('/generated-pdfs/analytics/templates/monthly?months=6', { token });
+  async function loadMonthlyReport(months = Number(monthlyReportRange) || Number(DEFAULT_MONTHLY_RANGE)) {
+    const data = await apiRequest(`/generated-pdfs/analytics/templates/monthly?months=${months}`, { token });
     setMonthlyReport(data.templates || []);
   }
 
@@ -251,7 +269,8 @@ export default function AdminPanel({
 
     const pageNumber = Number(fieldForm.page_number) || 1;
     const page = await pdfDoc.getPage(pageNumber);
-    const desiredWidth = Math.min(900, window.innerWidth - 120);
+    const stageWidth = stageRef.current?.clientWidth || stageRef.current?.parentElement?.clientWidth || 0;
+    const desiredWidth = Math.min(900, Math.max(320, stageWidth || (window.innerWidth - 120)));
     const scale = desiredWidth / page.getViewport({ scale: 1 }).width;
     const viewport = page.getViewport({ scale });
 
@@ -271,16 +290,19 @@ export default function AdminPanel({
     loadTemplates().catch((err) => setMessage(err.message));
     loadUsers().catch((err) => setMessage(err.message));
     loadPresets().catch((err) => setMessage(err.message));
-    loadMonthlyReport().catch((err) => setMessage(err.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    loadMonthlyReport(Number(monthlyReportRange) || Number(DEFAULT_MONTHLY_RANGE)).catch((err) => setMessage(err.message));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [monthlyReportRange]);
 
   useEffect(() => {
     if (!selectedTemplateId) return;
     loadFields(selectedTemplateId).catch((err) => setMessage(err.message));
     loadGenerated(selectedTemplateId, activeStatus).catch((err) => setMessage(err.message));
     loadAnalytics(selectedTemplateId).catch((err) => setMessage(err.message));
-    loadMonthlyReport().catch((err) => setMessage(err.message));
     loadPdfPreview(selectedTemplateId, selectedTemplate?.version).catch((err) => setMessage(err.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTemplateId, selectedTemplate?.version, activeStatus, listFilters.keyword, listFilters.user_id, listFilters.date_from, listFilters.date_to]);
@@ -289,6 +311,46 @@ export default function AdminPanel({
     renderPage().catch((err) => setMessage(err.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pdfDoc, fieldForm.page_number]);
+
+  useEffect(() => {
+    if (activeAdminTab !== 'mapping' || !pdfDoc) return undefined;
+
+    let frameA = 0;
+    let frameB = 0;
+    frameA = requestAnimationFrame(() => {
+      frameB = requestAnimationFrame(() => {
+        renderPage().catch((err) => setMessage(err.message));
+      });
+    });
+
+    return () => {
+      if (frameA) cancelAnimationFrame(frameA);
+      if (frameB) cancelAnimationFrame(frameB);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeAdminTab, pdfDoc, fieldForm.page_number]);
+
+  useEffect(() => {
+    if (activeAdminTab !== 'mapping' || !pdfDoc || !stageRef.current || typeof ResizeObserver === 'undefined') {
+      return undefined;
+    }
+
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      if (frame) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        renderPage().catch((err) => setMessage(err.message));
+      });
+    });
+
+    observer.observe(stageRef.current);
+
+    return () => {
+      observer.disconnect();
+      if (frame) cancelAnimationFrame(frame);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeAdminTab, pdfDoc, fieldForm.page_number]);
 
   useEffect(() => {
     const onResize = () => {
@@ -876,8 +938,8 @@ export default function AdminPanel({
               <p className="muted">Pick the template used by analytics, mapping, and workflow tabs.</p>
             </div>
           </div>
-          <label>Selected Template</label>
-          <select value={selectedTemplateId} onChange={(e) => setSelectedTemplateId(e.target.value)}>
+          <label htmlFor="admin-focus-template">Selected Template</label>
+          <select id="admin-focus-template" name="selected_template_focus" value={selectedTemplateId} onChange={(e) => setSelectedTemplateId(e.target.value)}>
             <option value="">Select template</option>
             {templates.map((tpl) => (
               <option key={tpl.id} value={tpl.id}>{tpl.title}</option>
@@ -912,20 +974,26 @@ export default function AdminPanel({
       <section className="grid two">
         <form className="card" onSubmit={submitTemplate}>
           <h3>Upload Template</h3>
-          <label>Title</label>
+          <label htmlFor="upload-template-title">Title</label>
           <input
+            id="upload-template-title"
+            name="title"
             value={uploadForm.title}
             onChange={(e) => setUploadForm({ ...uploadForm, title: e.target.value })}
             required
           />
-          <label>Description</label>
+          <label htmlFor="upload-template-description">Description</label>
           <textarea
+            id="upload-template-description"
+            name="description"
             value={uploadForm.description}
             onChange={(e) => setUploadForm({ ...uploadForm, description: e.target.value })}
             rows={3}
           />
-          <label>PDF File</label>
+          <label htmlFor="upload-template-file">PDF File</label>
           <input
+            id="upload-template-file"
+            name="pdf_file"
             type="file"
             accept="application/pdf"
             onChange={(e) => setUploadForm({ ...uploadForm, file: e.target.files?.[0] || null })}
@@ -936,7 +1004,8 @@ export default function AdminPanel({
 
         <div className="card">
           <h3>Template Selector</h3>
-          <select value={selectedTemplateId} onChange={(e) => setSelectedTemplateId(e.target.value)}>
+          <label htmlFor="admin-template-selector">Template</label>
+          <select id="admin-template-selector" name="selected_template" value={selectedTemplateId} onChange={(e) => setSelectedTemplateId(e.target.value)}>
             <option value="">Select template</option>
             {templates.map((tpl) => (
               <option key={tpl.id} value={tpl.id}>{tpl.title}</option>
@@ -951,19 +1020,25 @@ export default function AdminPanel({
           )}
           {selectedTemplate && (
             <div className="template-ops">
-              <label>Rename Title</label>
+              <label htmlFor="admin-template-rename">Rename Title</label>
               <input
+                id="admin-template-rename"
+                name="rename_title"
                 value={templateEditForm.title}
                 onChange={(e) => setTemplateEditForm({ ...templateEditForm, title: e.target.value })}
               />
-              <label>Edit Description</label>
+              <label htmlFor="admin-template-description">Edit Description</label>
               <textarea
+                id="admin-template-description"
+                name="edit_description"
                 rows={2}
                 value={templateEditForm.description}
                 onChange={(e) => setTemplateEditForm({ ...templateEditForm, description: e.target.value })}
               />
-              <label>Replace PDF File</label>
+              <label htmlFor="admin-template-file-replace">Replace PDF File</label>
               <input
+                id="admin-template-file-replace"
+                name="replace_pdf_file"
                 key={replaceFileInputKey}
                 type="file"
                 accept="application/pdf"
@@ -987,36 +1062,49 @@ export default function AdminPanel({
         <form className="card" onSubmit={submitUser}>
           <h3>Create User Account</h3>
           <p className="muted">User can login using name or email.</p>
-          <label>Name</label>
+          <label htmlFor="admin-user-name">Name</label>
           <input
+            id="admin-user-name"
+            name="name"
             value={userForm.name}
             onChange={(e) => setUserForm({ ...userForm, name: e.target.value })}
+            autoComplete="name"
             required
           />
-          <label>Email</label>
+          <label htmlFor="admin-user-email">Email</label>
           <input
+            id="admin-user-email"
+            name="email"
             type="email"
             value={userForm.email}
             onChange={(e) => setUserForm({ ...userForm, email: e.target.value })}
+            autoComplete="email"
             required
           />
-          <label>Password</label>
+          <label htmlFor="admin-user-password">Password</label>
           <input
+            id="admin-user-password"
+            name="password"
             type={showCreatePassword ? 'text' : 'password'}
             value={userForm.password}
             onChange={(e) => setUserForm({ ...userForm, password: e.target.value })}
+            autoComplete="new-password"
             required
           />
-          <label className="checkbox-line">
+          <label className="checkbox-line" htmlFor="admin-show-create-password">
             <input
+              id="admin-show-create-password"
+              name="show_create_password"
               type="checkbox"
               checked={showCreatePassword}
               onChange={(e) => setShowCreatePassword(e.target.checked)}
             />
             View typed password
           </label>
-          <label>Role</label>
+          <label htmlFor="admin-user-role">Role</label>
           <select
+            id="admin-user-role"
+            name="role"
             value={userForm.role}
             onChange={(e) => setUserForm({ ...userForm, role: e.target.value })}
           >
@@ -1084,14 +1172,18 @@ export default function AdminPanel({
       <section className="grid two">
         <form className="card" onSubmit={createPreset}>
           <h3>Field Presets</h3>
-          <label>Preset Name</label>
+          <label htmlFor="preset-name">Preset Name</label>
           <input
+            id="preset-name"
+            name="preset_name"
             value={presetForm.name}
             onChange={(e) => setPresetForm({ ...presetForm, name: e.target.value })}
             required
           />
-          <label>Type</label>
+          <label htmlFor="preset-type">Type</label>
           <select
+            id="preset-type"
+            name="preset_type"
             value={presetForm.field_type}
             onChange={(e) => setPresetForm({ ...presetForm, field_type: e.target.value })}
           >
@@ -1103,8 +1195,10 @@ export default function AdminPanel({
           </select>
           {presetForm.field_type === 'dropdown' && (
             <>
-              <label>Options (one per line)</label>
+              <label htmlFor="preset-options">Options (one per line)</label>
               <textarea
+                id="preset-options"
+                name="preset_options"
                 rows={3}
                 value={presetForm.field_options_text}
                 onChange={(e) => setPresetForm({ ...presetForm, field_options_text: e.target.value })}
@@ -1112,20 +1206,26 @@ export default function AdminPanel({
               />
             </>
           )}
-          <label>Regex (optional)</label>
+          <label htmlFor="preset-regex">Regex (optional)</label>
           <input
+            id="preset-regex"
+            name="preset_regex"
             value={presetForm.regex}
             onChange={(e) => setPresetForm({ ...presetForm, regex: e.target.value })}
           />
-          <label>Min Length</label>
+          <label htmlFor="preset-min-length">Min Length</label>
           <input
+            id="preset-min-length"
+            name="preset_min_length"
             type="number"
             min="0"
             value={presetForm.min_length}
             onChange={(e) => setPresetForm({ ...presetForm, min_length: e.target.value })}
           />
-          <label>Max Length</label>
+          <label htmlFor="preset-max-length">Max Length</label>
           <input
+            id="preset-max-length"
+            name="preset_max_length"
             type="number"
             min="0"
             value={presetForm.max_length}
@@ -1170,14 +1270,18 @@ export default function AdminPanel({
       <section className="grid two">
         <form className="card" onSubmit={submitField}>
           <h3>{editingFieldId ? 'Edit Field Mapping' : 'Field Mapping'}</h3>
-          <label>Field Name</label>
+          <label htmlFor="field-name">Field Name</label>
           <input
+            id="field-name"
+            name="field_name"
             value={fieldForm.field_name}
             onChange={(e) => setFieldForm({ ...fieldForm, field_name: e.target.value })}
             required
           />
-          <label>Field Type</label>
+          <label htmlFor="field-type">Field Type</label>
           <select
+            id="field-type"
+            name="field_type"
             value={fieldForm.field_type}
             onChange={(e) => setFieldForm({ ...fieldForm, field_type: e.target.value })}
           >
@@ -1189,8 +1293,10 @@ export default function AdminPanel({
           </select>
           {fieldForm.field_type === 'dropdown' && (
             <>
-              <label>Dropdown Options (one per line)</label>
+              <label htmlFor="field-options">Dropdown Options (one per line)</label>
               <textarea
+                id="field-options"
+                name="field_options"
                 rows={4}
                 value={fieldForm.field_options_text}
                 onChange={(e) => setFieldForm({ ...fieldForm, field_options_text: e.target.value })}
@@ -1199,40 +1305,52 @@ export default function AdminPanel({
               />
             </>
           )}
-          <label>Regex Rule (optional)</label>
+          <label htmlFor="field-regex">Regex Rule (optional)</label>
           <input
+            id="field-regex"
+            name="field_regex"
             value={fieldForm.regex}
             onChange={(e) => setFieldForm({ ...fieldForm, regex: e.target.value })}
             placeholder="e.g. ^[0-9]{11}$"
           />
-          <label>Min Length (optional)</label>
+          <label htmlFor="field-min-length">Min Length (optional)</label>
           <input
+            id="field-min-length"
+            name="field_min_length"
             type="number"
             min="0"
             value={fieldForm.min_length}
             onChange={(e) => setFieldForm({ ...fieldForm, min_length: e.target.value })}
           />
-          <label>Max Length (optional)</label>
+          <label htmlFor="field-max-length">Max Length (optional)</label>
           <input
+            id="field-max-length"
+            name="field_max_length"
             type="number"
             min="0"
             value={fieldForm.max_length}
             onChange={(e) => setFieldForm({ ...fieldForm, max_length: e.target.value })}
           />
-          <label>Required If Field (optional)</label>
+          <label htmlFor="field-required-if">Required If Field (optional)</label>
           <input
+            id="field-required-if"
+            name="required_if_field"
             value={fieldForm.required_if_field}
             onChange={(e) => setFieldForm({ ...fieldForm, required_if_field: e.target.value })}
             placeholder="other_field_name"
           />
-          <label>Required If Equals (optional)</label>
+          <label htmlFor="field-required-if-value">Required If Equals (optional)</label>
           <input
+            id="field-required-if-value"
+            name="required_if_value"
             value={fieldForm.required_if_value}
             onChange={(e) => setFieldForm({ ...fieldForm, required_if_value: e.target.value })}
             placeholder="trigger value"
           />
-          <label>Page Number</label>
+          <label htmlFor="field-page-number">Page Number</label>
           <input
+            id="field-page-number"
+            name="page_number"
             type="number"
             min="1"
             max={pdfMeta.pages || 1}
@@ -1240,18 +1358,20 @@ export default function AdminPanel({
             onChange={(e) => setFieldForm({ ...fieldForm, page_number: Number(e.target.value || 1) })}
             required
           />
-          <label>Mapped X</label>
-          <input type="number" value={fieldForm.x_position} readOnly />
-          <label>Mapped Y</label>
-          <input type="number" value={fieldForm.y_position} readOnly />
-          <label>Box Width</label>
-          <input type="number" value={fieldForm.box_width} readOnly />
-          <label>Box Height</label>
-          <input type="number" value={fieldForm.box_height} readOnly />
-          <label>Auto Font Size</label>
-          <input type="number" value={Math.max(6, Math.round(Number(fieldForm.box_height || 0) * 0.75))} readOnly />
-          <label className="checkbox-line">
+          <label htmlFor="field-mapped-x">Mapped X</label>
+          <input id="field-mapped-x" name="x_position" type="number" value={fieldForm.x_position} readOnly />
+          <label htmlFor="field-mapped-y">Mapped Y</label>
+          <input id="field-mapped-y" name="y_position" type="number" value={fieldForm.y_position} readOnly />
+          <label htmlFor="field-box-width">Box Width</label>
+          <input id="field-box-width" name="box_width" type="number" value={fieldForm.box_width} readOnly />
+          <label htmlFor="field-box-height">Box Height</label>
+          <input id="field-box-height" name="box_height" type="number" value={fieldForm.box_height} readOnly />
+          <label htmlFor="field-auto-font-size">Auto Font Size</label>
+          <input id="field-auto-font-size" name="auto_font_size" type="number" value={Math.max(6, Math.round(Number(fieldForm.box_height || 0) * 0.75))} readOnly />
+          <label className="checkbox-line" htmlFor="field-required">
             <input
+              id="field-required"
+              name="required"
               type="checkbox"
               checked={fieldForm.required}
               onChange={(e) => setFieldForm({ ...fieldForm, required: e.target.checked })}
@@ -1271,7 +1391,7 @@ export default function AdminPanel({
         <div className="card">
           <h3>Template Preview Mapper</h3>
           <p className="muted">Drag a box on the PDF page to set X, Y, width, height.</p>
-          <div className="pdf-stage">
+          <div ref={stageRef} className="pdf-stage">
             <canvas ref={canvasRef} className="pdf-canvas" />
             <div
               ref={overlayRef}
@@ -1409,33 +1529,11 @@ export default function AdminPanel({
       </section>
 
       <section className="card">
-        <div className="section-heading">
-          <div>
-            <h3>Monthly Report By Template</h3>
-            <p className="muted">How many PDFs were created per month for every template.</p>
-          </div>
-        </div>
-        <div className="report-grid">
-          {monthlyReport.map((template) => {
-            const maxValue = Math.max(1, ...template.months.map((m) => Number(m.total_generated || 0)));
-            return (
-              <div key={template.template_id} className="report-card">
-                <div className="report-head">{template.template_title}</div>
-                <div className="report-bars">
-                  {template.months.map((month) => (
-                    <div key={`${template.template_id}-${month.month_key}`} className="report-col" title={`${month.month_label}: ${month.total_generated}`}>
-                      <div className="report-bar" style={{ height: `${Math.max(8, (Number(month.total_generated || 0) / maxValue) * 100)}%` }} />
-                      <span>{month.month_label}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-          {monthlyReport.length === 0 && (
-            <p className="muted">No template report data yet.</p>
-          )}
-        </div>
+        <TemplateMonthlyAreaChart
+          monthlyReport={visibleMonthlyReport}
+          timeRange={monthlyReportRange}
+          onTimeRangeChange={setMonthlyReportRange}
+        />
       </section>
       </>
       )}
@@ -1471,14 +1569,18 @@ export default function AdminPanel({
         <div className="grid two">
           <div className="card">
             <h4>Filters</h4>
-            <label>Keyword</label>
+            <label htmlFor="admin-filter-keyword">Keyword</label>
             <input
+              id="admin-filter-keyword"
+              name="keyword"
               value={listFilters.keyword}
               onChange={(e) => setListFilters({ ...listFilters, keyword: e.target.value })}
               placeholder="Search submitted data / id / user"
             />
-            <label>User</label>
+            <label htmlFor="admin-filter-user">User</label>
             <select
+              id="admin-filter-user"
+              name="user_id"
               value={listFilters.user_id}
               onChange={(e) => setListFilters({ ...listFilters, user_id: e.target.value })}
             >
@@ -1487,14 +1589,18 @@ export default function AdminPanel({
                 <option key={u.id} value={u.id}>{u.name} ({u.email})</option>
               ))}
             </select>
-            <label>Date From</label>
+            <label htmlFor="admin-filter-date-from">Date From</label>
             <input
+              id="admin-filter-date-from"
+              name="date_from"
               type="date"
               value={listFilters.date_from}
               onChange={(e) => setListFilters({ ...listFilters, date_from: e.target.value })}
             />
-            <label>Date To</label>
+            <label htmlFor="admin-filter-date-to">Date To</label>
             <input
+              id="admin-filter-date-to"
+              name="date_to"
               type="date"
               value={listFilters.date_to}
               onChange={(e) => setListFilters({ ...listFilters, date_to: e.target.value })}
@@ -1503,14 +1609,16 @@ export default function AdminPanel({
 
           <div className="card">
             <h4>Bulk Actions</h4>
-            <label>Status</label>
-            <select value={bulkStatus} onChange={(e) => setBulkStatus(e.target.value)}>
+            <label htmlFor="admin-bulk-status">Status</label>
+            <select id="admin-bulk-status" name="bulk_status" value={bulkStatus} onChange={(e) => setBulkStatus(e.target.value)}>
               {statusTabs.map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
             {bulkStatus === 'rescheduled' && (
               <>
-                <label>Reschedule Date</label>
+                <label htmlFor="admin-bulk-reschedule-date">Reschedule Date</label>
                 <input
+                  id="admin-bulk-reschedule-date"
+                  name="bulk_reschedule_date"
                   type="datetime-local"
                   value={bulkRescheduleDate}
                   onChange={(e) => setBulkRescheduleDate(e.target.value)}
@@ -1527,6 +1635,8 @@ export default function AdminPanel({
               <tr>
                 <th>
                   <input
+                    name="select_all_rows"
+                    aria-label="Select all workflow rows"
                     type="checkbox"
                     checked={items.length > 0 && items.every((i) => selectedRows[i.id])}
                     onChange={(e) => {
@@ -1549,6 +1659,8 @@ export default function AdminPanel({
                 <tr key={item.id}>
                   <td>
                     <input
+                      name={`selected_row_${item.id}`}
+                      aria-label={`Select row ${item.id}`}
                       type="checkbox"
                       checked={Boolean(selectedRows[item.id])}
                       onChange={(e) => setSelectedRows({ ...selectedRows, [item.id]: e.target.checked })}

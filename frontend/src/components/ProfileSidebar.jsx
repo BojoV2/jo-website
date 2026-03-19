@@ -196,21 +196,29 @@ export default function ProfileSidebar({
           {message && <div className="notice is-success">{message}</div>}
 
           <form onSubmit={saveProfile} className="sidebar-form">
-            <label>Name</label>
+            <label htmlFor="profile-name">Name</label>
             <input
+              id="profile-name"
+              name="name"
               value={profileForm.name}
               onChange={(e) => setProfileForm((prev) => ({ ...prev, name: e.target.value }))}
+              autoComplete="name"
               required
             />
-            <label>Email</label>
+            <label htmlFor="profile-email">Email</label>
             <input
+              id="profile-email"
+              name="email"
               type="email"
               value={profileForm.email}
               onChange={(e) => setProfileForm((prev) => ({ ...prev, email: e.target.value }))}
+              autoComplete="email"
               required
             />
-            <label>Avatar URL (optional)</label>
+            <label htmlFor="profile-avatar-url">Avatar URL (optional)</label>
             <input
+              id="profile-avatar-url"
+              name="avatar_url"
               value={profileForm.avatar_url}
               onChange={(e) => setProfileForm((prev) => ({ ...prev, avatar_url: e.target.value }))}
               placeholder="https://..."
@@ -232,26 +240,35 @@ export default function ProfileSidebar({
           </form>
 
           <form onSubmit={savePassword} className="sidebar-form">
-            <label>Current Password</label>
+            <label htmlFor="profile-current-password">Current Password</label>
             <input
+              id="profile-current-password"
+              name="current_password"
               type="password"
               value={passwordForm.current_password}
               onChange={(e) => setPasswordForm((prev) => ({ ...prev, current_password: e.target.value }))}
+              autoComplete="current-password"
               required
             />
-            <label>New Password</label>
+            <label htmlFor="profile-new-password">New Password</label>
             <input
+              id="profile-new-password"
+              name="new_password"
               type="password"
               value={passwordForm.new_password}
               onChange={(e) => setPasswordForm((prev) => ({ ...prev, new_password: e.target.value }))}
+              autoComplete="new-password"
               required
               minLength={6}
             />
-            <label>Confirm New Password</label>
+            <label htmlFor="profile-confirm-password">Confirm New Password</label>
             <input
+              id="profile-confirm-password"
+              name="confirm_password"
               type="password"
               value={passwordForm.confirm_password}
               onChange={(e) => setPasswordForm((prev) => ({ ...prev, confirm_password: e.target.value }))}
+              autoComplete="new-password"
               required
               minLength={6}
             />
