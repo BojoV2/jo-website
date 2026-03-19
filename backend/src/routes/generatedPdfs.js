@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { query } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { generatePdfFromTemplate } from '../services/pdfService.js';
+import { syncGeneratedPdfToGoogleSheets, isGoogleSheetsEnabled } from '../services/googleSheetsService.js';
 
 const router = express.Router();
 
@@ -154,7 +155,12 @@ router.post('/generate', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'template_id and submitted_data(object) are required' });
     }
 
-    const templateResult = await query('SELECT id, file_path, version FROM pdf_templates WHERE id = $1', [template_id]);
+    const templateResult = await query(
+      `SELECT id, title, description, file_path, version, google_spreadsheet_id, google_spreadsheet_url
+       FROM pdf_templates
+       WHERE id = $1`,
+      [template_id]
+    );
     if (templateResult.rowCount === 0) {
       return res.status(404).json({ error: 'Template not found' });
     }
@@ -210,6 +216,42 @@ router.post('/generate', requireAuth, async (req, res) => {
        VALUES ($1, $2, $3, $4, $5, $6)`,
       [uuidv4(), generatedId, null, 'pending', req.user.id, 'PDF generated']
     );
+
+    try {
+      if (isGoogleSheetsEnabled()) {
+        const syncResult = await syncGeneratedPdfToGoogleSheets({
+          template: templateResult.rows[0],
+          generatedPdf: {
+            id: generatedId,
+            created_at: new Date().toISOString(),
+            template_version: Number(templateResult.rows[0].version || 1),
+            file_path: outputRelativePath,
+            status: 'pending',
+            status_note: null,
+            reschedule_date: null
+          },
+          submittedData: submitted_data,
+          user: req.user
+        });
+
+        if (syncResult?.spreadsheetId && syncResult.spreadsheetId !== templateResult.rows[0].google_spreadsheet_id) {
+          await query(
+            `UPDATE pdf_templates
+             SET google_spreadsheet_id = $1,
+                 google_spreadsheet_url = $2
+             WHERE id = $3`,
+            [syncResult.spreadsheetId, syncResult.spreadsheetUrl || null, template_id]
+          );
+        }
+      }
+    } catch (err) {
+      await query('DELETE FROM status_history WHERE generated_pdf_id = $1', [generatedId]);
+      await query('DELETE FROM generated_pdfs WHERE id = $1', [generatedId]);
+      if (fs.existsSync(outputAbsolutePath)) {
+        fs.unlinkSync(outputAbsolutePath);
+      }
+      throw err;
+    }
 
     return res.status(201).json({
       id: generatedId,

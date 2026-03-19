@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS pdf_templates (
     title VARCHAR(200) NOT NULL,
     description TEXT,
     file_path TEXT NOT NULL,
+    google_spreadsheet_id TEXT,
+    google_spreadsheet_url TEXT,
     version INT DEFAULT 1,
     created_by UUID REFERENCES users(id) ON DELETE SET NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -49,6 +51,8 @@ ALTER TABLE pdf_fields ADD COLUMN IF NOT EXISTS auto_font BOOLEAN DEFAULT TRUE;
 ALTER TABLE pdf_fields ADD COLUMN IF NOT EXISTS field_options JSONB DEFAULT '[]'::jsonb;
 ALTER TABLE pdf_fields ADD COLUMN IF NOT EXISTS validation_rules JSONB DEFAULT '{}'::jsonb;
 ALTER TABLE pdf_templates ADD COLUMN IF NOT EXISTS version INT DEFAULT 1;
+ALTER TABLE pdf_templates ADD COLUMN IF NOT EXISTS google_spreadsheet_id TEXT;
+ALTER TABLE pdf_templates ADD COLUMN IF NOT EXISTS google_spreadsheet_url TEXT;
 ALTER TABLE pdf_fields ADD COLUMN IF NOT EXISTS template_version INT DEFAULT 1;
 
 CREATE TABLE IF NOT EXISTS generated_pdfs (

@@ -24,6 +24,31 @@ On host machine these map to:
 - `./storage/templates`
 - `./storage/generated`
 
+## Google Sheets Sync
+
+Each template can have its own Google Spreadsheet.
+
+- Existing templates: a spreadsheet is created or re-linked automatically on backend startup.
+- New templates: a spreadsheet is created automatically when the template is added.
+- Monthly rollover: every template spreadsheet gets a worksheet tab named `YYYY-MM`, and the backend scheduler ensures the current month tab exists automatically.
+- Generated PDF submissions: each generated record is appended to the worksheet for that month.
+
+Required Google service account configuration:
+
+- `GOOGLE_SERVICE_ACCOUNT_JSON` or `GOOGLE_SERVICE_ACCOUNT_JSON_BASE64`
+- Or use both `GOOGLE_SERVICE_ACCOUNT_EMAIL` and `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY`
+
+Optional settings:
+
+- `GOOGLE_PROJECT_ID`
+- `GOOGLE_SHEETS_SHARE_EMAIL` to auto-share each spreadsheet with a user or shared mailbox
+- `GOOGLE_SHEETS_SYNC_INTERVAL_MINUTES` to control how often the backend ensures current month sheets for all templates
+
+Recommended Google APIs to enable in the Google Cloud project:
+
+- Google Sheets API
+- Google Drive API
+
 ## Core Endpoints
 
 ### Auth
