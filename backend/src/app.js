@@ -14,6 +14,7 @@ const storageRoot = process.env.STORAGE_ROOT || path.resolve(__dirname, '../../s
 
 fs.mkdirSync(path.join(storageRoot, 'templates'), { recursive: true });
 fs.mkdirSync(path.join(storageRoot, 'generated'), { recursive: true });
+fs.mkdirSync(path.join(storageRoot, 'template-predefined-pdfs'), { recursive: true });
 
 const app = express();
 

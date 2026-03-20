@@ -1,5 +1,5 @@
-import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
-import { apiRequest, getApiBase } from './api.js';
+import { Suspense, lazy, useEffect, useState } from 'react';
+import { apiRequest } from './api.js';
 import LoginForm from './components/LoginForm.jsx';
 
 const AdminPanel = lazy(() => import('./components/AdminPanel.jsx'));
@@ -25,8 +25,6 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [theme, setTheme] = useState(readTheme());
-
-  const apiBase = useMemo(() => getApiBase(), []);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -113,16 +111,13 @@ export default function App() {
 
   if (!session) {
     return (
-      <>
-        <LoginForm
-          onLogin={handleLogin}
-          loading={loading}
-          error={error}
-          theme={theme}
-          onToggleTheme={toggleTheme}
-        />
-        <div className="meta">API: {apiBase}</div>
-      </>
+      <LoginForm
+        onLogin={handleLogin}
+        loading={loading}
+        error={error}
+        theme={theme}
+        onToggleTheme={toggleTheme}
+      />
     );
   }
 

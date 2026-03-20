@@ -242,6 +242,7 @@ export default function UserPanel({
   const [showPreviewMapper, setShowPreviewMapper] = useState(false);
   const [analytics, setAnalytics] = useState(null);
   const [monthlyReport, setMonthlyReport] = useState([]);
+  const [predefinedPdfs, setPredefinedPdfs] = useState([]);
   const [monthlyReportRange, setMonthlyReportRange] = useState(DEFAULT_MONTHLY_RANGE);
   const [pendingPageSize, setPendingPageSize] = useState('20');
   const [pendingPage, setPendingPage] = useState(1);
@@ -252,6 +253,8 @@ export default function UserPanel({
   const [manualAddValues, setManualAddValues] = useState({});
 
   const canvasRef = useRef(null);
+  const renderTaskRef = useRef(null);
+  const renderRequestRef = useRef(0);
 
   const selectedTemplate = useMemo(
     () => templates.find((t) => t.id === selectedTemplateId),
@@ -327,12 +330,6 @@ export default function UserPanel({
         value: analytics.rescheduled_count ?? 0,
         meta: 'Moved forward',
         tone: 'muted'
-      },
-      {
-        label: 'Avg Processing',
-        value: `${Math.round(Number(analytics.avg_processing_seconds || 0))} sec`,
-        meta: 'Done records only',
-        tone: 'primary'
       }
     ];
   }, [analytics]);
@@ -435,6 +432,11 @@ export default function UserPanel({
     setMonthlyReport(data.templates || []);
   }
 
+  async function loadPredefinedPdfs() {
+    const data = await apiRequest('/templates/predefined-pdfs', { token });
+    setPredefinedPdfs(data);
+  }
+
   async function loadPdfPreview(templateId, cacheKey) {
     if (!templateId) {
       setPdfDoc(null);
@@ -452,8 +454,26 @@ export default function UserPanel({
 
   async function renderPage() {
     if (!pdfDoc || !canvasRef.current) return;
+    const requestId = ++renderRequestRef.current;
+
+    if (renderTaskRef.current) {
+      renderTaskRef.current.cancel();
+      try {
+        await renderTaskRef.current.promise;
+      } catch (err) {
+        if (err?.name !== 'RenderingCancelledException') {
+          throw err;
+        }
+      } finally {
+        renderTaskRef.current = null;
+      }
+    }
+
     const pageNumber = Number(previewPage) || 1;
     const page = await pdfDoc.getPage(pageNumber);
+    if (requestId !== renderRequestRef.current || !canvasRef.current) {
+      return;
+    }
     const desiredWidth = Math.min(900, window.innerWidth - 120);
     const scale = desiredWidth / page.getViewport({ scale: 1 }).width;
     const viewport = page.getViewport({ scale });
@@ -461,7 +481,28 @@ export default function UserPanel({
     const ctx = canvas.getContext('2d');
     canvas.width = viewport.width;
     canvas.height = viewport.height;
-    await page.render({ canvasContext: ctx, viewport }).promise;
+    const renderTask = page.render({ canvasContext: ctx, viewport });
+    renderTaskRef.current = renderTask;
+
+    try {
+      await renderTask.promise;
+    } catch (err) {
+      if (renderTaskRef.current === renderTask) {
+        renderTaskRef.current = null;
+      }
+      if (err?.name === 'RenderingCancelledException') {
+        return;
+      }
+      throw err;
+    }
+
+    if (renderTaskRef.current === renderTask) {
+      renderTaskRef.current = null;
+    }
+    if (requestId !== renderRequestRef.current) {
+      return;
+    }
+
     const bounds = canvas.getBoundingClientRect();
     setRenderMeta({ width: bounds.width, height: bounds.height });
   }
@@ -497,6 +538,11 @@ export default function UserPanel({
   useEffect(() => {
     writeStoredTemplateId(user?.id, selectedTemplateId);
   }, [selectedTemplateId, user?.id]);
+
+  useEffect(() => {
+    loadPredefinedPdfs().catch((err) => setMessage(err.message));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!selectedTemplateId) return;
@@ -541,6 +587,14 @@ export default function UserPanel({
     return () => window.removeEventListener('resize', onResize);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pdfDoc, previewPage]);
+
+  useEffect(() => () => {
+    renderRequestRef.current += 1;
+    if (renderTaskRef.current) {
+      renderTaskRef.current.cancel();
+      renderTaskRef.current = null;
+    }
+  }, []);
 
   function validateSubmissionValues(values) {
     for (const field of fields) {
@@ -946,6 +1000,27 @@ export default function UserPanel({
                 <span className="template-stack-summary-title">{selectedTemplate.title}</span>
                 <span className="template-stack-summary-desc">{selectedTemplate.description || 'No description.'}</span>
               </div>
+              {predefinedPdfs.length > 0 && (
+                <div className="workspace-resource-panel">
+                  <div className="workspace-resource-head">
+                    <strong>Predefined PDFs</strong>
+                    <span>Open the files prepared by admin across all available templates.</span>
+                  </div>
+                  <div className="workspace-resource-list">
+                    {predefinedPdfs.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className="workspace-resource-btn"
+                        onClick={() => openWithTokenInNewTab(`/templates/predefined-pdfs/${item.id}/file`, token)}
+                      >
+                        <span>{item.name}</span>
+                        <small>{item.template_title || 'Template'}</small>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="user-quick-metrics">
                 {compactAnalyticsItems.map((item) => (
                   <div key={item.label} className="user-quick-metric">

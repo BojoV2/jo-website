@@ -11,23 +11,30 @@ const router = express.Router();
 
 const storageRoot = process.env.STORAGE_ROOT || path.resolve(process.cwd(), '../storage');
 const templateDir = path.join(storageRoot, 'templates');
+const predefinedPdfDir = path.join(storageRoot, 'template-predefined-pdfs');
 fs.mkdirSync(templateDir, { recursive: true });
+fs.mkdirSync(predefinedPdfDir, { recursive: true });
 
-const upload = multer({
-  storage: multer.diskStorage({
-    destination: (_req, _file, cb) => cb(null, templateDir),
-    filename: (_req, file, cb) => {
-      const ext = path.extname(file.originalname) || '.pdf';
-      cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`);
+function createPdfUpload(destination) {
+  return multer({
+    storage: multer.diskStorage({
+      destination: (_req, _file, cb) => cb(null, destination),
+      filename: (_req, file, cb) => {
+        const ext = path.extname(file.originalname) || '.pdf';
+        cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`);
+      }
+    }),
+    fileFilter: (_req, file, cb) => {
+      if (file.mimetype !== 'application/pdf') {
+        return cb(new Error('Only PDF files are allowed'));
+      }
+      return cb(null, true);
     }
-  }),
-  fileFilter: (_req, file, cb) => {
-    if (file.mimetype !== 'application/pdf') {
-      return cb(new Error('Only PDF files are allowed'));
-    }
-    return cb(null, true);
-  }
-});
+  });
+}
+
+const upload = createPdfUpload(templateDir);
+const predefinedPdfUpload = createPdfUpload(predefinedPdfDir);
 
 const allowedFieldTypes = ['text', 'dropdown', 'date', 'order_number', 'checkbox'];
 
@@ -83,6 +90,14 @@ async function bumpTemplateVersion(templateId) {
     throw new Error('Template not found');
   }
   return Number(result.rows[0].version || 1);
+}
+
+function removeFileIfExists(relativePath) {
+  if (!relativePath) return;
+  const absolutePath = path.join(storageRoot, relativePath);
+  if (fs.existsSync(absolutePath)) {
+    fs.unlinkSync(absolutePath);
+  }
 }
 
 router.get('/', requireAuth, async (_req, res) => {
@@ -203,23 +218,148 @@ router.delete('/:templateId', requireAuth, requireRole('super_admin', 'admin'), 
     }
 
     const generatedFiles = await query('SELECT file_path FROM generated_pdfs WHERE template_id = $1', [req.params.templateId]);
+    const predefinedFiles = await query('SELECT file_path FROM template_predefined_pdfs WHERE template_id = $1', [req.params.templateId]);
 
     await query('UPDATE users SET favorite_template_id = NULL WHERE favorite_template_id = $1', [req.params.templateId]);
     await query('DELETE FROM pdf_templates WHERE id = $1', [req.params.templateId]);
 
-    const templateAbsolutePath = path.join(storageRoot, templateResult.rows[0].file_path);
-    if (fs.existsSync(templateAbsolutePath)) {
-      fs.unlinkSync(templateAbsolutePath);
-    }
+    removeFileIfExists(templateResult.rows[0].file_path);
 
     for (const row of generatedFiles.rows) {
-      const absPath = path.join(storageRoot, row.file_path);
-      if (fs.existsSync(absPath)) {
-        fs.unlinkSync(absPath);
-      }
+      removeFileIfExists(row.file_path);
+    }
+
+    for (const row of predefinedFiles.rows) {
+      removeFileIfExists(row.file_path);
     }
 
     return res.status(204).send();
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/predefined-pdfs', requireAuth, async (_req, res) => {
+  try {
+    const result = await query(
+      `SELECT p.id, p.template_id, p.name, p.file_path, p.created_by, p.created_at,
+              t.title AS template_title,
+              u.name AS created_by_name
+       FROM template_predefined_pdfs p
+       JOIN pdf_templates t ON t.id = p.template_id
+       LEFT JOIN users u ON u.id = p.created_by
+       ORDER BY t.title ASC, p.created_at DESC, p.name ASC`
+    );
+
+    return res.json(result.rows);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/:templateId/predefined-pdfs', requireAuth, async (req, res) => {
+  try {
+    const template = await query('SELECT id FROM pdf_templates WHERE id = $1', [req.params.templateId]);
+    if (template.rowCount === 0) {
+      return res.status(404).json({ error: 'Template not found' });
+    }
+
+    const result = await query(
+      `SELECT p.id, p.template_id, p.name, p.file_path, p.created_by, p.created_at,
+              u.name AS created_by_name
+       FROM template_predefined_pdfs p
+       LEFT JOIN users u ON u.id = p.created_by
+       WHERE p.template_id = $1
+       ORDER BY p.created_at DESC, p.name ASC`,
+      [req.params.templateId]
+    );
+
+    return res.json(result.rows);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/:templateId/predefined-pdfs', requireAuth, requireRole('super_admin', 'admin'), predefinedPdfUpload.single('pdf'), async (req, res) => {
+  try {
+    const name = String(req.body.name || '').trim();
+    if (!name || !req.file) {
+      if (req.file?.path) {
+        fs.unlinkSync(req.file.path);
+      }
+      return res.status(400).json({ error: 'name and pdf file are required' });
+    }
+
+    const template = await query('SELECT id FROM pdf_templates WHERE id = $1', [req.params.templateId]);
+    if (template.rowCount === 0) {
+      fs.unlinkSync(req.file.path);
+      return res.status(404).json({ error: 'Template not found' });
+    }
+
+    const id = uuidv4();
+    const filePath = path.join('template-predefined-pdfs', req.file.filename);
+    await query(
+      `INSERT INTO template_predefined_pdfs (id, template_id, name, file_path, created_by)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [id, req.params.templateId, name, filePath, req.user.id]
+    );
+
+    return res.status(201).json({
+      id,
+      template_id: req.params.templateId,
+      name,
+      file_path: filePath,
+      created_by: req.user.id
+    });
+  } catch (err) {
+    if (req.file?.path && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/predefined-pdfs/:predefinedPdfId', requireAuth, requireRole('super_admin', 'admin'), async (req, res) => {
+  try {
+    const result = await query(
+      `DELETE FROM template_predefined_pdfs
+       WHERE id = $1
+       RETURNING file_path`,
+      [req.params.predefinedPdfId]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Predefined PDF not found' });
+    }
+
+    removeFileIfExists(result.rows[0].file_path);
+    return res.status(204).send();
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/predefined-pdfs/:predefinedPdfId/file', requireAuth, async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT p.file_path, p.name
+       FROM template_predefined_pdfs p
+       WHERE p.id = $1`,
+      [req.params.predefinedPdfId]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Predefined PDF not found' });
+    }
+
+    const filePath = result.rows[0].file_path;
+    const absolutePath = path.join(storageRoot, filePath);
+    if (!fs.existsSync(absolutePath)) {
+      return res.status(404).json({ error: 'Predefined PDF file missing' });
+    }
+
+    res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(`${result.rows[0].name}.pdf`)}"`);
+    return res.sendFile(absolutePath);
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }

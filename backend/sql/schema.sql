@@ -91,6 +91,15 @@ CREATE TABLE IF NOT EXISTS field_presets (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS template_predefined_pdfs (
+    id UUID PRIMARY KEY,
+    template_id UUID REFERENCES pdf_templates(id) ON DELETE CASCADE,
+    name VARCHAR(200) NOT NULL,
+    file_path TEXT NOT NULL,
+    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_pdf_fields_template_id ON pdf_fields(template_id);
 CREATE INDEX IF NOT EXISTS idx_generated_pdfs_template_id ON generated_pdfs(template_id);
 CREATE INDEX IF NOT EXISTS idx_generated_pdfs_status ON generated_pdfs(status);
@@ -99,3 +108,4 @@ CREATE INDEX IF NOT EXISTS idx_status_history_generated_pdf_id ON status_history
 CREATE INDEX IF NOT EXISTS idx_generated_pdfs_created_at ON generated_pdfs(created_at);
 CREATE INDEX IF NOT EXISTS idx_generated_pdfs_user_id ON generated_pdfs(user_id);
 CREATE INDEX IF NOT EXISTS idx_field_presets_created_by ON field_presets(created_by);
+CREATE INDEX IF NOT EXISTS idx_template_predefined_pdfs_template_id ON template_predefined_pdfs(template_id);

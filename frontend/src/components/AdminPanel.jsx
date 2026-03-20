@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { apiRequest, downloadWithToken, fetchArrayBuffer } from '../api.js';
+import { apiRequest, downloadWithToken, fetchArrayBuffer, openWithTokenInNewTab } from '../api.js';
 import { GlobalWorkerOptions, getDocument } from 'pdfjs-dist/build/pdf.mjs';
 import workerSrc from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import ProfileSidebar from './ProfileSidebar.jsx';
@@ -64,6 +64,9 @@ export default function AdminPanel({
   const [templateEditForm, setTemplateEditForm] = useState({ title: '', description: '' });
   const [templateReplaceFile, setTemplateReplaceFile] = useState(null);
   const [replaceFileInputKey, setReplaceFileInputKey] = useState(0);
+  const [predefinedPdfs, setPredefinedPdfs] = useState([]);
+  const [predefinedPdfForm, setPredefinedPdfForm] = useState({ name: '', file: null });
+  const [predefinedPdfInputKey, setPredefinedPdfInputKey] = useState(0);
   const [userForm, setUserForm] = useState({
     name: '',
     email: '',
@@ -116,6 +119,8 @@ export default function AdminPanel({
   const canvasRef = useRef(null);
   const overlayRef = useRef(null);
   const stageRef = useRef(null);
+  const renderTaskRef = useRef(null);
+  const renderRequestRef = useRef(0);
 
   const selectedTemplate = useMemo(
     () => templates.find((t) => t.id === selectedTemplateId),
@@ -160,20 +165,14 @@ export default function AdminPanel({
         meta: `${Number(analytics.cancellation_rate || 0).toFixed(2)}% rate`,
         tone: 'danger'
       },
-      {
-        label: 'Rescheduled',
-        value: analytics.rescheduled_count ?? 0,
-        meta: 'Moved forward',
-        tone: 'muted'
-      },
-      {
-        label: 'Avg Processing',
-        value: `${Math.round(Number(analytics.avg_processing_seconds || 0))} sec`,
-        meta: 'Done records only',
-        tone: 'primary'
-      }
-    ];
-  }, [analytics]);
+        {
+          label: 'Rescheduled',
+          value: analytics.rescheduled_count ?? 0,
+          meta: 'Moved forward',
+          tone: 'muted'
+        }
+      ];
+    }, [analytics]);
 
   const adminOverviewStats = useMemo(() => ([
     { label: 'Templates', value: templates.length, meta: 'Configured PDFs' },
@@ -242,6 +241,15 @@ export default function AdminPanel({
     setAnalytics(data);
   }
 
+  async function loadPredefinedPdfs(templateId) {
+    if (!templateId) {
+      setPredefinedPdfs([]);
+      return;
+    }
+    const data = await apiRequest(`/templates/${templateId}/predefined-pdfs`, { token });
+    setPredefinedPdfs(data);
+  }
+
   async function loadMonthlyReport(months = Number(monthlyReportRange) || Number(DEFAULT_MONTHLY_RANGE)) {
     const data = await apiRequest(`/generated-pdfs/analytics/templates/monthly?months=${months}`, { token });
     setMonthlyReport(data.templates || []);
@@ -266,12 +274,30 @@ export default function AdminPanel({
 
   async function renderPage() {
     if (!pdfDoc || !canvasRef.current) return;
+    const requestId = ++renderRequestRef.current;
+
+    if (renderTaskRef.current) {
+      renderTaskRef.current.cancel();
+      try {
+        await renderTaskRef.current.promise;
+      } catch (err) {
+        if (err?.name !== 'RenderingCancelledException') {
+          throw err;
+        }
+      } finally {
+        renderTaskRef.current = null;
+      }
+    }
 
     const pageNumber = Number(fieldForm.page_number) || 1;
     const page = await pdfDoc.getPage(pageNumber);
+    if (requestId !== renderRequestRef.current || !canvasRef.current) {
+      return;
+    }
+    const baseViewport = page.getViewport({ scale: 1 });
     const stageWidth = stageRef.current?.clientWidth || stageRef.current?.parentElement?.clientWidth || 0;
-    const desiredWidth = Math.min(900, Math.max(320, stageWidth || (window.innerWidth - 120)));
-    const scale = desiredWidth / page.getViewport({ scale: 1 }).width;
+    const desiredWidth = Math.max(baseViewport.width, stageWidth || 0);
+    const scale = desiredWidth / baseViewport.width;
     const viewport = page.getViewport({ scale });
 
     const canvas = canvasRef.current;
@@ -279,7 +305,27 @@ export default function AdminPanel({
     canvas.width = viewport.width;
     canvas.height = viewport.height;
 
-    await page.render({ canvasContext: ctx, viewport }).promise;
+    const renderTask = page.render({ canvasContext: ctx, viewport });
+    renderTaskRef.current = renderTask;
+
+    try {
+      await renderTask.promise;
+    } catch (err) {
+      if (renderTaskRef.current === renderTask) {
+        renderTaskRef.current = null;
+      }
+      if (err?.name === 'RenderingCancelledException') {
+        return;
+      }
+      throw err;
+    }
+
+    if (renderTaskRef.current === renderTask) {
+      renderTaskRef.current = null;
+    }
+    if (requestId !== renderRequestRef.current) {
+      return;
+    }
 
     const bounds = canvas.getBoundingClientRect();
     setRenderMeta({ width: bounds.width, height: bounds.height });
@@ -303,6 +349,7 @@ export default function AdminPanel({
     loadFields(selectedTemplateId).catch((err) => setMessage(err.message));
     loadGenerated(selectedTemplateId, activeStatus).catch((err) => setMessage(err.message));
     loadAnalytics(selectedTemplateId).catch((err) => setMessage(err.message));
+    loadPredefinedPdfs(selectedTemplateId).catch((err) => setMessage(err.message));
     loadPdfPreview(selectedTemplateId, selectedTemplate?.version).catch((err) => setMessage(err.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTemplateId, selectedTemplate?.version, activeStatus, listFilters.keyword, listFilters.user_id, listFilters.date_from, listFilters.date_to]);
@@ -361,12 +408,22 @@ export default function AdminPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pdfDoc, fieldForm.page_number]);
 
+  useEffect(() => () => {
+    renderRequestRef.current += 1;
+    if (renderTaskRef.current) {
+      renderTaskRef.current.cancel();
+      renderTaskRef.current = null;
+    }
+  }, []);
+
   useEffect(() => {
     if (!selectedTemplate) return;
     setTemplateEditForm({
       title: selectedTemplate.title || '',
       description: selectedTemplate.description || ''
     });
+    setPredefinedPdfForm({ name: '', file: null });
+    setPredefinedPdfInputKey((prev) => prev + 1);
   }, [selectedTemplate]);
 
   async function submitTemplate(e) {
@@ -606,6 +663,59 @@ export default function AdminPanel({
       const nextVersion = nextTemplates.find((template) => template.id === selectedTemplateId)?.version || Date.now();
       await loadPdfPreview(selectedTemplateId, nextVersion);
       setMessage('Template PDF replaced. Existing mapped fields were kept.');
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitPredefinedPdf(e) {
+    e.preventDefault();
+    if (!selectedTemplateId) {
+      setMessage('Select a template first.');
+      return;
+    }
+    if (!predefinedPdfForm.name.trim() || !predefinedPdfForm.file) {
+      setMessage('Predefined PDF name and file are required.');
+      return;
+    }
+
+    setBusy(true);
+    setMessage('');
+    try {
+      const formData = new FormData();
+      formData.append('name', predefinedPdfForm.name.trim());
+      formData.append('pdf', predefinedPdfForm.file);
+      await apiRequest(`/templates/${selectedTemplateId}/predefined-pdfs`, {
+        method: 'POST',
+        token,
+        formData
+      });
+      setPredefinedPdfForm({ name: '', file: null });
+      setPredefinedPdfInputKey((prev) => prev + 1);
+      await loadPredefinedPdfs(selectedTemplateId);
+      setMessage('Predefined PDF saved.');
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deletePredefinedPdf(predefinedPdfId) {
+    const ok = window.confirm('Delete this predefined PDF?');
+    if (!ok) return;
+
+    setBusy(true);
+    setMessage('');
+    try {
+      await apiRequest(`/templates/predefined-pdfs/${predefinedPdfId}`, {
+        method: 'DELETE',
+        token
+      });
+      await loadPredefinedPdfs(selectedTemplateId);
+      setMessage('Predefined PDF deleted.');
     } catch (err) {
       setMessage(err.message);
     } finally {
@@ -971,6 +1081,7 @@ export default function AdminPanel({
       </section>
 
       {activeAdminTab === 'templates' && (
+      <>
       <section className="grid two">
         <form className="card" onSubmit={submitTemplate}>
           <h3>Upload Template</h3>
@@ -1055,6 +1166,72 @@ export default function AdminPanel({
           )}
         </div>
       </section>
+      {selectedTemplate && (
+      <section className="grid two">
+        <form className="card" onSubmit={submitPredefinedPdf}>
+          <h3>Predefined PDFs</h3>
+          <p className="muted">Upload reusable PDFs for the selected template. Users can open them directly from the Template workspace.</p>
+          <label htmlFor="admin-predefined-pdf-name">Display Name</label>
+          <input
+            id="admin-predefined-pdf-name"
+            name="predefined_pdf_name"
+            value={predefinedPdfForm.name}
+            onChange={(e) => setPredefinedPdfForm({ ...predefinedPdfForm, name: e.target.value })}
+            placeholder="Installation guide"
+            required
+          />
+          <label htmlFor="admin-predefined-pdf-file">PDF File</label>
+          <input
+            id="admin-predefined-pdf-file"
+            key={predefinedPdfInputKey}
+            name="predefined_pdf_file"
+            type="file"
+            accept="application/pdf"
+            onChange={(e) => setPredefinedPdfForm({ ...predefinedPdfForm, file: e.target.files?.[0] || null })}
+            required
+          />
+          <button disabled={busy || !selectedTemplateId}>
+            {busy ? 'Saving...' : 'Save Predefined PDF'}
+          </button>
+        </form>
+
+        <div className="card">
+          <h3>Available Predefined PDFs</h3>
+          <p className="muted">These appear on the user Template workspace for {selectedTemplate.title}.</p>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Added By</th>
+                  <th>Created</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {predefinedPdfs.map((item) => (
+                  <tr key={item.id}>
+                    <td>{item.name}</td>
+                    <td>{item.created_by_name || '-'}</td>
+                    <td>{new Date(item.created_at).toLocaleString()}</td>
+                    <td className="actions">
+                      <button type="button" onClick={() => openWithTokenInNewTab(`/templates/predefined-pdfs/${item.id}/file`, token)}>Open</button>
+                      <button type="button" className="warn" onClick={() => deletePredefinedPdf(item.id)} disabled={busy}>Delete</button>
+                    </td>
+                  </tr>
+                ))}
+                {predefinedPdfs.length === 0 && (
+                  <tr>
+                    <td colSpan="4">No predefined PDFs uploaded for this template yet.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+      )}
+      </>
       )}
 
       {activeAdminTab === 'users' && (
