@@ -1004,7 +1004,6 @@ export default function UserPanel({
                 <div className="workspace-resource-panel">
                   <div className="workspace-resource-head">
                     <strong>Predefined PDFs</strong>
-                    <span>Open the files prepared by admin across all available templates.</span>
                   </div>
                   <div className="workspace-resource-list">
                     {predefinedPdfs.map((item) => (
@@ -1015,7 +1014,6 @@ export default function UserPanel({
                         onClick={() => openWithTokenInNewTab(`/templates/predefined-pdfs/${item.id}/file`, token)}
                       >
                         <span>{item.name}</span>
-                        <small>{item.template_title || 'Template'}</small>
                       </button>
                     ))}
                   </div>
