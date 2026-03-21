@@ -5,6 +5,15 @@ import { isGoogleSheetsEnabled, syncAllTemplateSpreadsheets } from './services/g
 
 dotenv.config();
 
+if (!process.env.JWT_SECRET) {
+  console.error('FATAL: JWT_SECRET environment variable is not set.');
+  process.exit(1);
+}
+if (!process.env.DATABASE_URL) {
+  console.error('FATAL: DATABASE_URL environment variable is not set.');
+  process.exit(1);
+}
+
 const port = process.env.PORT || 8080;
 
 async function syncGoogleSheetsTemplateState() {

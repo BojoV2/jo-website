@@ -18,7 +18,7 @@ fs.mkdirSync(path.join(storageRoot, 'template-predefined-pdfs'), { recursive: tr
 
 const app = express();
 
-app.use(cors({ origin: process.env.CORS_ORIGIN || '*' }));
+app.use(cors({ origin: process.env.CORS_ORIGIN || 'http://localhost:3000' }));
 app.use(express.json({ limit: '5mb' }));
 
 app.get('/health', (_req, res) => {

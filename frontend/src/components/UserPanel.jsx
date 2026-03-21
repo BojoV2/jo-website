@@ -3,7 +3,8 @@ import { apiRequest, downloadWithToken, fetchArrayBuffer, openWithTokenInNewTab 
 import { GlobalWorkerOptions, getDocument } from 'pdfjs-dist/build/pdf.mjs';
 import workerSrc from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import ProfileSidebar from './ProfileSidebar.jsx';
-import TemplateMonthlyAreaChart from './TemplateMonthlyAreaChart.jsx';
+import StatusStackedBarChart from './StatusStackedBarChart.jsx';
+import StatusDonutChart from './StatusDonutChart.jsx';
 import { resolveAvatar } from '../utils/avatar.js';
 
 GlobalWorkerOptions.workerSrc = workerSrc;
@@ -242,6 +243,7 @@ export default function UserPanel({
   const [showPreviewMapper, setShowPreviewMapper] = useState(false);
   const [analytics, setAnalytics] = useState(null);
   const [monthlyReport, setMonthlyReport] = useState([]);
+  const [monthlyByStatus, setMonthlyByStatus] = useState([]);
   const [predefinedPdfs, setPredefinedPdfs] = useState([]);
   const [monthlyReportRange, setMonthlyReportRange] = useState(DEFAULT_MONTHLY_RANGE);
   const [pendingPageSize, setPendingPageSize] = useState('20');
@@ -251,7 +253,8 @@ export default function UserPanel({
   const [listFilters, setListFilters] = useState(emptyListFilters);
   const [showManualAddModal, setShowManualAddModal] = useState(false);
   const [manualAddValues, setManualAddValues] = useState({});
-
+  const [openingPdfId, setOpeningPdfId] = useState(null);
+  const [showBackTop, setShowBackTop] = useState(false);
   const canvasRef = useRef(null);
   const renderTaskRef = useRef(null);
   const renderRequestRef = useRef(0);
@@ -432,6 +435,13 @@ export default function UserPanel({
     setMonthlyReport(data.templates || []);
   }
 
+  async function loadMonthlyByStatus(months = Number(monthlyReportRange) || Number(DEFAULT_MONTHLY_RANGE), templateId = selectedTemplateId) {
+    const params = new URLSearchParams({ months });
+    if (templateId) params.set('template_id', templateId);
+    const data = await apiRequest(`/generated-pdfs/analytics/templates/monthly-by-status?${params}`, { token });
+    setMonthlyByStatus(data.months || []);
+  }
+
   async function loadPredefinedPdfs() {
     const data = await apiRequest('/templates/predefined-pdfs', { token });
     setPredefinedPdfs(data);
@@ -508,14 +518,40 @@ export default function UserPanel({
   }
 
   useEffect(() => {
+    if (!message) return;
+    const timer = setTimeout(() => setMessage(''), 5000);
+    return () => clearTimeout(timer);
+  }, [message]);
+
+  useEffect(() => {
+    function onScroll() { setShowBackTop(window.scrollY > 300); }
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
+  async function openPredefinedPdf(item) {
+    if (openingPdfId) return;
+    setOpeningPdfId(item.id);
+    try {
+      await openWithTokenInNewTab(`/templates/predefined-pdfs/${item.id}/file`, token);
+    } catch {
+      setMessage('Could not open this PDF — the file may be missing. Please contact your admin.');
+    } finally {
+      setOpeningPdfId(null);
+    }
+  }
+
+  useEffect(() => {
     loadTemplates().catch((err) => setMessage(err.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    loadMonthlyReport(Number(monthlyReportRange) || Number(DEFAULT_MONTHLY_RANGE)).catch((err) => setMessage(err.message));
+    const months = Number(monthlyReportRange) || Number(DEFAULT_MONTHLY_RANGE);
+    loadMonthlyReport(months).catch((err) => setMessage(err.message));
+    loadMonthlyByStatus(months, selectedTemplateId).catch((err) => setMessage(err.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [monthlyReportRange]);
+  }, [monthlyReportRange, selectedTemplateId]);
 
   useEffect(() => {
     const favoriteTemplateId = user?.favorite_template_id;
@@ -742,6 +778,7 @@ export default function UserPanel({
     setMessage('');
     try {
       await createGeneratedPdf(formValues, { autoDownload: true });
+      setFormValues(buildFieldValues(fields));
     } catch (err) {
       setMessage(err.message);
     } finally {
@@ -1011,9 +1048,10 @@ export default function UserPanel({
                         key={item.id}
                         type="button"
                         className="workspace-resource-btn"
-                        onClick={() => openWithTokenInNewTab(`/templates/predefined-pdfs/${item.id}/file`, token)}
+                        disabled={openingPdfId === item.id}
+                        onClick={() => openPredefinedPdf(item)}
                       >
-                        <span>{item.name}</span>
+                        <span>{openingPdfId === item.id ? 'Opening…' : item.name}</span>
                       </button>
                     ))}
                   </div>
@@ -1072,13 +1110,16 @@ export default function UserPanel({
               ))}
             </div>
             <div className="analytics-chart-block">
-              <TemplateMonthlyAreaChart
-                monthlyReport={visibleMonthlyReport}
-                timeRange={monthlyReportRange}
-                onTimeRangeChange={setMonthlyReportRange}
-                description="Monthly generated PDFs across the templates available to your account."
-                emptyText="No monthly report data is available for your templates yet."
-              />
+              <div className="chart-combo">
+                <StatusStackedBarChart
+                  monthlyData={monthlyByStatus}
+                  timeRange={monthlyReportRange}
+                  onTimeRangeChange={setMonthlyReportRange}
+                  description="Monthly PDF outcomes by status for the selected template."
+                  emptyText="No monthly data available for this template yet."
+                />
+                <StatusDonutChart analytics={analytics} />
+              </div>
             </div>
           </>
         ) : (
@@ -1345,6 +1386,16 @@ export default function UserPanel({
             </form>
           </div>
         </div>
+      )}
+      {showBackTop && (
+        <button
+          type="button"
+          className="back-to-top"
+          onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+          aria-label="Back to top"
+        >
+          ↑
+        </button>
       )}
     </div>
   );

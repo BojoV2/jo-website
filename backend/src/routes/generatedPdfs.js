@@ -2,10 +2,11 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
-import { query } from '../db.js';
+import { query, pool } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { generatePdfFromTemplate } from '../services/pdfService.js';
 import { syncGeneratedPdfToGoogleSheets, isGoogleSheetsEnabled } from '../services/googleSheetsService.js';
+import { PDF_STATUSES } from '../constants.js';
 
 const router = express.Router();
 
@@ -13,7 +14,7 @@ const storageRoot = process.env.STORAGE_ROOT || path.resolve(process.cwd(), '../
 const generatedDir = path.join(storageRoot, 'generated');
 fs.mkdirSync(generatedDir, { recursive: true });
 
-const allowedStatus = ['pending', 'done', 'cancelled', 'rescheduled'];
+const allowedStatus = PDF_STATUSES;
 const autoDoneNote = 'Auto-moved to done after 30 days in pending';
 
 function normalizeSubmittedData(raw) {
@@ -30,10 +31,11 @@ function normalizeSubmittedData(raw) {
   return {};
 }
 
-function csvEscape(value) {
-  const str = value === null || value === undefined ? '' : String(value);
-  if (str.includes('"') || str.includes(',') || str.includes('\n')) {
-    return `"${str.replace(/"/g, '""')}"`;
+function csvEscape(val) {
+  if (val === null || val === undefined) return '';
+  const str = String(val).replace(/\r\n|\r|\n/g, ' ');
+  if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+    return '"' + str.replace(/"/g, '""') + '"';
   }
   return str;
 }
@@ -100,7 +102,7 @@ function validateFieldValue(field, value) {
   }
   if (rules.regex) {
     try {
-      const re = new RegExp(String(rules.regex));
+      const re = new RegExp('^(?:' + String(rules.regex) + ')$');
       if (!re.test(strValue)) {
         return `Field ${field.field_name} format is invalid`;
       }
@@ -306,7 +308,8 @@ router.get('/', requireAuth, async (req, res) => {
 
     if (keyword) {
       params.push(`%${String(keyword).trim()}%`);
-      where.push(`(g.id::text ILIKE $${params.length} OR g.submitted_data::text ILIKE $${params.length} OR t.title ILIKE $${params.length} OR COALESCE(u.name,'') ILIKE $${params.length})`);
+      const idx = params.length;
+      where.push(`(g.id::text ILIKE $${idx} OR g.submitted_data::text ILIKE $${idx} OR t.title ILIKE $${idx} OR COALESCE(u.name,'') ILIKE $${idx})`);
     }
 
     if (user_id) {
@@ -464,6 +467,43 @@ router.get('/analytics/templates/monthly', requireAuth, async (req, res) => {
       months,
       templates: Array.from(grouped.values())
     });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/analytics/templates/monthly-by-status', requireAuth, async (req, res) => {
+  try {
+    const rawMonths = Number(req.query.months || 6);
+    const months = Number.isFinite(rawMonths) ? Math.min(Math.max(Math.trunc(rawMonths), 1), 24) : 6;
+    const templateId = req.query.template_id || null;
+
+    const params = [months];
+    const templateFilter = templateId ? `AND g.template_id = $2` : '';
+    if (templateId) params.push(templateId);
+
+    const result = await query(
+      `WITH month_series AS (
+          SELECT date_trunc('month', NOW()) - (gs * INTERVAL '1 month') AS month_start
+          FROM generate_series($1::int - 1, 0, -1) AS gs
+       )
+       SELECT
+         TO_CHAR(m.month_start, 'YYYY-MM') AS month_key,
+         TO_CHAR(m.month_start, 'Mon ''YY') AS month_label,
+         COUNT(*) FILTER (WHERE g.status = 'done')::int AS done,
+         COUNT(*) FILTER (WHERE g.status = 'pending')::int AS pending,
+         COUNT(*) FILTER (WHERE g.status = 'rescheduled')::int AS rescheduled,
+         COUNT(*) FILTER (WHERE g.status = 'cancelled')::int AS cancelled
+       FROM month_series m
+       LEFT JOIN generated_pdfs g
+         ON date_trunc('month', g.created_at) = m.month_start
+         ${templateFilter}
+       GROUP BY m.month_start
+       ORDER BY m.month_start ASC`,
+      params
+    );
+
+    return res.json({ months: result.rows });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -649,23 +689,34 @@ router.post('/bulk-status', requireAuth, async (req, res) => {
     const updateParams = currentRows.rows.map((r) => r.id);
     updateParams.push(status, note, status === 'rescheduled' ? reschedule_date : null);
 
-    const updated = await query(
-      `UPDATE generated_pdfs
-       SET status = $${updateParams.length - 2},
-           status_note = $${updateParams.length - 1},
-           reschedule_date = $${updateParams.length},
-           updated_at = NOW()
-       WHERE id IN (${updatePlaceholders})
-       RETURNING id, status, status_note, reschedule_date, updated_at`,
-      updateParams
-    );
-
-    for (const row of currentRows.rows) {
-      await query(
-        `INSERT INTO status_history (id, generated_pdf_id, old_status, new_status, changed_by, note)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [uuidv4(), row.id, row.status, status, req.user.id, note]
+    const client = await pool.connect();
+    let updated;
+    try {
+      await client.query('BEGIN');
+      updated = await client.query(
+        `UPDATE generated_pdfs
+         SET status = $${updateParams.length - 2},
+             status_note = $${updateParams.length - 1},
+             reschedule_date = $${updateParams.length},
+             updated_at = NOW()
+         WHERE id IN (${updatePlaceholders})
+         RETURNING id, status, status_note, reschedule_date, updated_at`,
+        updateParams
       );
+
+      for (const row of currentRows.rows) {
+        await client.query(
+          `INSERT INTO status_history (id, generated_pdf_id, old_status, new_status, changed_by, note)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [uuidv4(), row.id, row.status, status, req.user.id, note]
+        );
+      }
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
     }
 
     return res.json({ updated_count: updated.rowCount, records: updated.rows });

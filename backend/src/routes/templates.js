@@ -9,6 +9,14 @@ import { ensureTemplateSpreadsheet, isGoogleSheetsEnabled } from '../services/go
 
 const router = express.Router();
 
+function isPdfBuffer(buffer) {
+  return buffer.length >= 4 &&
+    buffer[0] === 0x25 && // %
+    buffer[1] === 0x50 && // P
+    buffer[2] === 0x44 && // D
+    buffer[3] === 0x46;   // F
+}
+
 const storageRoot = process.env.STORAGE_ROOT || path.resolve(process.cwd(), '../storage');
 const templateDir = path.join(storageRoot, 'templates');
 const predefinedPdfDir = path.join(storageRoot, 'template-predefined-pdfs');
@@ -124,6 +132,12 @@ router.post('/', requireAuth, requireRole('super_admin', 'admin'), upload.single
 
     if (!title || !req.file) {
       return res.status(400).json({ error: 'title and template file are required' });
+    }
+
+    const headerBytes = fs.readFileSync(req.file.path).slice(0, 4);
+    if (!isPdfBuffer(headerBytes)) {
+      fs.unlinkSync(req.file.path);
+      return res.status(400).json({ error: 'Uploaded file is not a valid PDF.' });
     }
 
     const id = uuidv4();
@@ -290,6 +304,12 @@ router.post('/:templateId/predefined-pdfs', requireAuth, requireRole('super_admi
       return res.status(400).json({ error: 'name and pdf file are required' });
     }
 
+    const headerBytes = fs.readFileSync(req.file.path).slice(0, 4);
+    if (!isPdfBuffer(headerBytes)) {
+      fs.unlinkSync(req.file.path);
+      return res.status(400).json({ error: 'Uploaded file is not a valid PDF.' });
+    }
+
     const template = await query('SELECT id FROM pdf_templates WHERE id = $1', [req.params.templateId]);
     if (template.rowCount === 0) {
       fs.unlinkSync(req.file.path);
@@ -355,7 +375,8 @@ router.get('/predefined-pdfs/:predefinedPdfId/file', requireAuth, async (req, re
     const filePath = result.rows[0].file_path;
     const absolutePath = path.join(storageRoot, filePath);
     if (!fs.existsSync(absolutePath)) {
-      return res.status(404).json({ error: 'Predefined PDF file missing' });
+      await query('DELETE FROM template_predefined_pdfs WHERE id = $1', [req.params.predefinedPdfId]);
+      return res.status(404).json({ error: 'Predefined PDF file is missing from storage and has been removed. Please re-upload it.' });
     }
 
     res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(`${result.rows[0].name}.pdf`)}"`);
@@ -416,6 +437,14 @@ router.post('/:templateId/fields', requireAuth, requireRole('super_admin', 'admi
     const normalizedRules = normalizeValidationRules(validation_rules);
     if (field_type === 'dropdown' && normalizedOptions.length === 0) {
       return res.status(400).json({ error: 'Dropdown field requires at least one option' });
+    }
+
+    const existingField = await query(
+      'SELECT id FROM pdf_fields WHERE template_id = $1 AND field_name = $2',
+      [req.params.templateId, field_name]
+    );
+    if (existingField.rowCount > 0) {
+      return res.status(409).json({ error: 'A field with that name already exists on this template.' });
     }
 
     const id = uuidv4();
@@ -489,6 +518,15 @@ router.put('/fields/:fieldId', requireAuth, requireRole('super_admin', 'admin'),
       return res.status(404).json({ error: 'Field not found' });
     }
     const templateId = fieldResult.rows[0].template_id;
+
+    const duplicateField = await query(
+      'SELECT id FROM pdf_fields WHERE template_id = $1 AND field_name = $2 AND id <> $3',
+      [templateId, field_name, req.params.fieldId]
+    );
+    if (duplicateField.rowCount > 0) {
+      return res.status(409).json({ error: 'A field with that name already exists on this template.' });
+    }
+
     const bumpedVersion = await bumpTemplateVersion(templateId);
 
     const result = await query(
@@ -562,6 +600,12 @@ router.put('/:templateId/file', requireAuth, requireRole('super_admin', 'admin')
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'template file is required' });
+    }
+
+    const headerBytes = fs.readFileSync(req.file.path).slice(0, 4);
+    if (!isPdfBuffer(headerBytes)) {
+      fs.unlinkSync(req.file.path);
+      return res.status(400).json({ error: 'Uploaded file is not a valid PDF.' });
     }
 
     const existing = await query(

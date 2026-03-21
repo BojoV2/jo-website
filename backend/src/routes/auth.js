@@ -1,12 +1,21 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import rateLimit from 'express-rate-limit';
 import { v4 as uuidv4 } from 'uuid';
 import { query } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 
 const router = express.Router();
 const allowedRoles = ['super_admin', 'admin', 'user'];
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later.' }
+});
 
 function mapUser(row) {
   if (!row) return null;
@@ -21,7 +30,7 @@ function mapUser(row) {
   };
 }
 
-router.post('/register', async (req, res) => {
+router.post('/register', authLimiter, async (req, res) => {
   try {
     const { name, email, password, role } = req.body;
 
@@ -67,7 +76,7 @@ router.post('/register', async (req, res) => {
   }
 });
 
-router.post('/login', async (req, res) => {
+router.post('/login', authLimiter, async (req, res) => {
   try {
     const { email, identifier, password, remember_me = false } = req.body;
     const loginValue = String(identifier || email || '').trim();

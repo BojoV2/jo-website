@@ -4,7 +4,8 @@ import { GlobalWorkerOptions, getDocument } from 'pdfjs-dist/build/pdf.mjs';
 import workerSrc from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import ProfileSidebar from './ProfileSidebar.jsx';
 import { resolveAvatar } from '../utils/avatar.js';
-import TemplateMonthlyAreaChart from './TemplateMonthlyAreaChart.jsx';
+import StatusStackedBarChart from './StatusStackedBarChart.jsx';
+import StatusDonutChart from './StatusDonutChart.jsx';
 
 GlobalWorkerOptions.workerSrc = workerSrc;
 
@@ -51,11 +52,13 @@ export default function AdminPanel({
   const [items, setItems] = useState([]);
   const [analytics, setAnalytics] = useState(null);
   const [monthlyReport, setMonthlyReport] = useState([]);
+  const [monthlyByStatus, setMonthlyByStatus] = useState([]);
   const [monthlyReportRange, setMonthlyReportRange] = useState(DEFAULT_MONTHLY_RANGE);
   const [activeAdminTab, setActiveAdminTab] = useState('home');
   const [activeStatus, setActiveStatus] = useState('pending');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+  const [openingPdfId, setOpeningPdfId] = useState(null);
   const [users, setUsers] = useState([]);
   const [presets, setPresets] = useState([]);
   const [editingFieldId, setEditingFieldId] = useState('');
@@ -255,6 +258,11 @@ export default function AdminPanel({
     setMonthlyReport(data.templates || []);
   }
 
+  async function loadMonthlyByStatus(months = Number(monthlyReportRange) || Number(DEFAULT_MONTHLY_RANGE)) {
+    const data = await apiRequest(`/generated-pdfs/analytics/templates/monthly-by-status?months=${months}`, { token });
+    setMonthlyByStatus(data.months || []);
+  }
+
   async function loadPdfPreview(templateId, cacheKey) {
     if (!templateId) {
       setPdfDoc(null);
@@ -333,6 +341,12 @@ export default function AdminPanel({
   }
 
   useEffect(() => {
+    if (!message) return;
+    const timer = setTimeout(() => setMessage(''), 5000);
+    return () => clearTimeout(timer);
+  }, [message]);
+
+  useEffect(() => {
     loadTemplates().catch((err) => setMessage(err.message));
     loadUsers().catch((err) => setMessage(err.message));
     loadPresets().catch((err) => setMessage(err.message));
@@ -340,7 +354,9 @@ export default function AdminPanel({
   }, []);
 
   useEffect(() => {
-    loadMonthlyReport(Number(monthlyReportRange) || Number(DEFAULT_MONTHLY_RANGE)).catch((err) => setMessage(err.message));
+    const months = Number(monthlyReportRange) || Number(DEFAULT_MONTHLY_RANGE);
+    loadMonthlyReport(months).catch((err) => setMessage(err.message));
+    loadMonthlyByStatus(months).catch((err) => setMessage(err.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [monthlyReportRange]);
 
@@ -703,6 +719,18 @@ export default function AdminPanel({
     }
   }
 
+  async function openPredefinedPdf(item) {
+    if (openingPdfId) return;
+    setOpeningPdfId(item.id);
+    try {
+      await openWithTokenInNewTab(`/templates/predefined-pdfs/${item.id}/file`, token);
+    } catch {
+      setMessage('Could not open this PDF — the file may be missing on disk. Try re-uploading it.');
+    } finally {
+      setOpeningPdfId(null);
+    }
+  }
+
   async function deletePredefinedPdf(predefinedPdfId) {
     const ok = window.confirm('Delete this predefined PDF?');
     if (!ok) return;
@@ -858,6 +886,7 @@ export default function AdminPanel({
       await loadGenerated(selectedTemplateId, activeStatus);
       await loadAnalytics(selectedTemplateId);
       await loadMonthlyReport();
+      await loadMonthlyByStatus();
       setMessage(`Bulk status updated: ${ids.length} records.`);
     } catch (err) {
       setMessage(err.message);
@@ -981,8 +1010,12 @@ export default function AdminPanel({
         method: 'POST',
         token
       });
-      window.prompt('Temporary password (copy now):', result.temp_password);
-      setMessage('Temporary password generated.');
+      if (result.temp_password) {
+        await navigator.clipboard.writeText(result.temp_password);
+        setMessage(`User created. Temporary password copied to clipboard.`);
+      } else {
+        setMessage('User created successfully.');
+      }
     } catch (err) {
       setMessage(err.message);
     } finally {
@@ -1215,7 +1248,7 @@ export default function AdminPanel({
                     <td>{item.created_by_name || '-'}</td>
                     <td>{new Date(item.created_at).toLocaleString()}</td>
                     <td className="actions">
-                      <button type="button" onClick={() => openWithTokenInNewTab(`/templates/predefined-pdfs/${item.id}/file`, token)}>Open</button>
+                      <button type="button" disabled={openingPdfId === item.id} onClick={() => openPredefinedPdf(item)}>{openingPdfId === item.id ? 'Opening…' : 'Open'}</button>
                       <button type="button" className="warn" onClick={() => deletePredefinedPdf(item.id)} disabled={busy}>Delete</button>
                     </td>
                   </tr>
@@ -1706,11 +1739,16 @@ export default function AdminPanel({
       </section>
 
       <section className="card">
-        <TemplateMonthlyAreaChart
-          monthlyReport={visibleMonthlyReport}
-          timeRange={monthlyReportRange}
-          onTimeRangeChange={setMonthlyReportRange}
-        />
+        <div className="chart-combo">
+          <StatusStackedBarChart
+            monthlyData={monthlyByStatus}
+            timeRange={monthlyReportRange}
+            onTimeRangeChange={setMonthlyReportRange}
+            description="Monthly PDF outcomes by status across all templates."
+            emptyText="No monthly data available yet."
+          />
+          <StatusDonutChart analytics={analytics} />
+        </div>
       </section>
       </>
       )}

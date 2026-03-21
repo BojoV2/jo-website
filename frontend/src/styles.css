@@ -1646,6 +1646,110 @@ button.warn {
   border-top: 1px solid var(--line);
 }
 
+/* ── Chart combo layout ─────────────────────────────────────────── */
+.chart-combo {
+  display: grid;
+  grid-template-columns: 1fr 260px;
+  gap: 20px;
+  align-items: start;
+}
+
+/* ── Status Donut Chart ─────────────────────────────────────────── */
+.status-donut-card {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 16px;
+  display: grid;
+  gap: 4px;
+  background: var(--paper);
+}
+
+.status-donut-card h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--heading);
+  margin: 0;
+}
+
+.status-donut-card > .muted {
+  font-size: 12px;
+  margin: 0;
+}
+
+.status-donut-empty {
+  margin-top: 20px !important;
+  text-align: center;
+}
+
+.status-donut-wrap {
+  position: relative;
+  margin-top: 8px;
+}
+
+.status-donut-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.status-donut-center strong {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--heading);
+  line-height: 1;
+}
+
+.status-donut-center span {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-top: 2px;
+}
+
+.status-donut-legend {
+  display: grid;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.status-donut-legend-row {
+  display: grid;
+  grid-template-columns: 10px 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.status-donut-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-donut-legend-label {
+  color: var(--muted);
+}
+
+.status-donut-legend-pct {
+  color: var(--muted);
+  font-size: 11px;
+  min-width: 30px;
+  text-align: right;
+}
+
+.status-donut-legend-val {
+  font-weight: 600;
+  min-width: 24px;
+  text-align: right;
+}
+
 .analytics-tone-primary::before {
   background: linear-gradient(90deg, #0f5eb3 0%, #2b8cf2 100%);
 }
@@ -2045,6 +2149,11 @@ input[list]::-webkit-calendar-picker-indicator {
     linear-gradient(135deg, rgba(19, 48, 84, 0.82) 0%, rgba(15, 30, 51, 0.9) 100%);
 }
 
+:root[data-theme='dark'] .status-donut-card {
+  background: #0d1e33;
+  border-color: #2f4f73;
+}
+
 :root[data-theme='dark'] .template-stack-item {
   background: #0f1e33;
   border-color: #314c70;
@@ -2287,6 +2396,10 @@ input[list]::-webkit-calendar-picker-indicator {
     width: min(320px, 100%);
   }
 
+  .chart-combo {
+    grid-template-columns: 1fr;
+  }
+
   .monthly-area-chart-head {
     flex-direction: column;
     align-items: flex-start;
@@ -2318,4 +2431,30 @@ input[list]::-webkit-calendar-picker-indicator {
   .analytics-strip-item-featured {
     grid-column: span 1;
   }
+}
+
+.back-to-top {
+  position: fixed;
+  bottom: 28px;
+  right: 28px;
+  z-index: 200;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #fff;
+  font-size: 18px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 14px rgba(30, 93, 184, 0.35);
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.2s, transform 0.2s;
+}
+
+.back-to-top:hover {
+  opacity: 0.88;
+  transform: translateY(-2px);
 }
