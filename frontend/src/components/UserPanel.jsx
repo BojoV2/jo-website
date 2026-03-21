@@ -5,6 +5,7 @@ import workerSrc from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import ProfileSidebar from './ProfileSidebar.jsx';
 import StatusStackedBarChart from './StatusStackedBarChart.jsx';
 import StatusDonutChart from './StatusDonutChart.jsx';
+import BillingTools from './BillingTools.jsx';
 import { resolveAvatar } from '../utils/avatar.js';
 
 GlobalWorkerOptions.workerSrc = workerSrc;
@@ -250,6 +251,7 @@ export default function UserPanel({
   const [pendingPage, setPendingPage] = useState(1);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [activeUserSection, setActiveUserSection] = useState('create');
+  const [activeView, setActiveView] = useState('workspace');
   const [listFilters, setListFilters] = useState(emptyListFilters);
   const [showManualAddModal, setShowManualAddModal] = useState(false);
   const [manualAddValues, setManualAddValues] = useState({});
@@ -885,6 +887,7 @@ export default function UserPanel({
   }
 
   function focusUserSection(sectionId) {
+    setActiveView('workspace');
     setActiveUserSection(sectionId);
     const node = document.getElementById(`user-section-${sectionId}`);
     if (node) {
@@ -932,6 +935,20 @@ export default function UserPanel({
                 <span>{section.label}</span>
               </button>
             ))}
+          </nav>
+        </div>
+
+        <div className="user-sidebar-group">
+          <span className="user-sidebar-label">Tools</span>
+          <nav className="user-nav">
+            <button
+              type="button"
+              className={activeView === 'tools' ? 'user-nav-btn active' : 'user-nav-btn'}
+              onClick={() => setActiveView('tools')}
+            >
+              <span className="user-nav-chip user-nav-chip--tools">TL</span>
+              <span>Tools</span>
+            </button>
           </nav>
         </div>
 
@@ -995,16 +1012,22 @@ export default function UserPanel({
       </aside>
 
       <main className="user-main">
-        <header className="topbar user-main-topbar">
+        <header className={`topbar user-main-topbar${activeView === 'tools' ? ' user-main-topbar--compact' : ''}`}>
           <div>
             <div className="user-breadcrumb">
               <span>User portal</span>
               <span>/</span>
-              <span>{activeSectionMeta.label}</span>
-              <span>/</span>
-              <strong>{selectedTemplate?.title || 'Select template'}</strong>
+              {activeView === 'tools' ? (
+                <strong>Tools</strong>
+              ) : (
+                <>
+                  <span>{activeSectionMeta.label}</span>
+                  <span>/</span>
+                  <strong>{selectedTemplate?.title || 'Select template'}</strong>
+                </>
+              )}
             </div>
-            <h2>{activeSectionMeta.title}</h2>
+            {activeView !== 'tools' && <h2>{activeSectionMeta.title}</h2>}
           </div>
           <button
             type="button"
@@ -1023,6 +1046,13 @@ export default function UserPanel({
         </div>
       )}
 
+      {activeView === 'tools' && (
+        <section className="tools-page">
+          <BillingTools />
+        </section>
+      )}
+
+      {activeView === 'workspace' && (<>
       <section id="user-section-create" className="grid two user-create-grid">
         <div className="card user-summary-card">
           <div className="section-heading">
@@ -1364,6 +1394,7 @@ export default function UserPanel({
           </table>
         </div>
       </section>
+      </>)}
 
       </main>
 
