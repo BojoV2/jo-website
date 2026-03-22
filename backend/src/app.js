@@ -9,6 +9,7 @@ import templateRoutes from './routes/templates.js';
 import generatedRoutes from './routes/generatedPdfs.js';
 import autoReplyRoutes from './routes/autoReply.js';
 import qrLinkRoutes from './routes/qrLink.js';
+import attachmentRoutes from './routes/attachments.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -18,6 +19,7 @@ fs.mkdirSync(path.join(storageRoot, 'templates'), { recursive: true });
 fs.mkdirSync(path.join(storageRoot, 'generated'), { recursive: true });
 fs.mkdirSync(path.join(storageRoot, 'template-predefined-pdfs'), { recursive: true });
 fs.mkdirSync(path.join(storageRoot, 'auto-reply-images'), { recursive: true });
+fs.mkdirSync(path.join(storageRoot, 'attachments'), { recursive: true });
 
 const app = express();
 
@@ -34,6 +36,7 @@ app.use('/api/templates', templateRoutes);
 app.use('/api/generated-pdfs', generatedRoutes);
 app.use('/api/auto-reply', autoReplyRoutes);
 app.use('/api/qr-link', qrLinkRoutes);
+app.use('/api', attachmentRoutes);
 
 app.use((err, _req, res, _next) => {
   return res.status(500).json({ error: err.message || 'Internal server error' });

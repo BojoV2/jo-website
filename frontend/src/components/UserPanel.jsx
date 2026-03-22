@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { apiRequest, downloadWithToken, fetchArrayBuffer, openWithTokenInNewTab } from '../api.js';
 import { GlobalWorkerOptions, getDocument } from 'pdfjs-dist/build/pdf.mjs';
 import workerSrc from 'pdfjs-dist/build/pdf.worker.mjs?url';
@@ -293,6 +293,11 @@ export default function UserPanel({
   const [keepValues, setKeepValues] = useState(() => window.localStorage.getItem('user-panel:keep-values') === 'true');
   const [fieldTouched, setFieldTouched] = useState({});
   const [fieldErrors, setFieldErrors] = useState({});
+  const [docRequirements, setDocRequirements] = useState([]);
+  const [docFiles, setDocFiles] = useState({}); // { requirementId: File }
+  const [docFileErrors, setDocFileErrors] = useState({}); // { requirementId: errorMsg }
+  const [attachmentRowId, setAttachmentRowId] = useState('');
+  const [rowAttachments, setRowAttachments] = useState([]);
   const [showManualAddModal, setShowManualAddModal] = useState(false);
   const [manualAddValues, setManualAddValues] = useState({});
   const [openingPdfId, setOpeningPdfId] = useState(null);
@@ -439,6 +444,14 @@ export default function UserPanel({
     } catch (err) {
       setMessage(err.message);
     }
+  }
+
+  async function loadDocRequirements(templateId) {
+    if (!templateId) return;
+    const data = await apiRequest(`/templates/${templateId}/document-requirements`, { token });
+    setDocRequirements(data);
+    setDocFiles({});
+    setDocFileErrors({});
   }
 
   async function loadFields(templateId) {
@@ -636,6 +649,7 @@ export default function UserPanel({
   useEffect(() => {
     if (!selectedTemplateId) return;
     loadFields(selectedTemplateId).catch((err) => setMessage(err.message));
+    loadDocRequirements(selectedTemplateId).catch((err) => setMessage(err.message));
     loadAnalytics(selectedTemplateId).catch((err) => setMessage(err.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTemplateId]);
@@ -778,6 +792,7 @@ export default function UserPanel({
     await loadGenerated('pending', selectedTemplateId, emptyListFilters);
     await loadAnalytics(selectedTemplateId);
     await loadMonthlyReport();
+    return created;
   }
 
   function renderFormField(field, values, setValues, fieldSetKey = 'main') {
@@ -880,11 +895,23 @@ export default function UserPanel({
       setMessage('Please select a template.');
       return;
     }
+    if (!validateDocFiles()) return;
 
     setLoading(true);
     setMessage('');
     try {
-      await createGeneratedPdf(formValues, { autoDownload: true });
+      const created = await createGeneratedPdf(formValues, { autoDownload: true });
+      // Upload supporting documents if any were selected
+      if (created?.id && Object.keys(docFiles).some((k) => docFiles[k])) {
+        try {
+          await uploadDocFiles(created.id);
+        } catch (uploadErr) {
+          setMessage(`PDF generated but file upload failed: ${uploadErr.message}`);
+          return;
+        }
+      }
+      setDocFiles({});
+      setDocFileErrors({});
       if (!keepValues) {
         window.localStorage.removeItem(getDraftKey(user?.id, selectedTemplateId));
         setFormValues(buildFieldValues(fields));
@@ -987,6 +1014,57 @@ export default function UserPanel({
     setDraftFilters(emptyListFilters);
     setListFilters(emptyListFilters);
     setPendingPage(1);
+  }
+
+  function getAcceptAttr(allowedTypes) {
+    if (allowedTypes === 'image') return 'image/jpeg,image/png,image/gif,image/webp,image/bmp';
+    if (allowedTypes === 'pdf') return 'application/pdf';
+    return 'image/jpeg,image/png,image/gif,image/webp,image/bmp,application/pdf';
+  }
+
+  function validateDocFiles() {
+    const errors = {};
+    for (const req of docRequirements) {
+      if (req.required && !docFiles[req.id]) {
+        errors[req.id] = `${req.document_name} is required`;
+      }
+    }
+    setDocFileErrors(errors);
+    return Object.keys(errors).length === 0;
+  }
+
+  async function uploadDocFiles(generatedPdfId) {
+    const entries = Object.entries(docFiles).filter(([, file]) => file);
+    if (entries.length === 0) return;
+    const formData = new FormData();
+    const reqIds = [];
+    for (const [reqId, file] of entries) {
+      formData.append('files', file);
+      reqIds.push(reqId);
+    }
+    for (const id of reqIds) {
+      formData.append('requirement_ids', id);
+    }
+    await apiRequest(`/generated-pdfs/${generatedPdfId}/attachments`, {
+      method: 'POST',
+      token,
+      formData
+    });
+  }
+
+  async function toggleRowAttachments(itemId) {
+    if (attachmentRowId === itemId) {
+      setAttachmentRowId('');
+      setRowAttachments([]);
+      return;
+    }
+    try {
+      const data = await apiRequest(`/generated-pdfs/${itemId}/attachments`, { token });
+      setRowAttachments(data);
+      setAttachmentRowId(itemId);
+    } catch (err) {
+      setMessage(err.message);
+    }
   }
 
   // item 7: fill from last generated
@@ -1241,6 +1319,41 @@ export default function UserPanel({
           {fields.map((field) => renderFormField(field, formValues, setFormValues, 'main'))}
           {fields.length === 0 && <p className="muted">No mapped fields for this template yet.</p>}
 
+          {docRequirements.length > 0 && (
+            <div className="doc-checklist">
+              <h4 className="doc-checklist-title">Supporting Documents</h4>
+              <p className="muted doc-checklist-desc">Upload the required files before submitting.</p>
+              {docRequirements.map((req) => (
+                <div key={req.id} className={`doc-checklist-item${docFileErrors[req.id] ? ' doc-checklist-item--error' : ''}`}>
+                  <div className="doc-checklist-label">
+                    <span>{req.document_name}</span>
+                    <span className={`doc-checklist-badge${req.required ? '' : ' doc-checklist-badge--optional'}`}>
+                      {req.required ? 'Required' : 'Optional'}
+                    </span>
+                    <span className="doc-checklist-type-hint">
+                      {req.allowed_types === 'image_or_pdf' ? 'Image or PDF' : req.allowed_types === 'image' ? 'Image' : 'PDF'}
+                    </span>
+                  </div>
+                  <input
+                    type="file"
+                    accept={getAcceptAttr(req.allowed_types)}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0] || null;
+                      setDocFiles((prev) => ({ ...prev, [req.id]: file }));
+                      if (file) setDocFileErrors((prev) => ({ ...prev, [req.id]: '' }));
+                    }}
+                  />
+                  {docFiles[req.id] && (
+                    <span className="doc-checklist-selected">{docFiles[req.id].name}</span>
+                  )}
+                  {docFileErrors[req.id] && (
+                    <span className="field-error">{docFileErrors[req.id]}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
           <div className="actions" style={{ alignItems: 'center' }}>
             <button disabled={loading || fields.length === 0}>
               {loading ? 'Generating...' : 'Generate PDF'}
@@ -1477,7 +1590,8 @@ export default function UserPanel({
               {visibleGenerated.map((item) => {
                 const isEditing = rowEdit?.id === item.id;
                 return (
-                  <tr key={item.id} className={isEditing ? 'row-editing' : ''}>
+                  <React.Fragment key={item.id}>
+                  <tr className={isEditing ? 'row-editing' : ''}>
                     {listColumns.map((column, index) => (
                       <td key={`${item.id}-${index}-${column}`}>{pickFieldValue(item.submitted_data, column)}</td>
                     ))}
@@ -1531,10 +1645,41 @@ export default function UserPanel({
                           <button type="button" onClick={() => applyStatusChange(item)}>Move</button>
                           <button type="button" onClick={() => startRowEdit(item)}>Edit</button>
                           <button type="button" onClick={() => openWithTokenInNewTab(`/generated-pdfs/${item.id}/download`, token)}>Open PDF</button>
+                          <button type="button" onClick={() => toggleRowAttachments(item.id)}>
+                            {attachmentRowId === item.id ? 'Hide Files' : 'Files'}
+                          </button>
                         </>
                       )}
                     </td>
                   </tr>
+                  {attachmentRowId === item.id && (
+                    <tr>
+                      <td colSpan={listColumns.length + 4}>
+                        <div className="attachment-inline-panel">
+                          {rowAttachments.length === 0 ? (
+                            <span className="muted">No attachments for this record.</span>
+                          ) : (
+                            <ul className="attachment-list">
+                              {rowAttachments.map((att) => (
+                                <li key={att.id} className="attachment-item">
+                                  <span className="attachment-name">{att.original_name}</span>
+                                  {att.document_name && <span className="attachment-doc-label">{att.document_name}</span>}
+                                  <button
+                                    type="button"
+                                    className="btn-sm"
+                                    onClick={() => openWithTokenInNewTab(`/attachments/${att.id}/file`, token)}
+                                  >
+                                    Open
+                                  </button>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </React.Fragment>
                 );
               })}
               {visibleGenerated.length === 0 && (

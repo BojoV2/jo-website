@@ -205,6 +205,15 @@ export default function AdminPanel({
     date_to: ''
   });
 
+  // Document requirements state
+  const [docRequirements, setDocRequirements] = useState([]);
+  const [docReqEditId, setDocReqEditId] = useState('');
+  const [docReqForm, setDocReqForm] = useState({ document_name: '', required: true, allowed_types: 'image_or_pdf', sort_order: 0 });
+
+  // Workflow attachments viewer
+  const [workflowAttachmentRowId, setWorkflowAttachmentRowId] = useState('');
+  const [workflowAttachments, setWorkflowAttachments] = useState([]);
+
   const canvasRef = useRef(null);
   const overlayRef = useRef(null);
   const stageRef = useRef(null);
@@ -297,6 +306,12 @@ export default function AdminPanel({
     if (!templateId) return;
     const data = await apiRequest(`/templates/${templateId}/fields`, { token });
     setFields(data);
+  }
+
+  async function loadDocRequirements(templateId) {
+    if (!templateId) return;
+    const data = await apiRequest(`/templates/${templateId}/document-requirements`, { token });
+    setDocRequirements(data);
   }
 
   async function loadGenerated(templateId, status) {
@@ -467,6 +482,7 @@ export default function AdminPanel({
   useEffect(() => {
     if (!selectedTemplateId) return;
     loadFields(selectedTemplateId).catch((err) => setMessage(err.message));
+    loadDocRequirements(selectedTemplateId).catch((err) => setMessage(err.message));
     loadGenerated(selectedTemplateId, activeStatus).catch((err) => setMessage(err.message));
     loadAnalytics(selectedTemplateId).catch((err) => setMessage(err.message));
     loadPredefinedPdfs(selectedTemplateId).catch((err) => setMessage(err.message));
@@ -962,6 +978,71 @@ export default function AdminPanel({
     } catch (err) {
       setMessage(err.message);
     }
+  }
+
+  async function saveDocRequirement(e) {
+    e.preventDefault();
+    if (!selectedTemplateId) return;
+    try {
+      if (docReqEditId) {
+        await apiRequest(`/templates/${selectedTemplateId}/document-requirements/${docReqEditId}`, {
+          method: 'PUT',
+          token,
+          body: docReqForm
+        });
+      } else {
+        await apiRequest(`/templates/${selectedTemplateId}/document-requirements`, {
+          method: 'POST',
+          token,
+          body: docReqForm
+        });
+      }
+      await loadDocRequirements(selectedTemplateId);
+      setDocReqForm({ document_name: '', required: true, allowed_types: 'image_or_pdf', sort_order: 0 });
+      setDocReqEditId('');
+      setMessage(docReqEditId ? 'Requirement updated.' : 'Requirement added.');
+    } catch (err) {
+      setMessage(err.message);
+    }
+  }
+
+  async function deleteDocRequirement(reqId) {
+    if (!window.confirm('Delete this document requirement?')) return;
+    try {
+      await apiRequest(`/templates/${selectedTemplateId}/document-requirements/${reqId}`, {
+        method: 'DELETE',
+        token
+      });
+      await loadDocRequirements(selectedTemplateId);
+      setMessage('Requirement deleted.');
+    } catch (err) {
+      setMessage(err.message);
+    }
+  }
+
+  async function toggleWorkflowAttachments(itemId) {
+    if (workflowAttachmentRowId === itemId) {
+      setWorkflowAttachmentRowId('');
+      setWorkflowAttachments([]);
+      return;
+    }
+    try {
+      const data = await apiRequest(`/generated-pdfs/${itemId}/attachments`, { token });
+      setWorkflowAttachments(data);
+      setWorkflowAttachmentRowId(itemId);
+    } catch (err) {
+      setMessage(err.message);
+    }
+  }
+
+  function startEditDocReq(req) {
+    setDocReqEditId(req.id);
+    setDocReqForm({
+      document_name: req.document_name,
+      required: req.required,
+      allowed_types: req.allowed_types,
+      sort_order: req.sort_order
+    });
   }
 
   async function viewHistory(generatedPdfId) {
@@ -1807,6 +1888,110 @@ export default function AdminPanel({
           </table>
         </div>
       </section>
+
+      <section className="card">
+        <div className="section-heading">
+          <div>
+            <h3>Document Checklist Requirements</h3>
+            <p className="muted">Define which supporting documents CSR users must upload when submitting this template.</p>
+          </div>
+        </div>
+
+        {!selectedTemplateId ? (
+          <p className="muted">Select a template to manage its document requirements.</p>
+        ) : (
+          <>
+            <form className="doc-req-form" onSubmit={saveDocRequirement}>
+              <div className="doc-req-form-row">
+                <div>
+                  <label htmlFor="doc-req-name">Document Name</label>
+                  <input
+                    id="doc-req-name"
+                    value={docReqForm.document_name}
+                    onChange={(e) => setDocReqForm((p) => ({ ...p, document_name: e.target.value }))}
+                    placeholder="e.g. Valid ID, Proof of Billing"
+                    required
+                  />
+                </div>
+                <div>
+                  <label htmlFor="doc-req-types">Allowed File Types</label>
+                  <select
+                    id="doc-req-types"
+                    value={docReqForm.allowed_types}
+                    onChange={(e) => setDocReqForm((p) => ({ ...p, allowed_types: e.target.value }))}
+                  >
+                    <option value="image_or_pdf">Image or PDF</option>
+                    <option value="image">Image only</option>
+                    <option value="pdf">PDF only</option>
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="doc-req-order">Order</label>
+                  <input
+                    id="doc-req-order"
+                    type="number"
+                    min="0"
+                    value={docReqForm.sort_order}
+                    onChange={(e) => setDocReqForm((p) => ({ ...p, sort_order: Number(e.target.value) }))}
+                    style={{ width: '70px' }}
+                  />
+                </div>
+                <div className="doc-req-required-toggle">
+                  <label className="checkbox-line" htmlFor="doc-req-required">
+                    <input
+                      id="doc-req-required"
+                      type="checkbox"
+                      checked={docReqForm.required}
+                      onChange={(e) => setDocReqForm((p) => ({ ...p, required: e.target.checked }))}
+                    />
+                    Required
+                  </label>
+                </div>
+              </div>
+              <div className="actions" style={{ marginTop: '8px' }}>
+                <button type="submit">{docReqEditId ? 'Update Requirement' : 'Add Requirement'}</button>
+                {docReqEditId && (
+                  <button type="button" onClick={() => { setDocReqEditId(''); setDocReqForm({ document_name: '', required: true, allowed_types: 'image_or_pdf', sort_order: 0 }); }}>
+                    Cancel
+                  </button>
+                )}
+              </div>
+            </form>
+
+            {docRequirements.length > 0 ? (
+              <div className="table-wrap" style={{ marginTop: '16px' }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th>Document Name</th>
+                      <th>Required</th>
+                      <th>Allowed Types</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {docRequirements.map((req, idx) => (
+                      <tr key={req.id}>
+                        <td>{idx + 1}</td>
+                        <td>{req.document_name}</td>
+                        <td>{req.required ? 'Yes' : 'Optional'}</td>
+                        <td>{req.allowed_types === 'image_or_pdf' ? 'Image or PDF' : req.allowed_types === 'image' ? 'Image' : 'PDF'}</td>
+                        <td className="actions">
+                          <button type="button" onClick={() => startEditDocReq(req)}>Edit</button>
+                          <button type="button" onClick={() => deleteDocRequirement(req.id)}>Delete</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="muted" style={{ marginTop: '12px' }}>No document requirements configured yet.</p>
+            )}
+          </>
+        )}
+      </section>
       </>
       )}
 
@@ -1982,6 +2167,7 @@ export default function AdminPanel({
             </thead>
             <tbody>
               {items.map((item) => (
+                <>
                 <tr key={item.id}>
                   <td>
                     <input
@@ -2003,12 +2189,43 @@ export default function AdminPanel({
                   <td>{item.status_note || '-'}</td>
                   <td className="actions">
                     <button type="button" onClick={() => downloadWithToken(`/generated-pdfs/${item.id}/download`, token)}>Download</button>
+                    <button type="button" onClick={() => toggleWorkflowAttachments(item.id)}>
+                      {workflowAttachmentRowId === item.id ? 'Hide Files' : 'Files'}
+                    </button>
                     <button type="button" onClick={() => viewHistory(item.id)}>History</button>
                     <button type="button" onClick={() => updateStatus(item.id, 'done')}>Done</button>
                     <button type="button" onClick={() => updateStatus(item.id, 'cancelled')}>Cancel</button>
                     <button type="button" onClick={() => updateStatus(item.id, 'rescheduled')}>Reschedule</button>
                   </td>
                 </tr>
+                {workflowAttachmentRowId === item.id && (
+                  <tr key={`${item.id}-attachments`}>
+                    <td colSpan="6">
+                      <div className="attachment-inline-panel">
+                        {workflowAttachments.length === 0 ? (
+                          <span className="muted">No attachments for this record.</span>
+                        ) : (
+                          <ul className="attachment-list">
+                            {workflowAttachments.map((att) => (
+                              <li key={att.id} className="attachment-item">
+                                <span className="attachment-name">{att.original_name}</span>
+                                {att.document_name && <span className="attachment-doc-label">{att.document_name}</span>}
+                                <button
+                                  type="button"
+                                  className="btn-sm"
+                                  onClick={() => openWithTokenInNewTab(`/attachments/${att.id}/file`, token)}
+                                >
+                                  Open
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+                </>
               ))}
               {items.length === 0 && (
                 <tr>

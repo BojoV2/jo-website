@@ -709,4 +709,89 @@ router.delete('/presets/:presetId', requireAuth, requireRole('super_admin', 'adm
   }
 });
 
+// ── Document Requirements ──────────────────────────────────────────
+
+const validAllowedTypes = ['image', 'pdf', 'image_or_pdf'];
+
+router.get('/:templateId/document-requirements', requireAuth, async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT id, template_id, document_name, required, allowed_types, sort_order, created_at
+       FROM template_document_requirements
+       WHERE template_id = $1
+       ORDER BY sort_order ASC, created_at ASC`,
+      [req.params.templateId]
+    );
+    return res.json(result.rows);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/:templateId/document-requirements', requireAuth, requireRole('super_admin', 'admin'), async (req, res) => {
+  try {
+    const { document_name, required = true, allowed_types = 'image_or_pdf', sort_order = 0 } = req.body;
+    if (!document_name || !String(document_name).trim()) {
+      return res.status(400).json({ error: 'document_name is required' });
+    }
+    if (!validAllowedTypes.includes(allowed_types)) {
+      return res.status(400).json({ error: 'allowed_types must be image, pdf, or image_or_pdf' });
+    }
+    const template = await query('SELECT id FROM pdf_templates WHERE id = $1', [req.params.templateId]);
+    if (template.rowCount === 0) {
+      return res.status(404).json({ error: 'Template not found' });
+    }
+    const id = uuidv4();
+    const result = await query(
+      `INSERT INTO template_document_requirements (id, template_id, document_name, required, allowed_types, sort_order)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id, template_id, document_name, required, allowed_types, sort_order, created_at`,
+      [id, req.params.templateId, String(document_name).trim(), Boolean(required), allowed_types, Number(sort_order) || 0]
+    );
+    return res.status(201).json(result.rows[0]);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.put('/:templateId/document-requirements/:reqId', requireAuth, requireRole('super_admin', 'admin'), async (req, res) => {
+  try {
+    const { document_name, required = true, allowed_types = 'image_or_pdf', sort_order = 0 } = req.body;
+    if (!document_name || !String(document_name).trim()) {
+      return res.status(400).json({ error: 'document_name is required' });
+    }
+    if (!validAllowedTypes.includes(allowed_types)) {
+      return res.status(400).json({ error: 'allowed_types must be image, pdf, or image_or_pdf' });
+    }
+    const result = await query(
+      `UPDATE template_document_requirements
+       SET document_name = $1, required = $2, allowed_types = $3, sort_order = $4
+       WHERE id = $5 AND template_id = $6
+       RETURNING id, template_id, document_name, required, allowed_types, sort_order, created_at`,
+      [String(document_name).trim(), Boolean(required), allowed_types, Number(sort_order) || 0, req.params.reqId, req.params.templateId]
+    );
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Document requirement not found' });
+    }
+    return res.json(result.rows[0]);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/:templateId/document-requirements/:reqId', requireAuth, requireRole('super_admin', 'admin'), async (req, res) => {
+  try {
+    const result = await query(
+      `DELETE FROM template_document_requirements WHERE id = $1 AND template_id = $2`,
+      [req.params.reqId, req.params.templateId]
+    );
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Document requirement not found' });
+    }
+    return res.status(204).send();
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;

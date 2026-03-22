@@ -138,3 +138,27 @@ CREATE TABLE IF NOT EXISTS qr_links (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS template_document_requirements (
+    id UUID PRIMARY KEY,
+    template_id UUID REFERENCES pdf_templates(id) ON DELETE CASCADE,
+    document_name VARCHAR(200) NOT NULL,
+    required BOOLEAN DEFAULT TRUE,
+    allowed_types VARCHAR(20) DEFAULT 'image_or_pdf' CHECK (allowed_types IN ('image', 'pdf', 'image_or_pdf')),
+    sort_order INT DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS generated_pdf_attachments (
+    id UUID PRIMARY KEY,
+    generated_pdf_id UUID REFERENCES generated_pdfs(id) ON DELETE CASCADE,
+    requirement_id UUID REFERENCES template_document_requirements(id) ON DELETE SET NULL,
+    original_name TEXT NOT NULL,
+    mime_type TEXT,
+    file_path TEXT NOT NULL,
+    uploaded_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_template_doc_reqs_template_id ON template_document_requirements(template_id);
+CREATE INDEX IF NOT EXISTS idx_generated_pdf_attachments_pdf_id ON generated_pdf_attachments(generated_pdf_id);

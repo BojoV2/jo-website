@@ -3388,6 +3388,165 @@ tr.row-editing {
 
 /* ── */
 
+/* ── Document checklist (user form) ──────────────────────────────── */
+.doc-checklist {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px 16px;
+  background: var(--surface-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.doc-checklist-title {
+  margin: 0 0 2px;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.doc-checklist-desc {
+  margin: 0 0 4px !important;
+  font-size: 0.85rem;
+}
+
+.doc-checklist-item {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.doc-checklist-item--error {
+  border-color: var(--danger, #c0392b);
+}
+
+.doc-checklist-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  flex-wrap: wrap;
+}
+
+.doc-checklist-badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 20px;
+  background: var(--primary);
+  color: #fff;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.doc-checklist-badge--optional {
+  background: var(--surface-subtle);
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+
+.doc-checklist-type-hint {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.doc-checklist-selected {
+  font-size: 0.8rem;
+  color: var(--success, #27ae60);
+  font-weight: 500;
+}
+
+/* ── Document requirements form (admin mapping tab) ──────────────── */
+.doc-req-form {
+  padding: 14px 0 4px;
+}
+
+.doc-req-form-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.doc-req-form-row > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 140px;
+}
+
+.doc-req-required-toggle {
+  justify-content: flex-end !important;
+  padding-bottom: 4px;
+  flex: 0 !important;
+  min-width: auto !important;
+  white-space: nowrap;
+}
+
+/* ── Attachment inline panel ─────────────────────────────────────── */
+.attachment-inline-panel {
+  padding: 10px 14px;
+  background: var(--surface-subtle);
+  border-radius: 8px;
+}
+
+.attachment-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.attachment-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.875rem;
+  flex-wrap: wrap;
+}
+
+.attachment-name {
+  font-weight: 500;
+  flex: 1;
+  min-width: 120px;
+  word-break: break-all;
+}
+
+.attachment-doc-label {
+  font-size: 0.78rem;
+  color: var(--muted);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 2px 8px;
+}
+
+/* dark mode */
+:root[data-theme='dark'] .doc-checklist,
+:root[data-theme='dark'] .attachment-inline-panel {
+  background: #0d1e33;
+  border-color: #2f4f73;
+}
+
+:root[data-theme='dark'] .doc-checklist-item {
+  background: #0a1829;
+  border-color: #2f4f73;
+}
+
+:root[data-theme='dark'] .doc-checklist-badge--optional {
+  background: #0a1829;
+  border-color: #2f4f73;
+}
+
 .back-to-top {
   position: fixed;
   bottom: 28px;
