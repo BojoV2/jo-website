@@ -142,7 +142,9 @@ async function doLogin(overrideApiUrl, baseUrl, username, password) {
 
   const errors = [];
 
-  for (const loginType of ['0', '1', '2']) {
+  // Only try LoginType 0 (account/fleet) — types 1 and 2 are for IMEI/device login
+  // and are never correct for a named fleet account like IMPERIALNETWORKINC.
+  for (const loginType of ['0']) {
     try {
       const data = await apiPost(apiAddress, 'Login', {
         Name:      username.trim(),
@@ -153,24 +155,49 @@ async function doLogin(overrideApiUrl, baseUrl, username, password) {
         Key:       APP_KEY,
       });
 
-      const sessionKey = data?.deviceInfo?.key2018;
-      if (!sessionKey) {
-        const hint = data?.result || data?.msg || data?.message || JSON.stringify(data).substring(0, 80);
-        errors.push(`LoginType ${loginType}: server rejected — ${hint}`);
+      // state "0" = success in Aika API.
+      // Account login returns userInfo{} instead of deviceInfo{}.
+      // Session key may be in several places depending on platform version.
+      const stateOk = String(data?.state) === '0';
+
+      // Extract session key — check deviceInfo (device login) and userInfo (account login)
+      const sessionKey =
+        data?.deviceInfo?.key2018 ||
+        data?.userInfo?.loginKey  ||
+        data?.userInfo?.key2018   ||
+        data?.userInfo?.key       ||
+        data?.key2018             ||
+        data?.token               ||
+        null;
+
+      // Extract user/device identity
+      const userId     = data?.userInfo?.userID   || data?.deviceInfo?.deviceID   || null;
+      const userName   = data?.userInfo?.userName || data?.deviceInfo?.deviceName || '';
+      const deviceId   = data?.deviceInfo?.deviceID   ?? null;
+      const deviceName = data?.deviceInfo?.deviceName ?? '';
+      const model      = data?.deviceInfo?.model      ?? 0;
+
+      if (stateOk && sessionKey) {
+        return { apiAddress, sessionKey, userId, userName, deviceId, deviceName, model, loginType };
+      }
+
+      if (stateOk && !sessionKey) {
+        // Login accepted (state=0) but we couldn't find the key.
+        // Log the full response so we can see where the key actually lives.
+        const fullResponse = JSON.stringify(data);
+        errors.push(
+          `LoginType ${loginType}: login accepted (state=0, user="${userName}", id=${userId}) ` +
+          `but session key not found in response. Full response: ${fullResponse}`
+        );
         continue;
       }
 
-      return {
-        apiAddress,
-        sessionKey,
-        deviceId:   data.deviceInfo?.deviceID   ?? null,
-        deviceName: data.deviceInfo?.deviceName  ?? '',
-        model:      data.deviceInfo?.model       ?? 0,
-        loginType,
-      };
+      // Login rejected — show state code and full response for diagnosis
+      const fullResponse = JSON.stringify(data);
+      errors.push(`LoginType ${loginType}: server rejected — ${fullResponse}`);
+
     } catch (err) {
       errors.push(`LoginType ${loginType}: ${err.message}`);
-      // Network errors won't be fixed by retrying with a different LoginType
       if (err.message.includes('refused') || err.message.includes('Timeout') ||
           err.message.includes('blocked')  || err.message.includes('Cannot resolve')) {
         throw new Error(
@@ -192,21 +219,35 @@ const FLEET_ENDPOINTS = [
   'GetUserDeviceList',
   'GetAllDeviceGPS',
   'GetMassLocation',
+  'GetUserDevice',
+  'GetDeviceByUser',
 ];
 
-async function tryFleetEndpoints(apiAddress, sessionKey) {
+async function tryFleetEndpoints(apiAddress, sessionKey, userId) {
+  // Build payloads: some endpoints want just Key, others also want UserID
+  const payloads = [
+    { Key: sessionKey },
+    { Key: sessionKey, UserID: userId },
+    { Key: sessionKey, userID: userId },
+  ];
+
   for (const ep of FLEET_ENDPOINTS) {
-    try {
-      const data = await apiPost(apiAddress, ep, { Key: sessionKey });
-      let list = null;
-      if (Array.isArray(data))               list = data;
-      else if (Array.isArray(data?.carList)) list = data.carList;
-      else if (Array.isArray(data?.list))    list = data.list;
-      else if (Array.isArray(data?.devices)) list = data.devices;
-      else if (Array.isArray(data?.data))    list = data.data;
-      if (list && list.length > 0) return { endpoint: ep, vehicles: list };
-    } catch {
-      // Try next endpoint
+    for (const payload of payloads) {
+      if ((payload.UserID || payload.userID) && !userId) continue; // skip if no userId
+      try {
+        const data = await apiPost(apiAddress, ep, payload);
+        let list = null;
+        if (Array.isArray(data))                  list = data;
+        else if (Array.isArray(data?.carList))    list = data.carList;
+        else if (Array.isArray(data?.list))       list = data.list;
+        else if (Array.isArray(data?.devices))    list = data.devices;
+        else if (Array.isArray(data?.data))       list = data.data;
+        else if (Array.isArray(data?.deviceList)) list = data.deviceList;
+        else if (Array.isArray(data?.cars))       list = data.cars;
+        if (list && list.length > 0) return { endpoint: ep, vehicles: list };
+      } catch {
+        // Try next
+      }
     }
   }
   return null;
@@ -267,9 +308,9 @@ export async function getVehicleData(trackerId, config) {
     sessionCache.set(trackerId, session);
   }
 
-  const { apiAddress, sessionKey, deviceId, model } = session;
+  const { apiAddress, sessionKey, userId, deviceId, model } = session;
 
-  const fleet = await tryFleetEndpoints(apiAddress, sessionKey);
+  const fleet = await tryFleetEndpoints(apiAddress, sessionKey, userId);
   if (fleet) {
     return { source: fleet.endpoint, vehicles: fleet.vehicles.map(normaliseVehicle) };
   }
@@ -280,9 +321,9 @@ export async function getVehicleData(trackerId, config) {
   }
 
   throw new Error(
-    'Login succeeded but no vehicle data found. ' +
-    'Fleet endpoint not available and no device ID returned from login. ' +
-    'Contact Aika168 to confirm account type and fleet API endpoint name.'
+    'Login succeeded (userID=' + (userId || '?') + ') but no vehicle data found. ' +
+    'None of the fleet endpoints returned a vehicle list. ' +
+    'Contact Aika168 support and ask for the fleet vehicle list API endpoint name for account-based logins.'
   );
 }
 
