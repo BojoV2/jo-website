@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { apiRequest, getApiBase } from '../api.js';
+import QRCode from 'qrcode';
 
 const PLANS = [
   { value: 599,  speed: '35 Mbps'  },
@@ -11,10 +13,12 @@ const PLANS = [
 ];
 
 const TOOLS = [
-  { id: 'adjustment', label: 'Bill Adjustment'     },
-  { id: 'calculator', label: 'Bill Calculator'     },
-  { id: 'contract',   label: 'Contract End Date'   },
-  { id: 'discount',   label: 'Percentage Discount' },
+  { id: 'adjustment',  label: 'Bill Adjustment'     },
+  { id: 'calculator',  label: 'Bill Calculator'     },
+  { id: 'contract',    label: 'Contract End Date'   },
+  { id: 'discount',    label: 'Percentage Discount' },
+  { id: 'auto-reply',  label: 'Auto Reply'          },
+  { id: 'link-to-qr', label: 'Link to QR'          },
 ];
 
 const HOW_TO_USE = {
@@ -356,15 +360,201 @@ function PercentageDiscount() {
   );
 }
 
+// ── Auto Reply ────────────────────────────────────────────────────
+const AR_PIN_KEY = 'ar_pinned_message_id';
+
+function AutoReply({ token }) {
+  const [messages, setMessages]   = useState([]);
+  const [loading, setLoading]     = useState(true);
+  const [error, setError]         = useState('');
+  const [pinnedId, setPinnedId]   = useState(() => localStorage.getItem(AR_PIN_KEY) || '');
+  const [copied, setCopied]       = useState('');
+  const [lightbox, setLightbox]   = useState(null); // { src, alt }
+
+  const load = useCallback(async () => {
+    try {
+      setLoading(true);
+      const data = await apiRequest('/auto-reply', { token });
+      setMessages(data);
+    } catch (e) {
+      setError(e.message || 'Failed to load messages');
+    } finally {
+      setLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => { load(); }, [load]);
+
+  function togglePin(id) {
+    const next = pinnedId === id ? '' : id;
+    setPinnedId(next);
+    if (next) localStorage.setItem(AR_PIN_KEY, next);
+    else localStorage.removeItem(AR_PIN_KEY);
+  }
+
+  async function copyText(text, id) {
+    await navigator.clipboard.writeText(text);
+    setCopied(id);
+    setTimeout(() => setCopied(''), 2000);
+  }
+
+  function imageUrl(imageId) {
+    return `${getApiBase()}/auto-reply/images/${imageId}`;
+  }
+
+  // Sort so pinned message appears first
+  const sorted = pinnedId
+    ? [...messages].sort((a, b) => (a.id === pinnedId ? -1 : b.id === pinnedId ? 1 : 0))
+    : messages;
+
+  if (loading) return <p className="muted">Loading messages…</p>;
+  if (error)   return <p className="bt-error">{error}</p>;
+  if (sorted.length === 0) return <p className="muted">No auto-reply messages yet.</p>;
+
+  return (
+    <div className="ar-list">
+      {lightbox && (
+        <div className="ar-lightbox" onClick={() => setLightbox(null)}>
+          <img src={lightbox.src} alt={lightbox.alt} onClick={(e) => e.stopPropagation()} />
+          <button className="ar-lightbox-close" onClick={() => setLightbox(null)}>✕</button>
+        </div>
+      )}
+
+      {sorted.map((msg) => {
+        const isPinned = pinnedId === msg.id;
+        return (
+          <div key={msg.id} className={`ar-card${isPinned ? ' ar-card--pinned' : ''}`}>
+            <div className="ar-card-header">
+              <span className="ar-card-title">
+                {isPinned && <span className="ar-pin-badge">📌 Pinned</span>}
+                {msg.title}
+              </span>
+              <div className="ar-card-actions">
+                <button
+                  type="button"
+                  className={`bt-copy-btn${isPinned ? ' ar-pin-active' : ''}`}
+                  onClick={() => togglePin(msg.id)}
+                  title={isPinned ? 'Unpin message' : 'Pin message'}
+                >
+                  {isPinned ? '📌 Unpin' : '📌 Pin'}
+                </button>
+                <button
+                  type="button"
+                  className="bt-copy-btn"
+                  onClick={() => copyText(msg.message_text, msg.id)}
+                >
+                  {copied === msg.id ? '✓ Copied' : 'Copy'}
+                </button>
+              </div>
+            </div>
+
+            <pre className="ar-message-text">{msg.message_text}</pre>
+
+            {msg.images && msg.images.length > 0 && (
+              <div className="ar-images">
+                {msg.images.map((img) => (
+                  <img
+                    key={img.id}
+                    src={imageUrl(img.id)}
+                    alt={img.original_name || 'image'}
+                    className="ar-thumb"
+                    onClick={() => setLightbox({ src: imageUrl(img.id), alt: img.original_name || 'image' })}
+                    title="Click to enlarge"
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Link to QR ────────────────────────────────────────────────────
+function LinkToQR({ token }) {
+  const [qrLink, setQrLink]     = useState(null);
+  const [loading, setLoading]   = useState(true);
+  const [error, setError]       = useState('');
+  const [lightbox, setLightbox] = useState(false);
+  const [qrDataUrl, setQrDataUrl] = useState('');
+
+  const load = useCallback(async () => {
+    try {
+      setLoading(true);
+      const data = await apiRequest('/qr-link', { token });
+      setQrLink(data);
+    } catch (e) {
+      setError(e.message || 'Failed to load QR link');
+    } finally {
+      setLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    if (!qrLink?.url) { setQrDataUrl(''); return; }
+    QRCode.toDataURL(qrLink.url, { width: 260, margin: 2, color: { dark: '#112b47', light: '#ffffff' } })
+      .then(setQrDataUrl)
+      .catch(() => setQrDataUrl(''));
+  }, [qrLink]);
+
+  useEffect(() => {
+    if (!lightbox) return;
+    function onKey(e) { if (e.key === 'Escape') setLightbox(false); }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [lightbox]);
+
+  if (loading) return <p className="muted">Loading QR code…</p>;
+  if (error)   return <p className="bt-error">{error}</p>;
+  if (!qrLink) return (
+    <div className="qr-empty">
+      <p className="muted">No QR code has been published yet. Check back later.</p>
+    </div>
+  );
+
+  return (
+    <div className="qr-view">
+      {lightbox && (
+        <div className="ar-lightbox" onClick={() => setLightbox(false)}>
+          <img src={qrDataUrl} alt="QR Code (enlarged)" onClick={(e) => e.stopPropagation()} />
+          <button className="ar-lightbox-close" onClick={() => setLightbox(false)}>✕</button>
+        </div>
+      )}
+
+      <div className="qr-card">
+        {qrLink.label && <p className="qr-label">{qrLink.label}</p>}
+        {qrDataUrl ? (
+          <img
+            src={qrDataUrl}
+            alt="QR Code"
+            className="qr-image"
+            title="Click to enlarge"
+            onClick={() => setLightbox(true)}
+          />
+        ) : (
+          <div className="qr-placeholder">Generating QR…</div>
+        )}
+        <p className="qr-url">{qrLink.url}</p>
+        <p className="qr-hint">Click the QR code to enlarge · Press Esc to close</p>
+      </div>
+    </div>
+  );
+}
+
 // ── Root component ────────────────────────────────────────────────
 const TOOL_COMPONENTS = {
-  adjustment: BillAdjustment,
-  calculator: BillCalculator,
-  contract:   ContractEndDate,
-  discount:   PercentageDiscount,
+  adjustment:    BillAdjustment,
+  calculator:    BillCalculator,
+  contract:      ContractEndDate,
+  discount:      PercentageDiscount,
+  'auto-reply':  AutoReply,
+  'link-to-qr':  LinkToQR,
 };
 
-export default function BillingTools() {
+export default function BillingTools({ token }) {
   const [activeTool, setActiveTool] = useState('adjustment');
   const ActiveComponent = TOOL_COMPONENTS[activeTool];
 
@@ -387,7 +577,7 @@ export default function BillingTools() {
         <div className="bt-content-header">
           <h3>{TOOLS.find((t) => t.id === activeTool)?.label}</h3>
         </div>
-        <ActiveComponent key={activeTool} />
+        <ActiveComponent key={activeTool} token={token} />
       </div>
     </div>
   );

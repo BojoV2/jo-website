@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { apiRequest, downloadWithToken, fetchArrayBuffer, openWithTokenInNewTab } from '../api.js';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import QRCode from 'qrcode';
+import { apiRequest, downloadWithToken, fetchArrayBuffer, openWithTokenInNewTab, getApiBase } from '../api.js';
 import { GlobalWorkerOptions, getDocument } from 'pdfjs-dist/build/pdf.mjs';
 import workerSrc from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import ProfileSidebar from './ProfileSidebar.jsx';
@@ -11,11 +12,13 @@ GlobalWorkerOptions.workerSrc = workerSrc;
 
 const statusTabs = ['pending', 'done', 'cancelled', 'rescheduled'];
 const adminTabs = [
-  { id: 'home', label: 'Home' },
-  { id: 'templates', label: 'Templates' },
-  { id: 'mapping', label: 'Field Mapping' },
-  { id: 'workflow', label: 'Workflow' },
-  { id: 'users', label: 'Users' }
+  { id: 'home',       label: 'Home'        },
+  { id: 'templates',  label: 'Templates'   },
+  { id: 'mapping',    label: 'Field Mapping'},
+  { id: 'workflow',   label: 'Workflow'    },
+  { id: 'users',      label: 'Users'       },
+  { id: 'auto-reply', label: 'Auto Reply'  },
+  { id: 'qr-link',    label: 'QR Link'    },
 ];
 const DEFAULT_MONTHLY_RANGE = '3';
 
@@ -112,6 +115,27 @@ export default function AdminPanel({
   const [bulkStatus, setBulkStatus] = useState('done');
   const [bulkRescheduleDate, setBulkRescheduleDate] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  // QR Link state
+  const [qrSaved, setQrSaved]           = useState(null);   // saved record from DB
+  const [qrDraftUrl, setQrDraftUrl]     = useState('');      // URL input
+  const [qrDraftLabel, setQrDraftLabel] = useState('');      // label input
+  const [qrDraftDataUrl, setQrDraftDataUrl] = useState('');  // generated QR image
+  const [qrBusy, setQrBusy]            = useState(false);
+  const [qrLoaded, setQrLoaded]        = useState(false);
+  const [qrLightbox, setQrLightbox]    = useState(false);
+
+  // Auto Reply state
+  const [arMessages, setArMessages]     = useState([]);
+  const [arBusy, setArBusy]             = useState(false);
+  const [arLoaded, setArLoaded]         = useState(false);
+  const [arEditId, setArEditId]         = useState('');
+  const [arEditForm, setArEditForm]     = useState({ title: '', message_text: '' });
+  const [arNewForms, setArNewForms]     = useState([{ title: '', message_text: '', images: [] }]);
+  const [arNewInputKeys, setArNewInputKeys] = useState([0]);
+  const [arAddImgInputKey, setArAddImgInputKey] = useState(0);
+  const [arLightbox, setArLightbox]     = useState(null);
+
   const [listFilters, setListFilters] = useState({
     keyword: '',
     user_id: '',
@@ -233,6 +257,12 @@ export default function AdminPanel({
   async function loadPresets() {
     const data = await apiRequest('/templates/presets', { token });
     setPresets(data);
+  }
+
+  async function loadArMessages() {
+    const data = await apiRequest('/auto-reply', { token });
+    setArMessages(data);
+    setArLoaded(true);
   }
 
   async function loadAnalytics(templateId) {
@@ -361,6 +391,25 @@ export default function AdminPanel({
   }, [monthlyReportRange]);
 
   useEffect(() => {
+    if (activeAdminTab === 'auto-reply' && !arLoaded) {
+      loadArMessages().catch((err) => setMessage(err.message));
+    }
+    if (activeAdminTab === 'qr-link' && !qrLoaded) {
+      apiRequest('/qr-link/all', { token })
+        .then((data) => {
+          setQrSaved(data);
+          if (data?.url) {
+            setQrDraftUrl(data.url);
+            setQrDraftLabel(data.label || '');
+          }
+          setQrLoaded(true);
+        })
+        .catch((err) => setMessage(err.message));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeAdminTab]);
+
+  useEffect(() => {
     if (!selectedTemplateId) return;
     loadFields(selectedTemplateId).catch((err) => setMessage(err.message));
     loadGenerated(selectedTemplateId, activeStatus).catch((err) => setMessage(err.message));
@@ -441,6 +490,13 @@ export default function AdminPanel({
     setPredefinedPdfForm({ name: '', file: null });
     setPredefinedPdfInputKey((prev) => prev + 1);
   }, [selectedTemplate]);
+
+  useEffect(() => {
+    if (!qrLightbox) return;
+    function onKey(e) { if (e.key === 'Escape') setQrLightbox(false); }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [qrLightbox]);
 
   async function submitTemplate(e) {
     e.preventDefault();
@@ -1909,6 +1965,440 @@ export default function AdminPanel({
         </div>
       </section>
       </>
+      )}
+
+      {activeAdminTab === 'auto-reply' && (
+      <>
+      {/* ── Lightbox ── */}
+      {arLightbox && (
+        <div className="ar-lightbox" onClick={() => setArLightbox(null)}>
+          <img src={arLightbox.src} alt={arLightbox.alt} onClick={(e) => e.stopPropagation()} />
+          <button className="ar-lightbox-close" onClick={() => setArLightbox(null)}>✕</button>
+        </div>
+      )}
+
+      {/* ── Create new messages ── */}
+      <section className="card">
+        <h3>Create Auto Reply Messages</h3>
+        {arNewForms.map((form, idx) => (
+          <div key={arNewInputKeys[idx]} className="ar-new-form">
+            <div className="ar-new-form-header">
+              <strong>Message {idx + 1}</strong>
+              {arNewForms.length > 1 && (
+                <button
+                  type="button"
+                  className="btn-sm btn-danger"
+                  onClick={() => {
+                    setArNewForms((prev) => prev.filter((_, i) => i !== idx));
+                    setArNewInputKeys((prev) => prev.filter((_, i) => i !== idx));
+                  }}
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+            <label>Title</label>
+            <input
+              type="text"
+              placeholder="Message title"
+              value={form.title}
+              onChange={(e) => {
+                const next = [...arNewForms];
+                next[idx] = { ...next[idx], title: e.target.value };
+                setArNewForms(next);
+              }}
+            />
+            <label>Message Text</label>
+            <textarea
+              rows={5}
+              placeholder="Enter the reply message text…"
+              value={form.message_text}
+              onChange={(e) => {
+                const next = [...arNewForms];
+                next[idx] = { ...next[idx], message_text: e.target.value };
+                setArNewForms(next);
+              }}
+            />
+            <label>Images (optional)</label>
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              onChange={(e) => {
+                const files = Array.from(e.target.files || []);
+                const next = [...arNewForms];
+                next[idx] = { ...next[idx], images: files };
+                setArNewForms(next);
+              }}
+            />
+            {form.images && form.images.length > 0 && (
+              <p className="muted">{form.images.length} image(s) selected</p>
+            )}
+          </div>
+        ))}
+
+        <div className="ar-create-actions">
+          <button
+            type="button"
+            onClick={() => {
+              setArNewForms((prev) => [...prev, { title: '', message_text: '', images: [] }]);
+              setArNewInputKeys((prev) => [...prev, Date.now()]);
+            }}
+          >
+            + Add Another Message
+          </button>
+          <button
+            type="button"
+            className="btn-primary"
+            disabled={arBusy}
+            onClick={async () => {
+              for (const form of arNewForms) {
+                if (!form.title.trim() || !form.message_text.trim()) {
+                  setMessage('Each message must have a title and text.');
+                  return;
+                }
+              }
+              setArBusy(true);
+              try {
+                for (const form of arNewForms) {
+                  const fd = new FormData();
+                  fd.append('title', form.title.trim());
+                  fd.append('message_text', form.message_text.trim());
+                  for (const img of (form.images || [])) fd.append('images', img);
+                  await apiRequest('/auto-reply', { method: 'POST', token, formData: fd });
+                }
+                setArNewForms([{ title: '', message_text: '', images: [] }]);
+                setArNewInputKeys([Date.now()]);
+                await loadArMessages();
+                setMessage('Messages created successfully.');
+              } catch (e) {
+                setMessage(e.message || 'Failed to create messages');
+              } finally {
+                setArBusy(false);
+              }
+            }}
+          >
+            {arBusy ? 'Saving…' : 'Save Messages'}
+          </button>
+        </div>
+      </section>
+
+      {/* ── Existing messages ── */}
+      <section className="card">
+        <h3>Existing Messages</h3>
+        {!arLoaded && <p className="muted">Loading…</p>}
+        {arLoaded && arMessages.length === 0 && <p className="muted">No messages yet.</p>}
+        {arMessages.map((msg) => (
+          <div key={msg.id} className="ar-admin-card">
+            {arEditId === msg.id ? (
+              /* ── Edit mode ── */
+              <div className="ar-edit-form">
+                <label>Title</label>
+                <input
+                  type="text"
+                  value={arEditForm.title}
+                  onChange={(e) => setArEditForm({ ...arEditForm, title: e.target.value })}
+                />
+                <label>Message Text</label>
+                <textarea
+                  rows={5}
+                  value={arEditForm.message_text}
+                  onChange={(e) => setArEditForm({ ...arEditForm, message_text: e.target.value })}
+                />
+                <div className="ar-edit-actions">
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    disabled={arBusy}
+                    onClick={async () => {
+                      if (!arEditForm.title.trim() || !arEditForm.message_text.trim()) {
+                        setMessage('Title and text are required.');
+                        return;
+                      }
+                      setArBusy(true);
+                      try {
+                        await apiRequest(`/auto-reply/${msg.id}`, {
+                          method: 'PUT', token,
+                          body: { title: arEditForm.title.trim(), message_text: arEditForm.message_text.trim() }
+                        });
+                        await loadArMessages();
+                        setArEditId('');
+                        setMessage('Message updated.');
+                      } catch (e) {
+                        setMessage(e.message || 'Failed to update');
+                      } finally {
+                        setArBusy(false);
+                      }
+                    }}
+                  >
+                    {arBusy ? 'Saving…' : 'Save'}
+                  </button>
+                  <button type="button" onClick={() => setArEditId('')}>Cancel</button>
+                </div>
+              </div>
+            ) : (
+              /* ── View mode ── */
+              <div>
+                <div className="ar-admin-card-header">
+                  <strong className="ar-card-title">{msg.title}</strong>
+                  <div className="ar-card-actions">
+                    <button
+                      type="button"
+                      className="btn-sm"
+                      onClick={() => {
+                        setArEditId(msg.id);
+                        setArEditForm({ title: msg.title, message_text: msg.message_text });
+                      }}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-sm btn-danger"
+                      disabled={arBusy}
+                      onClick={async () => {
+                        if (!window.confirm('Delete this message and all its images?')) return;
+                        setArBusy(true);
+                        try {
+                          await apiRequest(`/auto-reply/${msg.id}`, { method: 'DELETE', token });
+                          await loadArMessages();
+                          setMessage('Message deleted.');
+                        } catch (e) {
+                          setMessage(e.message || 'Failed to delete');
+                        } finally {
+                          setArBusy(false);
+                        }
+                      }}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+                <pre className="ar-message-text">{msg.message_text}</pre>
+              </div>
+            )}
+
+            {/* ── Images for this message ── */}
+            <div className="ar-admin-images">
+              <strong>Images</strong>
+              {msg.images && msg.images.length > 0 ? (
+                <div className="ar-images">
+                  {msg.images.map((img) => (
+                    <div key={img.id} className="ar-thumb-wrap">
+                      <img
+                        src={`${getApiBase()}/auto-reply/images/${img.id}`}
+                        alt={img.original_name || 'image'}
+                        className="ar-thumb"
+                        onClick={() => setArLightbox({ src: `${getApiBase()}/auto-reply/images/${img.id}`, alt: img.original_name || 'image' })}
+                        title="Click to enlarge"
+                      />
+                      <button
+                        type="button"
+                        className="ar-img-delete"
+                        title="Remove image"
+                        disabled={arBusy}
+                        onClick={async () => {
+                          if (!window.confirm('Remove this image?')) return;
+                          setArBusy(true);
+                          try {
+                            await apiRequest(`/auto-reply/${msg.id}/images/${img.id}`, { method: 'DELETE', token });
+                            await loadArMessages();
+                          } catch (e) {
+                            setMessage(e.message || 'Failed to delete image');
+                          } finally {
+                            setArBusy(false);
+                          }
+                        }}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="muted">No images.</p>
+              )}
+              <label className="ar-add-img-label">Add Images</label>
+              <input
+                key={arAddImgInputKey}
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={async (e) => {
+                  const files = Array.from(e.target.files || []);
+                  if (files.length === 0) return;
+                  setArBusy(true);
+                  try {
+                    const fd = new FormData();
+                    for (const f of files) fd.append('images', f);
+                    await apiRequest(`/auto-reply/${msg.id}/images`, { method: 'POST', token, formData: fd });
+                    await loadArMessages();
+                    setArAddImgInputKey((k) => k + 1);
+                  } catch (err) {
+                    setMessage(err.message || 'Failed to upload images');
+                  } finally {
+                    setArBusy(false);
+                  }
+                }}
+              />
+            </div>
+          </div>
+        ))}
+      </section>
+      </>
+      )}
+
+      {/* ── QR Link tab ── */}
+      {activeAdminTab === 'qr-link' && (
+        <section className="card">
+          <h3>QR Link</h3>
+          <p className="muted" style={{ marginBottom: 16 }}>
+            Enter a URL, generate a QR code, test it, then save to publish it for users.
+          </p>
+
+          {/* URL input */}
+          <div className="bt-field" style={{ marginBottom: 12 }}>
+            <label htmlFor="qr-url-input">Link URL</label>
+            <input
+              id="qr-url-input"
+              type="url"
+              placeholder="https://example.com"
+              value={qrDraftUrl}
+              onChange={(e) => {
+                setQrDraftUrl(e.target.value);
+                setQrDraftDataUrl(''); // clear QR when URL changes
+              }}
+            />
+          </div>
+          <div className="bt-field" style={{ marginBottom: 16 }}>
+            <label htmlFor="qr-label-input">Label (optional)</label>
+            <input
+              id="qr-label-input"
+              type="text"
+              placeholder="e.g. Customer Portal"
+              value={qrDraftLabel}
+              onChange={(e) => setQrDraftLabel(e.target.value)}
+            />
+          </div>
+
+          {/* Generate button */}
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 20 }}>
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={!qrDraftUrl.trim()}
+              onClick={async () => {
+                try {
+                  const dataUrl = await QRCode.toDataURL(qrDraftUrl.trim(), {
+                    width: 260,
+                    margin: 2,
+                    color: { dark: '#112b47', light: '#ffffff' },
+                  });
+                  setQrDraftDataUrl(dataUrl);
+                } catch {
+                  setMessage('Failed to generate QR code. Check the URL.');
+                }
+              }}
+            >
+              Generate QR
+            </button>
+            {qrDraftDataUrl && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => window.open(qrDraftUrl.trim(), '_blank', 'noopener,noreferrer')}
+                >
+                  Test Link
+                </button>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  disabled={qrBusy}
+                  onClick={async () => {
+                    setQrBusy(true);
+                    try {
+                      const saved = await apiRequest('/qr-link', {
+                        method: 'POST',
+                        token,
+                        body: { url: qrDraftUrl.trim(), label: qrDraftLabel.trim() || null },
+                      });
+                      setQrSaved(saved);
+                      setMessage('QR link saved and published.');
+                    } catch (err) {
+                      setMessage(err.message || 'Failed to save QR link');
+                    } finally {
+                      setQrBusy(false);
+                    }
+                  }}
+                >
+                  {qrBusy ? 'Saving…' : 'Save & Publish'}
+                </button>
+                <button
+                  type="button"
+                  className="btn-danger"
+                  onClick={() => {
+                    setQrDraftDataUrl('');
+                    setQrDraftUrl('');
+                    setQrDraftLabel('');
+                  }}
+                >
+                  Redo
+                </button>
+              </>
+            )}
+          </div>
+
+          {/* QR preview */}
+          {qrDraftDataUrl && (
+            <div className="qr-admin-preview">
+              {qrDraftLabel && <p className="qr-label">{qrDraftLabel}</p>}
+              <img
+                src={qrDraftDataUrl}
+                alt="Generated QR Code"
+                className="qr-image qr-image--admin"
+                title="Click to enlarge"
+                onClick={() => setQrLightbox(true)}
+              />
+              <p className="qr-url">{qrDraftUrl}</p>
+              {qrLightbox && (
+                <div
+                  className="ar-lightbox"
+                  onClick={() => setQrLightbox(false)}
+                >
+                  <img src={qrDraftDataUrl} alt="QR Code (enlarged)" onClick={(e) => e.stopPropagation()} />
+                  <button className="ar-lightbox-close" onClick={() => setQrLightbox(false)}>✕</button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Currently published */}
+          {qrSaved?.is_published && (
+            <div className="qr-saved-info">
+              <p><strong>Currently published:</strong> {qrSaved.url}</p>
+              {qrSaved.label && <p><strong>Label:</strong> {qrSaved.label}</p>}
+              <button
+                type="button"
+                className="btn-danger"
+                disabled={qrBusy}
+                onClick={async () => {
+                  setQrBusy(true);
+                  try {
+                    await apiRequest('/qr-link', { method: 'DELETE', token });
+                    setQrSaved(null);
+                    setMessage('QR link unpublished.');
+                  } catch (err) {
+                    setMessage(err.message || 'Failed to unpublish');
+                  } finally {
+                    setQrBusy(false);
+                  }
+                }}
+              >
+                Unpublish
+              </button>
+            </div>
+          )}
+        </section>
       )}
     </div>
   );

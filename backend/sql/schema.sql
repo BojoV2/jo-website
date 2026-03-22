@@ -109,3 +109,32 @@ CREATE INDEX IF NOT EXISTS idx_generated_pdfs_created_at ON generated_pdfs(creat
 CREATE INDEX IF NOT EXISTS idx_generated_pdfs_user_id ON generated_pdfs(user_id);
 CREATE INDEX IF NOT EXISTS idx_field_presets_created_by ON field_presets(created_by);
 CREATE INDEX IF NOT EXISTS idx_template_predefined_pdfs_template_id ON template_predefined_pdfs(template_id);
+
+CREATE TABLE IF NOT EXISTS auto_reply_messages (
+    id UUID PRIMARY KEY,
+    title VARCHAR(200) NOT NULL,
+    message_text TEXT NOT NULL,
+    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS auto_reply_images (
+    id UUID PRIMARY KEY,
+    message_id UUID REFERENCES auto_reply_messages(id) ON DELETE CASCADE,
+    file_path TEXT NOT NULL,
+    original_name TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_auto_reply_images_message_id ON auto_reply_images(message_id);
+
+CREATE TABLE IF NOT EXISTS qr_links (
+    id UUID PRIMARY KEY,
+    url TEXT NOT NULL,
+    label VARCHAR(200),
+    is_published BOOLEAN DEFAULT FALSE,
+    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
