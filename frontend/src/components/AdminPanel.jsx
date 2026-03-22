@@ -41,6 +41,68 @@ function messageTone(message) {
   return 'is-success';
 }
 
+// ── QR admin card (one saved QR entry with delete) ────────────────
+function QrAdminCard({ link, token, onDelete, onError }) {
+  const [dataUrl, setDataUrl] = useState('');
+  const [lightbox, setLightbox] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    QRCode.toDataURL(link.url, { width: 200, margin: 2, color: { dark: '#112b47', light: '#ffffff' } })
+      .then(setDataUrl)
+      .catch(() => setDataUrl(''));
+  }, [link.url]);
+
+  useEffect(() => {
+    if (!lightbox) return;
+    function onKey(e) { if (e.key === 'Escape') setLightbox(false); }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [lightbox]);
+
+  return (
+    <div className="qr-admin-card">
+      {lightbox && (
+        <div className="ar-lightbox" onClick={() => setLightbox(false)}>
+          <img src={dataUrl} alt="QR Code (enlarged)" onClick={(e) => e.stopPropagation()} />
+          <button className="ar-lightbox-close" onClick={() => setLightbox(false)}>✕</button>
+        </div>
+      )}
+      {dataUrl ? (
+        <img
+          src={dataUrl}
+          alt="QR Code"
+          className="qr-image qr-image--admin"
+          title="Click to enlarge"
+          onClick={() => setLightbox(true)}
+        />
+      ) : (
+        <div className="qr-placeholder">Generating…</div>
+      )}
+      {link.label && <p className="qr-label">{link.label}</p>}
+      <p className="qr-url">{link.url}</p>
+      <button
+        type="button"
+        className="btn-sm btn-danger"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          try {
+            await apiRequest(`/qr-link/${link.id}`, { method: 'DELETE', token });
+            onDelete(link.id);
+          } catch (err) {
+            onError(err.message || 'Failed to delete');
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        {busy ? 'Deleting…' : 'Delete'}
+      </button>
+    </div>
+  );
+}
+
 export default function AdminPanel({
   token,
   user,
@@ -117,7 +179,7 @@ export default function AdminPanel({
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   // QR Link state
-  const [qrSaved, setQrSaved]           = useState(null);   // saved record from DB
+  const [qrLinks, setQrLinks]           = useState([]);      // all saved QR links
   const [qrDraftUrl, setQrDraftUrl]     = useState('');      // URL input
   const [qrDraftLabel, setQrDraftLabel] = useState('');      // label input
   const [qrDraftDataUrl, setQrDraftDataUrl] = useState('');  // generated QR image
@@ -396,14 +458,7 @@ export default function AdminPanel({
     }
     if (activeAdminTab === 'qr-link' && !qrLoaded) {
       apiRequest('/qr-link/all', { token })
-        .then((data) => {
-          setQrSaved(data);
-          if (data?.url) {
-            setQrDraftUrl(data.url);
-            setQrDraftLabel(data.label || '');
-          }
-          setQrLoaded(true);
-        })
+        .then((data) => { setQrLinks(data); setQrLoaded(true); })
         .catch((err) => setMessage(err.message));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2253,150 +2308,133 @@ export default function AdminPanel({
         <section className="card">
           <h3>QR Link</h3>
           <p className="muted" style={{ marginBottom: 16 }}>
-            Enter a URL, generate a QR code, test it, then save to publish it for users.
+            Add as many QR codes as you like. Each saved entry is immediately visible to users.
           </p>
 
-          {/* URL input */}
-          <div className="bt-field" style={{ marginBottom: 12 }}>
-            <label htmlFor="qr-url-input">Link URL</label>
-            <input
-              id="qr-url-input"
-              type="url"
-              placeholder="https://example.com"
-              value={qrDraftUrl}
-              onChange={(e) => {
-                setQrDraftUrl(e.target.value);
-                setQrDraftDataUrl(''); // clear QR when URL changes
-              }}
-            />
-          </div>
-          <div className="bt-field" style={{ marginBottom: 16 }}>
-            <label htmlFor="qr-label-input">Label (optional)</label>
-            <input
-              id="qr-label-input"
-              type="text"
-              placeholder="e.g. Customer Portal"
-              value={qrDraftLabel}
-              onChange={(e) => setQrDraftLabel(e.target.value)}
-            />
-          </div>
-
-          {/* Generate button */}
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 20 }}>
-            <button
-              type="button"
-              className="btn-primary"
-              disabled={!qrDraftUrl.trim()}
-              onClick={async () => {
-                try {
-                  const dataUrl = await QRCode.toDataURL(qrDraftUrl.trim(), {
-                    width: 260,
-                    margin: 2,
-                    color: { dark: '#112b47', light: '#ffffff' },
-                  });
-                  setQrDraftDataUrl(dataUrl);
-                } catch {
-                  setMessage('Failed to generate QR code. Check the URL.');
-                }
-              }}
-            >
-              Generate QR
-            </button>
-            {qrDraftDataUrl && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => window.open(qrDraftUrl.trim(), '_blank', 'noopener,noreferrer')}
-                >
-                  Test Link
-                </button>
-                <button
-                  type="button"
-                  className="btn-primary"
-                  disabled={qrBusy}
-                  onClick={async () => {
-                    setQrBusy(true);
-                    try {
-                      const saved = await apiRequest('/qr-link', {
-                        method: 'POST',
-                        token,
-                        body: { url: qrDraftUrl.trim(), label: qrDraftLabel.trim() || null },
-                      });
-                      setQrSaved(saved);
-                      setMessage('QR link saved and published.');
-                    } catch (err) {
-                      setMessage(err.message || 'Failed to save QR link');
-                    } finally {
-                      setQrBusy(false);
-                    }
-                  }}
-                >
-                  {qrBusy ? 'Saving…' : 'Save & Publish'}
-                </button>
-                <button
-                  type="button"
-                  className="btn-danger"
-                  onClick={() => {
-                    setQrDraftDataUrl('');
-                    setQrDraftUrl('');
-                    setQrDraftLabel('');
-                  }}
-                >
-                  Redo
-                </button>
-              </>
-            )}
-          </div>
-
-          {/* QR preview */}
-          {qrDraftDataUrl && (
-            <div className="qr-admin-preview">
-              {qrDraftLabel && <p className="qr-label">{qrDraftLabel}</p>}
-              <img
-                src={qrDraftDataUrl}
-                alt="Generated QR Code"
-                className="qr-image qr-image--admin"
-                title="Click to enlarge"
-                onClick={() => setQrLightbox(true)}
+          {/* ── Add new QR form ── */}
+          <div className="qr-add-form">
+            <div className="bt-field" style={{ marginBottom: 12 }}>
+              <label htmlFor="qr-url-input">Link URL</label>
+              <input
+                id="qr-url-input"
+                type="url"
+                placeholder="https://example.com"
+                value={qrDraftUrl}
+                onChange={(e) => { setQrDraftUrl(e.target.value); setQrDraftDataUrl(''); }}
               />
-              <p className="qr-url">{qrDraftUrl}</p>
-              {qrLightbox && (
-                <div
-                  className="ar-lightbox"
-                  onClick={() => setQrLightbox(false)}
-                >
-                  <img src={qrDraftDataUrl} alt="QR Code (enlarged)" onClick={(e) => e.stopPropagation()} />
-                  <button className="ar-lightbox-close" onClick={() => setQrLightbox(false)}>✕</button>
-                </div>
-              )}
             </div>
-          )}
+            <div className="bt-field" style={{ marginBottom: 16 }}>
+              <label htmlFor="qr-label-input">Label (optional)</label>
+              <input
+                id="qr-label-input"
+                type="text"
+                placeholder="e.g. Customer Portal"
+                value={qrDraftLabel}
+                onChange={(e) => setQrDraftLabel(e.target.value)}
+              />
+            </div>
 
-          {/* Currently published */}
-          {qrSaved?.is_published && (
-            <div className="qr-saved-info">
-              <p><strong>Currently published:</strong> {qrSaved.url}</p>
-              {qrSaved.label && <p><strong>Label:</strong> {qrSaved.label}</p>}
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
               <button
                 type="button"
-                className="btn-danger"
-                disabled={qrBusy}
+                className="btn-primary"
+                disabled={!qrDraftUrl.trim()}
                 onClick={async () => {
-                  setQrBusy(true);
                   try {
-                    await apiRequest('/qr-link', { method: 'DELETE', token });
-                    setQrSaved(null);
-                    setMessage('QR link unpublished.');
-                  } catch (err) {
-                    setMessage(err.message || 'Failed to unpublish');
-                  } finally {
-                    setQrBusy(false);
+                    const dataUrl = await QRCode.toDataURL(qrDraftUrl.trim(), {
+                      width: 260, margin: 2,
+                      color: { dark: '#112b47', light: '#ffffff' },
+                    });
+                    setQrDraftDataUrl(dataUrl);
+                  } catch {
+                    setMessage('Failed to generate QR code. Check the URL.');
                   }
                 }}
               >
-                Unpublish
+                Generate QR
               </button>
+              {qrDraftDataUrl && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => window.open(qrDraftUrl.trim(), '_blank', 'noopener,noreferrer')}
+                  >
+                    Test Link
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    disabled={qrBusy}
+                    onClick={async () => {
+                      setQrBusy(true);
+                      try {
+                        const saved = await apiRequest('/qr-link', {
+                          method: 'POST', token,
+                          body: { url: qrDraftUrl.trim(), label: qrDraftLabel.trim() || null },
+                        });
+                        setQrLinks((prev) => [...prev, saved]);
+                        setQrDraftUrl('');
+                        setQrDraftLabel('');
+                        setQrDraftDataUrl('');
+                        setMessage('QR code saved and published.');
+                      } catch (err) {
+                        setMessage(err.message || 'Failed to save QR link');
+                      } finally {
+                        setQrBusy(false);
+                      }
+                    }}
+                  >
+                    {qrBusy ? 'Saving…' : 'Save & Publish'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-danger"
+                    onClick={() => { setQrDraftDataUrl(''); setQrDraftUrl(''); setQrDraftLabel(''); }}
+                  >
+                    Redo
+                  </button>
+                </>
+              )}
             </div>
+
+            {/* Draft preview */}
+            {qrDraftDataUrl && (
+              <div className="qr-admin-preview">
+                {qrDraftLabel && <p className="qr-label">{qrDraftLabel}</p>}
+                <img
+                  src={qrDraftDataUrl}
+                  alt="Generated QR Code"
+                  className="qr-image qr-image--admin"
+                  title="Click to enlarge"
+                  onClick={() => setQrLightbox(true)}
+                />
+                <p className="qr-url">{qrDraftUrl}</p>
+                {qrLightbox && (
+                  <div className="ar-lightbox" onClick={() => setQrLightbox(false)}>
+                    <img src={qrDraftDataUrl} alt="QR Code (enlarged)" onClick={(e) => e.stopPropagation()} />
+                    <button className="ar-lightbox-close" onClick={() => setQrLightbox(false)}>✕</button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* ── Saved QR codes list ── */}
+          {qrLinks.length > 0 && (
+            <>
+              <h4 style={{ marginTop: 28, marginBottom: 14 }}>Published QR Codes ({qrLinks.length})</h4>
+              <div className="qr-admin-grid">
+                {qrLinks.map((link) => (
+                  <QrAdminCard
+                    key={link.id}
+                    link={link}
+                    token={token}
+                    onDelete={(id) => setQrLinks((prev) => prev.filter((l) => l.id !== id))}
+                    onError={(msg) => setMessage(msg)}
+                  />
+                ))}
+              </div>
+            </>
           )}
         </section>
       )}

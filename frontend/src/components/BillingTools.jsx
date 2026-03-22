@@ -478,34 +478,16 @@ function AutoReply({ token }) {
   );
 }
 
-// ── Link to QR ────────────────────────────────────────────────────
-function LinkToQR({ token }) {
-  const [qrLink, setQrLink]     = useState(null);
-  const [loading, setLoading]   = useState(true);
-  const [error, setError]       = useState('');
+// ── Single QR card (user view) ─────────────────────────────────────
+function QrCard({ link }) {
+  const [dataUrl, setDataUrl]   = useState('');
   const [lightbox, setLightbox] = useState(false);
-  const [qrDataUrl, setQrDataUrl] = useState('');
-
-  const load = useCallback(async () => {
-    try {
-      setLoading(true);
-      const data = await apiRequest('/qr-link', { token });
-      setQrLink(data);
-    } catch (e) {
-      setError(e.message || 'Failed to load QR link');
-    } finally {
-      setLoading(false);
-    }
-  }, [token]);
-
-  useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
-    if (!qrLink?.url) { setQrDataUrl(''); return; }
-    QRCode.toDataURL(qrLink.url, { width: 260, margin: 2, color: { dark: '#112b47', light: '#ffffff' } })
-      .then(setQrDataUrl)
-      .catch(() => setQrDataUrl(''));
-  }, [qrLink]);
+    QRCode.toDataURL(link.url, { width: 260, margin: 2, color: { dark: '#112b47', light: '#ffffff' } })
+      .then(setDataUrl)
+      .catch(() => setDataUrl(''));
+  }, [link.url]);
 
   useEffect(() => {
     if (!lightbox) return;
@@ -514,39 +496,65 @@ function LinkToQR({ token }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [lightbox]);
 
-  if (loading) return <p className="muted">Loading QR code…</p>;
+  return (
+    <div className="qr-card">
+      {lightbox && (
+        <div className="ar-lightbox" onClick={() => setLightbox(false)}>
+          <img src={dataUrl} alt="QR Code (enlarged)" onClick={(e) => e.stopPropagation()} />
+          <button className="ar-lightbox-close" onClick={() => setLightbox(false)}>✕</button>
+        </div>
+      )}
+      {link.label && <p className="qr-label">{link.label}</p>}
+      {dataUrl ? (
+        <img
+          src={dataUrl}
+          alt="QR Code"
+          className="qr-image"
+          title="Click to enlarge"
+          onClick={() => setLightbox(true)}
+        />
+      ) : (
+        <div className="qr-placeholder">Generating QR…</div>
+      )}
+      <p className="qr-url">{link.url}</p>
+      <p className="qr-hint">Click to enlarge · Esc to close</p>
+    </div>
+  );
+}
+
+// ── Link to QR ────────────────────────────────────────────────────
+function LinkToQR({ token }) {
+  const [qrLinks, setQrLinks]   = useState([]);
+  const [loading, setLoading]   = useState(true);
+  const [error, setError]       = useState('');
+
+  const load = useCallback(async () => {
+    try {
+      setLoading(true);
+      const data = await apiRequest('/qr-link', { token });
+      setQrLinks(data);
+    } catch (e) {
+      setError(e.message || 'Failed to load QR codes');
+    } finally {
+      setLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (loading) return <p className="muted">Loading QR codes…</p>;
   if (error)   return <p className="bt-error">{error}</p>;
-  if (!qrLink) return (
+  if (qrLinks.length === 0) return (
     <div className="qr-empty">
-      <p className="muted">No QR code has been published yet. Check back later.</p>
+      <p className="muted">No QR codes have been published yet. Check back later.</p>
     </div>
   );
 
   return (
-    <div className="qr-view">
-      {lightbox && (
-        <div className="ar-lightbox" onClick={() => setLightbox(false)}>
-          <img src={qrDataUrl} alt="QR Code (enlarged)" onClick={(e) => e.stopPropagation()} />
-          <button className="ar-lightbox-close" onClick={() => setLightbox(false)}>✕</button>
-        </div>
-      )}
-
-      <div className="qr-card">
-        {qrLink.label && <p className="qr-label">{qrLink.label}</p>}
-        {qrDataUrl ? (
-          <img
-            src={qrDataUrl}
-            alt="QR Code"
-            className="qr-image"
-            title="Click to enlarge"
-            onClick={() => setLightbox(true)}
-          />
-        ) : (
-          <div className="qr-placeholder">Generating QR…</div>
-        )}
-        <p className="qr-url">{qrLink.url}</p>
-        <p className="qr-hint">Click the QR code to enlarge · Press Esc to close</p>
-      </div>
+    <div className="qr-grid">
+      {qrLinks.map((link) => (
+        <QrCard key={link.id} link={link} />
+      ))}
     </div>
   );
 }
