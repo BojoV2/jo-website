@@ -52,6 +52,64 @@ function getUserTemplateStorageKey(userId) {
   return `user-panel:selected-template:${userId || 'anonymous'}`;
 }
 
+function getDraftKey(userId, templateId) {
+  return `user-panel:form-draft:${userId || 'anon'}:${templateId}`;
+}
+
+function getPresetsKey(userId, templateId) {
+  return `user-panel:presets:${userId || 'anon'}:${templateId}`;
+}
+
+function getRecentKey(userId) {
+  return `user-panel:recent-tpl:${userId || 'anon'}`;
+}
+
+function readRecentTemplates(userId) {
+  try { return JSON.parse(window.localStorage.getItem(getRecentKey(userId)) || '[]'); } catch { return []; }
+}
+
+function pushRecentTemplate(userId, templateId) {
+  try {
+    const existing = JSON.parse(window.localStorage.getItem(getRecentKey(userId)) || '[]');
+    const next = [templateId, ...existing.filter((id) => id !== templateId)].slice(0, 5);
+    window.localStorage.setItem(getRecentKey(userId), JSON.stringify(next));
+    return next;
+  } catch { return []; }
+}
+
+function humanFieldHint(field) {
+  const rules = field.validation_rules || {};
+  const parts = [];
+  if (rules.min_length) parts.push(`Min ${rules.min_length} chars`);
+  if (rules.max_length) parts.push(`Max ${rules.max_length} chars`);
+  if (rules.regex) {
+    const p = String(rules.regex);
+    if (p.includes('@')) parts.push('Must be a valid email');
+    else if (/^\^?\\d/.test(p)) parts.push('Numbers only');
+    else parts.push('Must match required format');
+  }
+  return parts.join(' · ');
+}
+
+function validateFieldValue(field, value, formValues) {
+  const rules = field.validation_rules || {};
+  const requiredNow = field.required || isRequiredIfTriggered(field, formValues);
+  if (requiredNow && isMissingRequiredValue(field, value)) {
+    return `${field.field_name} is required`;
+  }
+  if (field.field_type !== 'checkbox' && value !== undefined && value !== null && String(value) !== '') {
+    const str = String(value);
+    if (rules.min_length && str.length < Number(rules.min_length)) return `Min ${rules.min_length} characters`;
+    if (rules.max_length && str.length > Number(rules.max_length)) return `Max ${rules.max_length} characters`;
+    if (rules.regex) {
+      try {
+        if (!new RegExp(String(rules.regex)).test(str)) return humanFieldHint(field) || 'Invalid format';
+      } catch { /* ignore bad regex */ }
+    }
+  }
+  return '';
+}
+
 function readStoredTemplateId(userId) {
   if (typeof window === 'undefined') return '';
   return window.localStorage.getItem(getUserTemplateStorageKey(userId)) || '';
@@ -239,8 +297,7 @@ export default function UserPanel({
   const [pdfMeta, setPdfMeta] = useState({ width: 0, height: 0, pages: 0 });
   const [renderMeta, setRenderMeta] = useState({ width: 0, height: 0 });
   const [previewPage, setPreviewPage] = useState(1);
-  const [editingCell, setEditingCell] = useState(null);
-  const [editingValue, setEditingValue] = useState('');
+  const [rowEdit, setRowEdit] = useState(null); // { id, note, reschedule_date }
   const [showPreviewMapper, setShowPreviewMapper] = useState(false);
   const [analytics, setAnalytics] = useState(null);
   const [monthlyReport, setMonthlyReport] = useState([]);
@@ -252,7 +309,15 @@ export default function UserPanel({
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [activeUserSection, setActiveUserSection] = useState('create');
   const [activeView, setActiveView] = useState('workspace');
-  const [listFilters, setListFilters] = useState(emptyListFilters);
+  const [listFilters, setListFilters] = useState(emptyListFilters);   // committed/applied
+  const [draftFilters, setDraftFilters] = useState(emptyListFilters); // in-progress input
+  const [keepValues, setKeepValues] = useState(() => window.localStorage.getItem('user-panel:keep-values') === 'true');
+  const [fieldTouched, setFieldTouched] = useState({});
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [presets, setPresets] = useState([]);
+  const [showPresetsPanel, setShowPresetsPanel] = useState(false);
+  const [presetName, setPresetName] = useState('');
+  const [recentTemplateIds, setRecentTemplateIds] = useState(() => readRecentTemplates(user?.id));
   const [showManualAddModal, setShowManualAddModal] = useState(false);
   const [manualAddValues, setManualAddValues] = useState({});
   const [openingPdfId, setOpeningPdfId] = useState(null);
@@ -260,6 +325,9 @@ export default function UserPanel({
   const canvasRef = useRef(null);
   const renderTaskRef = useRef(null);
   const renderRequestRef = useRef(0);
+  const manualAddTriggerRef = useRef(null);
+  const modalRef = useRef(null);
+  const filterDebounceRef = useRef(null);
 
   const selectedTemplate = useMemo(
     () => templates.find((t) => t.id === selectedTemplateId),
@@ -402,8 +470,21 @@ export default function UserPanel({
     if (!templateId) return;
     const data = await apiRequest(`/templates/${templateId}/fields`, { token });
     setFields(data);
-    setFormValues((prev) => buildFieldValues(data, prev));
+    // Restore draft values from localStorage for this template
+    let savedDraft = {};
+    try {
+      const raw = window.localStorage.getItem(getDraftKey(user?.id, templateId));
+      if (raw) savedDraft = JSON.parse(raw);
+    } catch { /* ignore */ }
+    setFormValues(buildFieldValues(data, savedDraft));
     setManualAddValues((prev) => buildFieldValues(data, prev));
+    // Load presets for this template
+    try {
+      const presetsRaw = window.localStorage.getItem(getPresetsKey(user?.id, templateId));
+      setPresets(presetsRaw ? JSON.parse(presetsRaw) : []);
+    } catch { setPresets([]); }
+    setFieldTouched({});
+    setFieldErrors({});
   }
 
   async function loadGenerated(status, templateId = selectedTemplateId, filters = listFilters) {
@@ -606,6 +687,44 @@ export default function UserPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeStatus, selectedTemplateId, listFilters.keyword, listFilters.date_from, listFilters.date_to]);
 
+  // item 2: debounce keyword auto-apply (600ms after last keystroke)
+  useEffect(() => {
+    if (filterDebounceRef.current) clearTimeout(filterDebounceRef.current);
+    filterDebounceRef.current = setTimeout(() => {
+      setListFilters((prev) => ({ ...prev, keyword: draftFilters.keyword }));
+      setPendingPage(1);
+    }, 600);
+    return () => clearTimeout(filterDebounceRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftFilters.keyword]);
+
+  // item 3: persist form draft to localStorage on every change
+  useEffect(() => {
+    if (!selectedTemplateId) return;
+    window.localStorage.setItem(getDraftKey(user?.id, selectedTemplateId), JSON.stringify(formValues));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formValues, selectedTemplateId]);
+
+  // item 7: track recently used templates
+  useEffect(() => {
+    if (!selectedTemplateId) return;
+    const next = pushRecentTemplate(user?.id, selectedTemplateId);
+    setRecentTemplateIds(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTemplateId]);
+
+  // item 5: Escape + focus management for manual-add modal
+  useEffect(() => {
+    if (!showManualAddModal) {
+      manualAddTriggerRef.current?.focus();
+      return;
+    }
+    function onKey(e) { if (e.key === 'Escape') setShowManualAddModal(false); }
+    window.addEventListener('keydown', onKey);
+    const timer = setTimeout(() => modalRef.current?.querySelector('input,button,select,textarea')?.focus(), 40);
+    return () => { window.removeEventListener('keydown', onKey); clearTimeout(timer); };
+  }, [showManualAddModal]);
+
   useEffect(() => {
     if (pendingPage > pendingTotalPages) {
       setPendingPage(pendingTotalPages);
@@ -705,9 +824,22 @@ export default function UserPanel({
     const optionsListId = `${fieldSetKey}-dropdown-options-${field.id}`;
     const inputId = `${fieldSetKey}-field-${field.id}`;
     const inputName = `field_${normalizeFieldKey(field.field_name) || field.id}`;
+    const isMain = fieldSetKey === 'main';
+    const hint = isMain ? humanFieldHint(field) : '';
+    const touched = isMain && fieldTouched[field.field_name];
+    const errorMsg = isMain && touched ? fieldErrors[field.field_name] : '';
+
+    function handleBlur() {
+      if (!isMain) return;
+      setFieldTouched((prev) => ({ ...prev, [field.field_name]: true }));
+      const err = validateFieldValue(field, values[field.field_name], values);
+      setFieldErrors((prev) => ({ ...prev, [field.field_name]: err }));
+    }
+
+    const sharedBlur = { onBlur: handleBlur };
 
     return (
-      <div key={field.id}>
+      <div key={field.id} className={`field-wrap${errorMsg ? ' field-wrap--error' : ''}`}>
         <label htmlFor={inputId}>{field.field_name}{requiredNow ? ' *' : ''}</label>
         {field.field_type === 'dropdown' ? (
           <>
@@ -719,6 +851,7 @@ export default function UserPanel({
               onChange={(e) => setFieldValue(e.target.value)}
               placeholder={`Type to search or pick ${field.field_name}`}
               required={requiredNow}
+              {...sharedBlur}
             />
             <datalist id={optionsListId}>
               {parseFieldOptions(field.field_options).map((option) => (
@@ -734,6 +867,7 @@ export default function UserPanel({
             value={values[field.field_name] || ''}
             onChange={(e) => setFieldValue(e.target.value)}
             required={requiredNow}
+            {...sharedBlur}
           />
         ) : field.field_type === 'checkbox' ? (
           <label className="checkbox-line" htmlFor={inputId}>
@@ -761,9 +895,18 @@ export default function UserPanel({
             onChange={(e) => setFieldValue(e.target.value)}
             minLength={field.validation_rules?.min_length ?? undefined}
             maxLength={field.validation_rules?.max_length ?? undefined}
-            pattern={field.validation_rules?.regex || undefined}
             required={requiredNow}
+            {...sharedBlur}
           />
+        )}
+        {isMain && errorMsg && <span className="field-error">{errorMsg}</span>}
+        {isMain && !errorMsg && hint && <span className="field-hint">{hint}</span>}
+        {isMain && requiredNow && !hint && !errorMsg && (
+          <span className="field-hint">
+            {isRequiredIfTriggered(field, values)
+              ? `Required when ${field.validation_rules?.required_if?.field} is "${field.validation_rules?.required_if?.equals}"`
+              : 'Required'}
+          </span>
         )}
       </div>
     );
@@ -780,7 +923,12 @@ export default function UserPanel({
     setMessage('');
     try {
       await createGeneratedPdf(formValues, { autoDownload: true });
-      setFormValues(buildFieldValues(fields));
+      if (!keepValues) {
+        window.localStorage.removeItem(getDraftKey(user?.id, selectedTemplateId));
+        setFormValues(buildFieldValues(fields));
+        setFieldTouched({});
+        setFieldErrors({});
+      }
     } catch (err) {
       setMessage(err.message);
     } finally {
@@ -832,58 +980,79 @@ export default function UserPanel({
     }
   }
 
-  function startCellEdit(item, field) {
-    setEditingCell({ id: item.id, field });
-    if (field === 'status_note') {
-      setEditingValue(item.status_note || '');
-    } else if (field === 'reschedule_date') {
-      setEditingValue(toDatetimeLocal(item.reschedule_date) || nowDatetimeLocal());
-    }
+  function startRowEdit(item) {
+    setRowEdit({
+      id: item.id,
+      note: item.status_note || '',
+      reschedule_date: toDatetimeLocal(item.reschedule_date) || ''
+    });
   }
 
-  async function saveCellEdit(item) {
-    if (!editingCell || editingCell.id !== item.id) return;
+  function cancelRowEdit() { setRowEdit(null); }
 
+  async function saveRowEdit(item) {
+    if (!rowEdit || rowEdit.id !== item.id) return;
+    const note = rowEdit.note.trim() || null;
     let status = item.status;
-    let note = item.status_note || null;
-    let rescheduleDate = item.reschedule_date || null;
-
-    if (editingCell.field === 'status_note') {
-      note = editingValue.trim() || null;
-    }
-
-    if (editingCell.field === 'reschedule_date') {
-      rescheduleDate = editingValue ? new Date(editingValue).toISOString() : null;
-      if (rescheduleDate) {
-        status = 'rescheduled';
-      } else if (status !== 'rescheduled') {
-        rescheduleDate = null;
-      }
-    }
-
+    let rescheduleDate = rowEdit.reschedule_date ? new Date(rowEdit.reschedule_date).toISOString() : null;
+    if (rescheduleDate) status = 'rescheduled';
     setLoading(true);
     setMessage('');
     try {
       await apiRequest(`/generated-pdfs/${item.id}/status`, {
         method: 'PATCH',
         token,
-        body: {
-          status,
-          note,
-          reschedule_date: status === 'rescheduled' ? rescheduleDate : null
-        }
+        body: { status, note, reschedule_date: status === 'rescheduled' ? rescheduleDate : null }
       });
-      setEditingCell(null);
-      setEditingValue('');
+      setRowEdit(null);
       await loadGenerated(activeStatus, selectedTemplateId);
       await loadAnalytics(selectedTemplateId);
-      await loadMonthlyReport();
       setMessage('Saved.');
     } catch (err) {
       setMessage(err.message);
     } finally {
       setLoading(false);
     }
+  }
+
+  // item 2: filter apply/clear
+  function applyFilters() {
+    setListFilters({ ...draftFilters });
+    setPendingPage(1);
+  }
+
+  function clearFilters() {
+    setDraftFilters(emptyListFilters);
+    setListFilters(emptyListFilters);
+    setPendingPage(1);
+  }
+
+  // item 7: fill from last generated
+  function fillFromLast() {
+    const last = generated[0];
+    if (!last) { setMessage('No previous PDF to duplicate from.'); return; }
+    setFormValues(buildFieldValues(fields, normalizeSubmittedData(last.submitted_data)));
+    setMessage('Form filled from your last PDF. Review and generate.');
+  }
+
+  // item 7: presets
+  function saveCurrentPreset() {
+    if (!presetName.trim() || !selectedTemplateId) return;
+    const next = [...presets, { name: presetName.trim(), values: { ...formValues } }];
+    window.localStorage.setItem(getPresetsKey(user?.id, selectedTemplateId), JSON.stringify(next));
+    setPresets(next);
+    setPresetName('');
+  }
+
+  function applyPreset(preset) {
+    setFormValues(buildFieldValues(fields, preset.values));
+    setShowPresetsPanel(false);
+  }
+
+  function deletePreset(index) {
+    const next = presets.filter((_, i) => i !== index);
+    window.localStorage.setItem(getPresetsKey(user?.id, selectedTemplateId), JSON.stringify(next));
+    setPresets(next);
   }
 
   function focusUserSection(sectionId) {
@@ -957,6 +1126,32 @@ export default function UserPanel({
             <span className="user-sidebar-label">Templates</span>
             <span className="user-sidebar-count">{orderedTemplates.length}</span>
           </div>
+
+          {/* Recent templates quick-access */}
+          {recentTemplateIds.filter((id) => templates.some((t) => t.id === id)).length > 0 && (
+            <div className="recent-templates">
+              <span className="user-sidebar-label recent-templates-label">Recent</span>
+              <div className="recent-templates-list">
+                {recentTemplateIds
+                  .filter((id) => templates.some((t) => t.id === id))
+                  .map((id) => {
+                    const tpl = templates.find((t) => t.id === id);
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        className={`recent-tpl-btn${id === selectedTemplateId ? ' active' : ''}`}
+                        onClick={() => setSelectedTemplateId(id)}
+                        title={tpl?.title}
+                      >
+                        {tpl?.title}
+                      </button>
+                    );
+                  })}
+              </div>
+            </div>
+          )}
+
           <div className="template-stack" role="list" aria-label="Templates">
             {orderedTemplates.map((tpl) => (
               <div
@@ -1112,12 +1307,64 @@ export default function UserPanel({
               <h3>Fill Form Fields</h3>
               <p className="muted">Complete the mapped fields and generate the PDF in one step.</p>
             </div>
+            {fields.length > 0 && (
+              <div className="actions">
+                <button
+                  type="button"
+                  disabled={generated.length === 0}
+                  title="Prefill form with your most recent PDF values"
+                  onClick={fillFromLast}
+                >
+                  Fill from Last
+                </button>
+                <button type="button" onClick={() => setShowPresetsPanel((p) => !p)}>
+                  Presets{presets.length > 0 ? ` (${presets.length})` : ''}
+                </button>
+              </div>
+            )}
           </div>
+
+          {showPresetsPanel && (
+            <div className="presets-panel">
+              <div className="presets-save-row">
+                <input
+                  value={presetName}
+                  onChange={(e) => setPresetName(e.target.value)}
+                  placeholder="Preset name…"
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); saveCurrentPreset(); } }}
+                />
+                <button type="button" onClick={saveCurrentPreset} disabled={!presetName.trim()}>Save Current</button>
+              </div>
+              {presets.length === 0 && <p className="muted" style={{ margin: '6px 0 0' }}>No presets saved yet.</p>}
+              {presets.map((preset, i) => (
+                <div key={i} className="preset-row">
+                  <span className="preset-name">{preset.name}</span>
+                  <button type="button" onClick={() => applyPreset(preset)}>Apply</button>
+                  <button type="button" className="btn-sm btn-danger" onClick={() => deletePreset(i)}>Delete</button>
+                </div>
+              ))}
+            </div>
+          )}
+
           {fields.map((field) => renderFormField(field, formValues, setFormValues, 'main'))}
           {fields.length === 0 && <p className="muted">No mapped fields for this template yet.</p>}
-          <button disabled={loading || fields.length === 0}>
-            {loading ? 'Generating...' : 'Generate PDF'}
-          </button>
+
+          <div className="actions" style={{ alignItems: 'center' }}>
+            <button disabled={loading || fields.length === 0}>
+              {loading ? 'Generating...' : 'Generate PDF'}
+            </button>
+            <label className="checkbox-line" style={{ marginTop: 0 }}>
+              <input
+                type="checkbox"
+                checked={keepValues}
+                onChange={(e) => {
+                  setKeepValues(e.target.checked);
+                  window.localStorage.setItem('user-panel:keep-values', String(e.target.checked));
+                }}
+              />
+              Keep values after generate
+            </label>
+          </div>
         </form>
       </section>
 
@@ -1211,6 +1458,7 @@ export default function UserPanel({
         <div className="actions" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
           <h3>My Generated PDFs</h3>
           <button
+            ref={manualAddTriggerRef}
             type="button"
             onClick={() => {
               setManualAddValues(buildFieldValues(fields, formValues));
@@ -1221,35 +1469,43 @@ export default function UserPanel({
             Manual Add PDF
           </button>
         </div>
-        <p className="muted">Double click Note or Reschedule Date to edit and auto-save.</p>
-        <div className="grid two">
-          <div className="card">
-            <label htmlFor="user-filter-keyword">Keyword</label>
-            <input
-              id="user-filter-keyword"
-              name="keyword"
-              value={listFilters.keyword}
-              onChange={(e) => setListFilters({ ...listFilters, keyword: e.target.value })}
-              placeholder="Search data/notes"
-            />
+
+        <div className="filter-bar">
+          <div className="filter-bar-inputs">
+            <div>
+              <label htmlFor="user-filter-keyword">Search</label>
+              <input
+                id="user-filter-keyword"
+                name="keyword"
+                value={draftFilters.keyword}
+                onChange={(e) => setDraftFilters((prev) => ({ ...prev, keyword: e.target.value }))}
+                placeholder="Search data/notes…"
+              />
+            </div>
+            <div>
+              <label htmlFor="user-filter-date-from">From</label>
+              <input
+                id="user-filter-date-from"
+                name="date_from"
+                type="date"
+                value={draftFilters.date_from}
+                onChange={(e) => setDraftFilters((prev) => ({ ...prev, date_from: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label htmlFor="user-filter-date-to">To</label>
+              <input
+                id="user-filter-date-to"
+                name="date_to"
+                type="date"
+                value={draftFilters.date_to}
+                onChange={(e) => setDraftFilters((prev) => ({ ...prev, date_to: e.target.value }))}
+              />
+            </div>
           </div>
-          <div className="card">
-            <label htmlFor="user-filter-date-from">Date From</label>
-            <input
-              id="user-filter-date-from"
-              name="date_from"
-              type="date"
-              value={listFilters.date_from}
-              onChange={(e) => setListFilters({ ...listFilters, date_from: e.target.value })}
-            />
-            <label htmlFor="user-filter-date-to">Date To</label>
-            <input
-              id="user-filter-date-to"
-              name="date_to"
-              type="date"
-              value={listFilters.date_to}
-              onChange={(e) => setListFilters({ ...listFilters, date_to: e.target.value })}
-            />
+          <div className="filter-bar-actions">
+            <button type="button" className="btn-primary" onClick={applyFilters}>Apply</button>
+            <button type="button" onClick={clearFilters}>Clear</button>
           </div>
         </div>
         <div className="tabs">
@@ -1311,7 +1567,8 @@ export default function UserPanel({
           </div>
         )}
 
-        <div className="table-wrap">
+        {/* Desktop table — hidden on small screens */}
+        <div className="table-wrap hide-on-mobile">
           <table>
             <thead>
               <tr>
@@ -1325,66 +1582,69 @@ export default function UserPanel({
               </tr>
             </thead>
             <tbody>
-              {visibleGenerated.map((item) => (
-                <tr key={item.id}>
-                  {listColumns.map((column, index) => (
-                    <td key={`${item.id}-${index}-${column}`}>{pickFieldValue(item.submitted_data, column)}</td>
-                  ))}
-                  <td>{new Date(item.created_at).toLocaleString()}</td>
-                  <td onDoubleClick={() => startCellEdit(item, 'status_note')}>
-                    {editingCell?.id === item.id && editingCell.field === 'status_note' ? (
-                      <input
-                        autoFocus
-                        id={`user-note-${item.id}`}
-                        name={`status_note_${item.id}`}
-                        aria-label={`Status note for ${item.id}`}
-                        value={editingValue}
-                        onChange={(e) => setEditingValue(e.target.value)}
-                        onBlur={() => saveCellEdit(item)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            saveCellEdit(item);
-                          }
-                        }}
-                      />
-                    ) : (item.status_note || '-')}
-                  </td>
-                  <td onDoubleClick={() => startCellEdit(item, 'reschedule_date')}>
-                    {editingCell?.id === item.id && editingCell.field === 'reschedule_date' ? (
-                      <input
-                        autoFocus
-                        id={`user-reschedule-${item.id}`}
-                        name={`reschedule_date_${item.id}`}
-                        aria-label={`Reschedule date for ${item.id}`}
-                        type="datetime-local"
-                        value={editingValue}
-                        onChange={(e) => setEditingValue(e.target.value)}
-                        onBlur={() => saveCellEdit(item)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            saveCellEdit(item);
-                          }
-                        }}
-                      />
-                    ) : (item.reschedule_date ? new Date(item.reschedule_date).toLocaleString() : '-')}
-                  </td>
-                  <td className="actions">
-                    <select
-                      id={`user-status-${item.id}`}
-                      name={`status_${item.id}`}
-                      aria-label={`Status for ${item.id}`}
-                      value={statusDrafts[item.id] || item.status}
-                      onChange={(e) => setStatusDrafts({ ...statusDrafts, [item.id]: e.target.value })}
-                    >
-                      {statusTabs.map((status) => (
-                        <option key={status} value={status}>{status}</option>
-                      ))}
-                    </select>
-                    <button type="button" onClick={() => applyStatusChange(item)}>Move</button>
-                    <button type="button" onClick={() => openWithTokenInNewTab(`/generated-pdfs/${item.id}/download`, token)}>Open PDF</button>
-                  </td>
-                </tr>
-              ))}
+              {visibleGenerated.map((item) => {
+                const isEditing = rowEdit?.id === item.id;
+                return (
+                  <tr key={item.id} className={isEditing ? 'row-editing' : ''}>
+                    {listColumns.map((column, index) => (
+                      <td key={`${item.id}-${index}-${column}`}>{pickFieldValue(item.submitted_data, column)}</td>
+                    ))}
+                    <td>{new Date(item.created_at).toLocaleString()}</td>
+                    <td>
+                      {isEditing ? (
+                        <input
+                          autoFocus
+                          id={`user-note-${item.id}`}
+                          name={`status_note_${item.id}`}
+                          aria-label={`Note for record`}
+                          value={rowEdit.note}
+                          onChange={(e) => setRowEdit((prev) => ({ ...prev, note: e.target.value }))}
+                          onKeyDown={(e) => { if (e.key === 'Enter') saveRowEdit(item); if (e.key === 'Escape') cancelRowEdit(); }}
+                          placeholder="Add note…"
+                        />
+                      ) : (item.status_note || <span className="muted">—</span>)}
+                    </td>
+                    <td>
+                      {isEditing ? (
+                        <input
+                          id={`user-reschedule-${item.id}`}
+                          name={`reschedule_date_${item.id}`}
+                          aria-label={`Reschedule date`}
+                          type="datetime-local"
+                          value={rowEdit.reschedule_date}
+                          onChange={(e) => setRowEdit((prev) => ({ ...prev, reschedule_date: e.target.value }))}
+                          onKeyDown={(e) => { if (e.key === 'Escape') cancelRowEdit(); }}
+                        />
+                      ) : (item.reschedule_date ? new Date(item.reschedule_date).toLocaleString() : <span className="muted">—</span>)}
+                    </td>
+                    <td className="actions">
+                      {isEditing ? (
+                        <>
+                          <button type="button" className="btn-primary" onClick={() => saveRowEdit(item)}>Save</button>
+                          <button type="button" onClick={cancelRowEdit}>Cancel</button>
+                        </>
+                      ) : (
+                        <>
+                          <select
+                            id={`user-status-${item.id}`}
+                            name={`status_${item.id}`}
+                            aria-label={`Status`}
+                            value={statusDrafts[item.id] || item.status}
+                            onChange={(e) => setStatusDrafts({ ...statusDrafts, [item.id]: e.target.value })}
+                          >
+                            {statusTabs.map((status) => (
+                              <option key={status} value={status}>{status}</option>
+                            ))}
+                          </select>
+                          <button type="button" onClick={() => applyStatusChange(item)}>Move</button>
+                          <button type="button" onClick={() => startRowEdit(item)}>Edit</button>
+                          <button type="button" onClick={() => openWithTokenInNewTab(`/generated-pdfs/${item.id}/download`, token)}>Open PDF</button>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
               {visibleGenerated.length === 0 && (
                 <tr>
                   <td colSpan={listColumns.length + 4}>No generated PDFs in this status.</td>
@@ -1393,15 +1653,93 @@ export default function UserPanel({
             </tbody>
           </table>
         </div>
+
+        {/* Mobile card view — shown only on small screens */}
+        <div className="pdf-cards-mobile show-on-mobile">
+          {visibleGenerated.length === 0 && (
+            <p className="muted" style={{ textAlign: 'center', padding: '20px 0' }}>No generated PDFs in this status.</p>
+          )}
+          {visibleGenerated.map((item) => {
+            const isEditing = rowEdit?.id === item.id;
+            return (
+              <div key={item.id} className={`pdf-card${isEditing ? ' pdf-card--editing' : ''}`}>
+                {listColumns.map((col, i) => (
+                  <div key={i} className="pdf-card-row">
+                    <span className="pdf-card-label">{col}</span>
+                    <span>{pickFieldValue(item.submitted_data, col)}</span>
+                  </div>
+                ))}
+                <div className="pdf-card-row">
+                  <span className="pdf-card-label">Created</span>
+                  <span>{new Date(item.created_at).toLocaleString()}</span>
+                </div>
+                {isEditing ? (
+                  <div className="pdf-card-edit">
+                    <label>Note</label>
+                    <input
+                      value={rowEdit.note}
+                      onChange={(e) => setRowEdit((p) => ({ ...p, note: e.target.value }))}
+                      placeholder="Add note…"
+                    />
+                    <label>Reschedule Date</label>
+                    <input
+                      type="datetime-local"
+                      value={rowEdit.reschedule_date}
+                      onChange={(e) => setRowEdit((p) => ({ ...p, reschedule_date: e.target.value }))}
+                    />
+                    <div className="actions">
+                      <button type="button" className="btn-primary" onClick={() => saveRowEdit(item)}>Save</button>
+                      <button type="button" onClick={cancelRowEdit}>Cancel</button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {item.status_note && (
+                      <div className="pdf-card-row">
+                        <span className="pdf-card-label">Note</span>
+                        <span>{item.status_note}</span>
+                      </div>
+                    )}
+                    {item.reschedule_date && (
+                      <div className="pdf-card-row">
+                        <span className="pdf-card-label">Reschedule</span>
+                        <span>{new Date(item.reschedule_date).toLocaleString()}</span>
+                      </div>
+                    )}
+                  </>
+                )}
+                <div className="pdf-card-actions">
+                  <select
+                    value={statusDrafts[item.id] || item.status}
+                    onChange={(e) => setStatusDrafts({ ...statusDrafts, [item.id]: e.target.value })}
+                    aria-label="Status"
+                  >
+                    {statusTabs.map((s) => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                  <button type="button" onClick={() => applyStatusChange(item)}>Move</button>
+                  {!isEditing && <button type="button" onClick={() => startRowEdit(item)}>Edit</button>}
+                  <button type="button" onClick={() => openWithTokenInNewTab(`/generated-pdfs/${item.id}/download`, token)}>Open PDF</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </section>
       </>)}
 
       </main>
 
       {showManualAddModal && (
-        <div className="modal-backdrop" onClick={() => setShowManualAddModal(false)}>
-          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-            <h3>Manual Add To My Generated PDFs</h3>
+        <div className="modal-backdrop" role="presentation" onClick={() => setShowManualAddModal(false)}>
+          <div
+            className="modal-card"
+            ref={modalRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="manual-add-modal-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 id="manual-add-modal-title">Manual Add To My Generated PDFs</h3>
             <p className="muted">This creates the PDF record without opening it immediately. Use Open PDF later from the list.</p>
             <form className="sidebar-form" onSubmit={submitManualAdd}>
               {fields.map((field) => renderFormField(field, manualAddValues, setManualAddValues, 'manual'))}

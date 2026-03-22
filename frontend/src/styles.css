@@ -3186,6 +3186,301 @@ input[list]::-webkit-calendar-picker-indicator {
   }
 }
 
+/* ── Field hints & validation (item 6) ──────────────────────────── */
+.field-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.field-hint {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.field-error {
+  font-size: 0.75rem;
+  color: var(--danger);
+  margin-top: 2px;
+  font-weight: 500;
+}
+
+.field-wrap--error input,
+.field-wrap--error select,
+.field-wrap--error textarea {
+  border-color: var(--danger);
+  outline-color: var(--danger);
+}
+
+/* ── Filter bar (item 2) ─────────────────────────────────────────── */
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+  padding: 14px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  margin-bottom: 14px;
+}
+
+.filter-bar-inputs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  flex: 1;
+}
+
+.filter-bar-inputs > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 160px;
+}
+
+.filter-bar-inputs label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted);
+  margin: 0;
+}
+
+.filter-bar-inputs input {
+  margin: 0;
+  padding: 7px 10px;
+  font-size: 0.875rem;
+}
+
+.filter-bar-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* ── Presets panel (item 7) ─────────────────────────────────────── */
+.presets-panel {
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.presets-save-row {
+  display: flex;
+  gap: 8px;
+}
+
+.presets-save-row input {
+  flex: 1;
+  margin: 0;
+  padding: 7px 10px;
+  font-size: 0.875rem;
+}
+
+.preset-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+
+.preset-name {
+  flex: 1;
+  font-size: 0.875rem;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Row editing highlight (item 1) ────────────────────────────── */
+tr.row-editing {
+  background: var(--primary-soft) !important;
+}
+
+/* ── Mobile PDF cards (item 4) ──────────────────────────────────── */
+.hide-on-mobile { display: block; }
+.show-on-mobile { display: none; }
+
+.pdf-cards-mobile {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pdf-card {
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pdf-card--editing {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.pdf-card-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 0.875rem;
+}
+
+.pdf-card-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+  min-width: 80px;
+  flex-shrink: 0;
+}
+
+.pdf-card-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
+}
+
+.pdf-card-edit label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted);
+  margin: 0;
+}
+
+.pdf-card-edit input {
+  margin: 0;
+}
+
+.pdf-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
+}
+
+.pdf-card-actions select,
+.pdf-card-actions button {
+  font-size: 0.8rem;
+  padding: 6px 10px;
+}
+
+.pdf-card-actions select {
+  width: auto;
+  min-width: 110px;
+}
+
+/* ── Recent templates (item 7) ──────────────────────────────────── */
+.recent-templates {
+  margin-bottom: 8px;
+}
+
+.recent-templates-label {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.recent-templates-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.recent-tpl-btn {
+  width: 100%;
+  text-align: left;
+  padding: 5px 8px;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--shell-muted);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: background 0.12s;
+}
+
+.recent-tpl-btn:hover {
+  background: var(--primary-soft);
+  color: var(--primary);
+  border-color: transparent;
+}
+
+.recent-tpl-btn.active {
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-weight: 600;
+}
+
+@media (max-width: 720px) {
+  .hide-on-mobile { display: none !important; }
+  .show-on-mobile { display: block !important; }
+
+  .filter-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .filter-bar-inputs > div {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .filter-bar-actions {
+    width: 100%;
+  }
+
+  .filter-bar-actions button {
+    flex: 1;
+  }
+}
+
+/* dark mode for new components */
+:root[data-theme='dark'] .filter-bar,
+:root[data-theme='dark'] .presets-panel {
+  background: #0d1e33;
+  border-color: #2f4f73;
+}
+
+:root[data-theme='dark'] .preset-row {
+  background: #0a1829;
+  border-color: #2f4f73;
+}
+
+:root[data-theme='dark'] .pdf-card {
+  background: #0d1e33;
+  border-color: #2f4f73;
+}
+
+:root[data-theme='dark'] .pdf-card--editing {
+  background: rgba(30, 93, 184, 0.18);
+  border-color: var(--primary);
+}
+
+:root[data-theme='dark'] tr.row-editing {
+  background: rgba(30, 93, 184, 0.18) !important;
+}
+
+/* ── */
+
 .back-to-top {
   position: fixed;
   bottom: 28px;

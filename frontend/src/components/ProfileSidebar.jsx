@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiRequest } from '../api.js';
 import { fallbackAvatarUrl, resolveAvatar } from '../utils/avatar.js';
 
@@ -31,6 +31,22 @@ export default function ProfileSidebar({
   const [error, setError] = useState('');
   const [savingProfile, setSavingProfile] = useState(false);
   const [savingPassword, setSavingPassword] = useState(false);
+  const closeButtonRef = useRef(null);
+
+  // Escape to close
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e) { if (e.key === 'Escape') onClose(); }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
+  // Focus close button when opened
+  useEffect(() => {
+    if (!open) return;
+    const timer = setTimeout(() => closeButtonRef.current?.focus(), 80);
+    return () => clearTimeout(timer);
+  }, [open]);
 
   const avatarChoices = useMemo(() => {
     const seed = String(profileForm.name || user?.name || 'User').trim() || 'User';
@@ -158,7 +174,13 @@ export default function ProfileSidebar({
         onClick={onClose}
         aria-label="Close sidebar"
       />
-      <aside className={open ? 'profile-sidebar open' : 'profile-sidebar'} aria-hidden={!open}>
+      <aside
+        className={open ? 'profile-sidebar open' : 'profile-sidebar'}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Profile settings"
+        aria-hidden={!open}
+      >
         <div className="sidebar-head">
           <div className="profile-head">
             <img className="avatar avatar-md" src={resolveAvatar(user)} alt={user?.name || 'User'} />
@@ -167,7 +189,7 @@ export default function ProfileSidebar({
               <p className="muted">{user?.role || 'user'}</p>
             </div>
           </div>
-          <button type="button" className="sidebar-close" onClick={onClose}>Close</button>
+          <button ref={closeButtonRef} type="button" className="sidebar-close" onClick={onClose}>Close</button>
         </div>
 
         <div className="sidebar-section">

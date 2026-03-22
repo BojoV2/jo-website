@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import AuthBackgroundPaths from './AuthBackgroundPaths.jsx';
 
 export default function LoginForm({ onLogin, loading, error = '', theme = 'light', onToggleTheme }) {
@@ -6,6 +6,19 @@ export default function LoginForm({ onLogin, loading, error = '', theme = 'light
   const [password, setPassword] = useState('SuperAdmin123!');
   const [rememberMe, setRememberMe] = useState(true);
   const [showForgotModal, setShowForgotModal] = useState(false);
+  const forgotBtnRef = useRef(null);
+  const forgotModalRef = useRef(null);
+
+  useEffect(() => {
+    if (!showForgotModal) {
+      forgotBtnRef.current?.focus();
+      return;
+    }
+    function onKey(e) { if (e.key === 'Escape') setShowForgotModal(false); }
+    window.addEventListener('keydown', onKey);
+    const timer = setTimeout(() => forgotModalRef.current?.querySelector('button')?.focus(), 40);
+    return () => { window.removeEventListener('keydown', onKey); clearTimeout(timer); };
+  }, [showForgotModal]);
 
   const submit = (e) => {
     e.preventDefault();
@@ -54,6 +67,7 @@ export default function LoginForm({ onLogin, loading, error = '', theme = 'light
           <div className="auth-password-row">
             <label htmlFor="login-password">Password</label>
             <button
+              ref={forgotBtnRef}
               type="button"
               className="forgot-link"
               onClick={() => setShowForgotModal(true)}
@@ -111,8 +125,15 @@ export default function LoginForm({ onLogin, loading, error = '', theme = 'light
       </div>
 
       {showForgotModal && (
-        <div className="modal-backdrop" onClick={() => setShowForgotModal(false)}>
-          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-backdrop" role="presentation" onClick={() => setShowForgotModal(false)}>
+          <div
+            className="modal-card"
+            ref={forgotModalRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Forgot password"
+            onClick={(e) => e.stopPropagation()}
+          >
             <img
               className="forgot-image"
               src="/forgot-password-gorilla.jpg"
