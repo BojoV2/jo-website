@@ -1572,8 +1572,7 @@ export default function UserPanel({
           </div>
         )}
 
-        {/* Desktop table — hidden on small screens */}
-        <div className="table-wrap hide-on-mobile">
+        <div className="table-wrap">
           <table>
             <thead>
               <tr>
@@ -1691,76 +1690,6 @@ export default function UserPanel({
           </table>
         </div>
 
-        {/* Mobile card view — shown only on small screens */}
-        <div className="pdf-cards-mobile show-on-mobile">
-          {visibleGenerated.length === 0 && (
-            <p className="muted" style={{ textAlign: 'center', padding: '20px 0' }}>No generated PDFs in this status.</p>
-          )}
-          {visibleGenerated.map((item) => {
-            const isEditing = rowEdit?.id === item.id;
-            return (
-              <div key={item.id} className={`pdf-card${isEditing ? ' pdf-card--editing' : ''}`}>
-                {listColumns.map((col, i) => (
-                  <div key={i} className="pdf-card-row">
-                    <span className="pdf-card-label">{col}</span>
-                    <span>{pickFieldValue(item.submitted_data, col)}</span>
-                  </div>
-                ))}
-                <div className="pdf-card-row">
-                  <span className="pdf-card-label">Created</span>
-                  <span>{new Date(item.created_at).toLocaleString()}</span>
-                </div>
-                {isEditing ? (
-                  <div className="pdf-card-edit">
-                    <label>Note</label>
-                    <input
-                      value={rowEdit.note}
-                      onChange={(e) => setRowEdit((p) => ({ ...p, note: e.target.value }))}
-                      placeholder="Add note…"
-                    />
-                    <label>Reschedule Date</label>
-                    <input
-                      type="datetime-local"
-                      value={rowEdit.reschedule_date}
-                      onChange={(e) => setRowEdit((p) => ({ ...p, reschedule_date: e.target.value }))}
-                    />
-                    <div className="actions">
-                      <button type="button" className="btn-primary" onClick={() => saveRowEdit(item)}>Save</button>
-                      <button type="button" onClick={cancelRowEdit}>Cancel</button>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    {item.status_note && (
-                      <div className="pdf-card-row">
-                        <span className="pdf-card-label">Note</span>
-                        <span>{item.status_note}</span>
-                      </div>
-                    )}
-                    {item.reschedule_date && (
-                      <div className="pdf-card-row">
-                        <span className="pdf-card-label">Reschedule</span>
-                        <span>{new Date(item.reschedule_date).toLocaleString()}</span>
-                      </div>
-                    )}
-                  </>
-                )}
-                <div className="pdf-card-actions">
-                  <select
-                    value={statusDrafts[item.id] || item.status}
-                    onChange={(e) => setStatusDrafts({ ...statusDrafts, [item.id]: e.target.value })}
-                    aria-label="Status"
-                  >
-                    {statusTabs.map((s) => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                  <button type="button" onClick={() => applyStatusChange(item)}>Move</button>
-                  {!isEditing && <button type="button" onClick={() => startRowEdit(item)}>Edit</button>}
-                  <button type="button" onClick={() => openWithTokenInNewTab(`/generated-pdfs/${item.id}/download`, token)}>Open PDF</button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
       </section>
       </>)}
 
