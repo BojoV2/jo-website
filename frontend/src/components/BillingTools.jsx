@@ -1,6 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { apiRequest, getApiBase } from '../api.js';
 import QRCode from 'qrcode';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 
 // Fallback: read token directly from session storage in case the prop chain breaks
 function getSessionToken() {
@@ -561,62 +563,388 @@ function LinkToQR({ token }) {
 }
 
 // ── Imperial Tracking ─────────────────────────────────────────────
-function ImperialTracking({ token }) {
-  const [trackers, setTrackers]   = useState([]);
-  const [loading, setLoading]     = useState(true);
-  const [error, setError]         = useState('');
-  const [launching, setLaunching] = useState('');
 
-  const load = useCallback(async () => {
+// SVG marker factories — different colours per vehicle state
+function makeMarkerIcon(color) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="36" viewBox="0 0 28 36">
+    <path d="M14 0C6.27 0 0 6.27 0 14c0 9.625 14 22 14 22S28 23.625 28 14C28 6.27 21.73 0 14 0z" fill="${color}" stroke="#fff" stroke-width="2"/>
+    <circle cx="14" cy="14" r="5" fill="#fff" opacity="0.9"/>
+  </svg>`;
+  return L.divIcon({
+    html: svg,
+    className: '',
+    iconSize: [28, 36],
+    iconAnchor: [14, 36],
+    popupAnchor: [0, -36],
+  });
+}
+const ICON_MOVING  = makeMarkerIcon('#22c55e');  // green
+const ICON_IDLE    = makeMarkerIcon('#f59e0b');  // amber
+const ICON_OFFLINE = makeMarkerIcon('#94a3b8');  // grey
+
+function vehicleIcon(v) {
+  if (!v.isOnline) return ICON_OFFLINE;
+  if (v.isMoving)  return ICON_MOVING;
+  return ICON_IDLE;
+}
+
+function statusDot(v) {
+  if (!v.isOnline) return <span className="it-dot it-dot--offline" title="Offline" />;
+  if (v.isMoving)  return <span className="it-dot it-dot--moving"  title="Moving"  />;
+  return                  <span className="it-dot it-dot--idle"    title="Idle"    />;
+}
+
+function formatSpeed(kmh) {
+  if (!kmh && kmh !== 0) return '—';
+  return `${Math.round(kmh)} km/h`;
+}
+
+function formatTime(ts) {
+  if (!ts) return '—';
+  try { return new Date(ts).toLocaleString(); } catch { return ts; }
+}
+
+function VehicleRow({ v, selected, onClick }) {
+  return (
+    <div
+      className={`it-vehicle-item${selected ? ' it-vehicle-item--selected' : ''}`}
+      onClick={onClick}
+    >
+      <div className="it-vehicle-header">
+        {statusDot(v)}
+        <span className="it-vehicle-name">{v.name}</span>
+        {v.plate && <span className="it-vehicle-plate">{v.plate}</span>}
+      </div>
+      <div className="it-vehicle-meta">
+        <span>{v.speed > 0 ? formatSpeed(v.speed) : 'Stopped'}</span>
+        {v.lastUpdate && <span>{formatTime(v.lastUpdate)}</span>}
+      </div>
+    </div>
+  );
+}
+
+function ImperialTracking({ token }) {
+  const [trackerList, setTrackerList]   = useState([]);  // enabled trackers from /status
+  const [activeTrackerId, setActiveTrackerId] = useState(null);
+  const [vehicles, setVehicles]         = useState([]);
+  const [loading, setLoading]           = useState(true);
+  const [syncing, setSyncing]           = useState(false);
+  const [error, setError]               = useState('');
+  const [syncError, setSyncError]       = useState('');
+  const [syncedAt, setSyncedAt]         = useState(null);
+  const [selectedVehicle, setSelectedVehicle] = useState(null);
+  const [search, setSearch]             = useState('');
+
+  const mapRef      = useRef(null);   // DOM div
+  const mapObj      = useRef(null);   // Leaflet map instance
+  const markersRef  = useRef({});     // { vehicleId → Leaflet marker }
+  const popupRef    = useRef(null);
+
+  // ── 1. Load tracker list ──────────────────────────────────────
+  useEffect(() => {
+    apiRequest('/tracking/status', { token })
+      .then((data) => {
+        setTrackerList(data);
+        if (data.length > 0) setActiveTrackerId(data[0].id);
+        else { setLoading(false); }
+      })
+      .catch((e) => { setError(e.message || 'Failed to load trackers'); setLoading(false); });
+  }, [token]);
+
+  // ── 2. Load vehicles whenever tracker changes ─────────────────
+  const loadVehicles = useCallback(async (id) => {
+    if (!id) return;
+    setSyncing(true);
+    setSyncError('');
     try {
-      setLoading(true);
-      const data = await apiRequest('/tracking/status', { token });
-      setTrackers(data);
+      const data = await apiRequest(`/tracking/${id}/vehicles`, { token });
+      setVehicles(data.vehicles || []);
+      setSyncedAt(data.synced_at || null);
+      if (data.sync_error) setSyncError(data.sync_error);
     } catch (e) {
-      setError(e.message || 'Failed to load tracker info');
+      setSyncError(e.message || 'Sync failed');
     } finally {
+      setSyncing(false);
       setLoading(false);
     }
   }, [token]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (!activeTrackerId) return;
+    setLoading(true);
+    loadVehicles(activeTrackerId);
+    const interval = setInterval(() => loadVehicles(activeTrackerId), 30_000);
+    return () => clearInterval(interval);
+  }, [activeTrackerId, loadVehicles]);
 
-  async function openPortal(id) {
-    setLaunching(id);
-    try {
-      const { url } = await apiRequest(`/tracking/${id}/launch`, { method: 'POST', token });
-      window.open(url, '_blank', 'noopener,noreferrer');
-    } catch (e) {
-      setError(e.message || 'Failed to launch tracker');
-    } finally {
-      setLaunching('');
+  // ── 3. Init map ───────────────────────────────────────────────
+  useEffect(() => {
+    if (!mapRef.current || mapObj.current) return;
+    const map = L.map(mapRef.current, {
+      center: [14.5995, 120.9842], // Philippines default centre
+      zoom: 12,
+      zoomControl: true,
+    });
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+      maxZoom: 19,
+    }).addTo(map);
+    mapObj.current = map;
+    return () => {
+      if (mapObj.current) { mapObj.current.remove(); mapObj.current = null; }
+    };
+  }, []);
+
+  // ── 4. Update markers when vehicles change ────────────────────
+  useEffect(() => {
+    const map = mapObj.current;
+    if (!map) return;
+
+    const currentIds = new Set(vehicles.map((v) => v.id));
+    const bounds = [];
+
+    // Remove stale markers
+    Object.entries(markersRef.current).forEach(([id, marker]) => {
+      if (!currentIds.has(id)) { marker.remove(); delete markersRef.current[id]; }
+    });
+
+    vehicles.forEach((v) => {
+      if (!v.lat || !v.lng) return;
+      const latlng = [v.lat, v.lng];
+      bounds.push(latlng);
+
+      const popupContent = () => `
+        <div class="it-popup">
+          <p class="it-popup-name">${v.name}</p>
+          ${v.plate ? `<p><b>Plate:</b> ${v.plate}</p>` : ''}
+          <p><b>Status:</b> ${v.isOnline ? (v.isMoving ? 'Moving' : 'Idle') : 'Offline'}</p>
+          <p><b>Speed:</b> ${formatSpeed(v.speed)}</p>
+          ${v.address ? `<p><b>Location:</b> ${v.address}</p>` : ''}
+          <p><b>Ignition:</b> ${v.ignition ? 'On' : 'Off'}</p>
+          ${v.lastUpdate ? `<p><b>Updated:</b> ${formatTime(v.lastUpdate)}</p>` : ''}
+        </div>`;
+
+      if (markersRef.current[v.id]) {
+        // Update existing marker
+        const marker = markersRef.current[v.id];
+        marker.setLatLng(latlng);
+        marker.setIcon(vehicleIcon(v));
+        marker.getPopup()?.setContent(popupContent());
+      } else {
+        // Create new marker
+        const marker = L.marker(latlng, { icon: vehicleIcon(v) })
+          .bindPopup(popupContent, { maxWidth: 240 })
+          .addTo(map);
+        marker.on('click', () => setSelectedVehicle(v));
+        markersRef.current[v.id] = marker;
+      }
+    });
+
+    // Fit map if we have positions and no user interaction yet
+    if (bounds.length > 0 && !selectedVehicle) {
+      try { map.fitBounds(bounds, { padding: [32, 32], maxZoom: 15 }); } catch {}
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vehicles]);
+
+  // ── 5. Focus marker when vehicle selected from list ───────────
+  useEffect(() => {
+    if (!selectedVehicle || !mapObj.current) return;
+    const marker = markersRef.current[selectedVehicle.id];
+    if (marker) {
+      mapObj.current.setView(marker.getLatLng(), 16, { animate: true });
+      marker.openPopup();
+    }
+  }, [selectedVehicle]);
+
+  // ── Counters ──────────────────────────────────────────────────
+  const counters = useMemo(() => ({
+    all:     vehicles.length,
+    online:  vehicles.filter((v) => v.isOnline).length,
+    moving:  vehicles.filter((v) => v.isMoving).length,
+    offline: vehicles.filter((v) => !v.isOnline).length,
+  }), [vehicles]);
+
+  const filtered = useMemo(() => {
+    if (!search.trim()) return vehicles;
+    const s = search.trim().toLowerCase();
+    return vehicles.filter((v) =>
+      v.name.toLowerCase().includes(s) ||
+      (v.plate && v.plate.toLowerCase().includes(s))
+    );
+  }, [vehicles, search]);
+
+  // ── Render ────────────────────────────────────────────────────
+  if (loading && trackerList.length === 0 && !error) {
+    return <p className="muted">Loading tracking system…</p>;
+  }
+  if (error) return <p className="bt-error">{error}</p>;
+  if (trackerList.length === 0) {
+    return <p className="muted">No tracking portals are currently available. Contact your administrator.</p>;
   }
 
-  if (loading) return <p className="muted">Loading trackers…</p>;
-  if (error)   return <p className="bt-error">{error}</p>;
-  if (trackers.length === 0) return (
-    <p className="muted">No tracking portals are currently available. Check back later.</p>
-  );
-
   return (
-    <div className="tracking-list">
-      {trackers.map((t) => (
-        <div key={t.id} className="tracking-card">
-          <div className="tracking-card-header">
-            <span className="tracking-card-name">{t.name}</span>
+    <div className="it-dashboard">
+
+      {/* Top bar: tracker selector + counters + sync */}
+      <div className="it-topbar">
+        {trackerList.length > 1 && (
+          <select
+            className="it-tracker-select"
+            value={activeTrackerId || ''}
+            onChange={(e) => { setActiveTrackerId(e.target.value); setSelectedVehicle(null); }}
+          >
+            {trackerList.map((t) => (
+              <option key={t.id} value={t.id}>{t.name}</option>
+            ))}
+          </select>
+        )}
+        {trackerList.length === 1 && (
+          <span className="it-tracker-name">{trackerList[0].name}</span>
+        )}
+
+        <div className="it-counters">
+          <div className="it-counter it-counter--all">
+            <span className="it-counter-val">{counters.all}</span>
+            <span className="it-counter-lbl">All</span>
           </div>
-          {t.notes && <p className="tracking-card-notes">{t.notes}</p>}
+          <div className="it-counter it-counter--online">
+            <span className="it-counter-val">{counters.online}</span>
+            <span className="it-counter-lbl">Online</span>
+          </div>
+          <div className="it-counter it-counter--moving">
+            <span className="it-counter-val">{counters.moving}</span>
+            <span className="it-counter-lbl">Moving</span>
+          </div>
+          <div className="it-counter it-counter--offline">
+            <span className="it-counter-val">{counters.offline}</span>
+            <span className="it-counter-lbl">Offline</span>
+          </div>
+        </div>
+
+        <div className="it-sync-info">
+          {syncing && <span className="it-syncing">Syncing…</span>}
+          {!syncing && syncedAt && (
+            <span className="it-synced-at">Updated {formatTime(syncedAt)}</span>
+          )}
           <button
             type="button"
-            className="bt-submit"
-            disabled={launching === t.id}
-            onClick={() => openPortal(t.id)}
+            className="bt-copy-btn"
+            disabled={syncing}
+            onClick={() => loadVehicles(activeTrackerId)}
           >
-            {launching === t.id ? 'Opening…' : 'Open Tracking Portal'}
+            Refresh
           </button>
         </div>
-      ))}
+      </div>
+
+      {syncError && (
+        <div className="it-sync-error">
+          Sync issue: {syncError}
+        </div>
+      )}
+
+      {/* Main layout: sidebar + map */}
+      <div className="it-body">
+        {/* Vehicle list sidebar */}
+        <div className="it-sidebar">
+          <input
+            type="search"
+            className="it-search"
+            placeholder="Search by name or plate…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <div className="it-vehicle-list">
+            {loading && vehicles.length === 0 && (
+              <p className="muted" style={{ padding: '12px 14px' }}>Loading vehicles…</p>
+            )}
+            {!loading && filtered.length === 0 && (
+              <p className="muted" style={{ padding: '12px 14px' }}>No vehicles found.</p>
+            )}
+            {filtered.map((v) => (
+              <VehicleRow
+                key={v.id}
+                v={v}
+                selected={selectedVehicle?.id === v.id}
+                onClick={() => setSelectedVehicle(v.id === selectedVehicle?.id ? null : v)}
+              />
+            ))}
+          </div>
+        </div>
+
+        {/* Map */}
+        <div className="it-map-area">
+          <div ref={mapRef} className="it-map" />
+        </div>
+      </div>
+
+      {/* Details panel: selected vehicle */}
+      {selectedVehicle && (
+        <div className="it-detail-panel">
+          <div className="it-detail-header">
+            <span className="it-detail-title">
+              {statusDot(selectedVehicle)} {selectedVehicle.name}
+              {selectedVehicle.plate && <span className="it-vehicle-plate">{selectedVehicle.plate}</span>}
+            </span>
+            <button type="button" className="it-detail-close" onClick={() => setSelectedVehicle(null)}>✕</button>
+          </div>
+          <div className="it-detail-grid">
+            <div className="it-detail-field"><span>Status</span><strong>{selectedVehicle.isOnline ? (selectedVehicle.isMoving ? 'Moving' : 'Idle') : 'Offline'}</strong></div>
+            <div className="it-detail-field"><span>Speed</span><strong>{formatSpeed(selectedVehicle.speed)}</strong></div>
+            <div className="it-detail-field"><span>Ignition</span><strong>{selectedVehicle.ignition ? 'On' : 'Off'}</strong></div>
+            {selectedVehicle.battery > 0 && <div className="it-detail-field"><span>Battery</span><strong>{selectedVehicle.battery}%</strong></div>}
+            {selectedVehicle.signal > 0  && <div className="it-detail-field"><span>Signal</span><strong>{selectedVehicle.signal}</strong></div>}
+            {selectedVehicle.mileage > 0 && <div className="it-detail-field"><span>Mileage</span><strong>{selectedVehicle.mileage.toFixed(1)} km</strong></div>}
+            <div className="it-detail-field"><span>Coordinates</span><strong>{selectedVehicle.lat.toFixed(6)}, {selectedVehicle.lng.toFixed(6)}</strong></div>
+            {selectedVehicle.address && <div className="it-detail-field it-detail-field--wide"><span>Address</span><strong>{selectedVehicle.address}</strong></div>}
+            <div className="it-detail-field it-detail-field--wide"><span>Last Update</span><strong>{formatTime(selectedVehicle.lastUpdate)}</strong></div>
+          </div>
+        </div>
+      )}
+
+      {/* Full vehicle table */}
+      {vehicles.length > 0 && (
+        <div className="it-table-wrap">
+          <table className="it-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Plate</th>
+                <th>Status</th>
+                <th>Speed</th>
+                <th>Ignition</th>
+                <th>Lat</th>
+                <th>Lng</th>
+                <th>Last Update</th>
+              </tr>
+            </thead>
+            <tbody>
+              {vehicles.map((v) => (
+                <tr
+                  key={v.id}
+                  className={selectedVehicle?.id === v.id ? 'it-table-row--selected' : ''}
+                  onClick={() => setSelectedVehicle(v.id === selectedVehicle?.id ? null : v)}
+                  style={{ cursor: 'pointer' }}
+                >
+                  <td>{v.name}</td>
+                  <td>{v.plate || '—'}</td>
+                  <td>
+                    <span className={`it-status-pill ${v.isOnline ? (v.isMoving ? 'it-status-pill--moving' : 'it-status-pill--idle') : 'it-status-pill--offline'}`}>
+                      {v.isOnline ? (v.isMoving ? 'Moving' : 'Idle') : 'Offline'}
+                    </span>
+                  </td>
+                  <td>{formatSpeed(v.speed)}</td>
+                  <td>{v.ignition ? 'On' : 'Off'}</td>
+                  <td>{v.lat ? v.lat.toFixed(5) : '—'}</td>
+                  <td>{v.lng ? v.lng.toFixed(5) : '—'}</td>
+                  <td>{formatTime(v.lastUpdate)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

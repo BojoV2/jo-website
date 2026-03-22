@@ -177,3 +177,9 @@ CREATE TABLE IF NOT EXISTS tracker_settings (
 );
 
 CREATE INDEX IF NOT EXISTS idx_tracker_settings_enabled ON tracker_settings(enabled);
+
+ALTER TABLE tracker_settings ADD COLUMN IF NOT EXISTS refresh_interval_seconds INT DEFAULT 60;
+ALTER TABLE tracker_settings ADD COLUMN IF NOT EXISTS cached_vehicles JSONB;
+ALTER TABLE tracker_settings ADD COLUMN IF NOT EXISTS last_sync_at TIMESTAMP;
+ALTER TABLE tracker_settings ADD COLUMN IF NOT EXISTS sync_status VARCHAR(50);
+ALTER TABLE tracker_settings ADD COLUMN IF NOT EXISTS sync_error TEXT;

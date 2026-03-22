@@ -220,8 +220,9 @@ export default function AdminPanel({
   const [trackerLoaded, setTrackerLoaded] = useState(false);
   const [trackerEditId, setTrackerEditId] = useState('');
   const [trackerBusy, setTrackerBusy] = useState(false);
+  const [trackerSyncingId, setTrackerSyncingId] = useState('');
   const [trackerForm, setTrackerForm] = useState({
-    name: '', base_url: '', username: '', password: '', enabled: true, notes: ''
+    name: '', base_url: '', username: '', password: '', enabled: true, notes: '', refresh_interval_seconds: 60
   });
 
   const canvasRef = useRef(null);
@@ -2676,62 +2677,74 @@ export default function AdminPanel({
         <section className="card">
           <h3>Tracker Configuration</h3>
           <p className="muted" style={{ marginBottom: 16 }}>
-            Configure tracking portals accessible to users. Credentials are stored securely and never exposed to the browser.
+            Configure GPS tracking integrations. The backend authenticates to the provider and serves vehicle data to users — credentials are never exposed to the browser.
           </p>
 
           {/* Form */}
           <div className="tracker-form">
             <h4 style={{ marginBottom: 12 }}>{trackerEditId ? 'Edit Tracker' : 'Add Tracker'}</h4>
-            <div className="bt-field">
-              <label>Tracker Name</label>
-              <input
-                type="text"
-                placeholder="e.g. Imperial Tracking"
-                value={trackerForm.name}
-                onChange={(e) => setTrackerForm((f) => ({ ...f, name: e.target.value }))}
-              />
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+              <div className="bt-field">
+                <label>Tracker Name</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Imperial Tracking"
+                  value={trackerForm.name}
+                  onChange={(e) => setTrackerForm((f) => ({ ...f, name: e.target.value }))}
+                />
+              </div>
+              <div className="bt-field">
+                <label>Provider Base URL</label>
+                <input
+                  type="url"
+                  placeholder="https://en.aika168.com/"
+                  value={trackerForm.base_url}
+                  onChange={(e) => setTrackerForm((f) => ({ ...f, base_url: e.target.value }))}
+                />
+              </div>
+              <div className="bt-field">
+                <label>Account Username</label>
+                <input
+                  type="text"
+                  placeholder="Portal account username"
+                  value={trackerForm.username}
+                  onChange={(e) => setTrackerForm((f) => ({ ...f, username: e.target.value }))}
+                />
+              </div>
+              <div className="bt-field">
+                <label>
+                  Account Password
+                  {trackerEditId && <span className="muted" style={{ marginLeft: 8, fontWeight: 400 }}>— leave blank to keep</span>}
+                </label>
+                <input
+                  type="password"
+                  placeholder={trackerEditId ? '(unchanged)' : 'Portal account password'}
+                  value={trackerForm.password}
+                  onChange={(e) => setTrackerForm((f) => ({ ...f, password: e.target.value }))}
+                  autoComplete="new-password"
+                />
+              </div>
+              <div className="bt-field">
+                <label>Refresh Interval (seconds)</label>
+                <input
+                  type="number"
+                  min="10"
+                  max="3600"
+                  value={trackerForm.refresh_interval_seconds}
+                  onChange={(e) => setTrackerForm((f) => ({ ...f, refresh_interval_seconds: e.target.value }))}
+                />
+              </div>
+              <div className="bt-field">
+                <label>Notes (optional)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Fleet vehicles — Aika168 account"
+                  value={trackerForm.notes}
+                  onChange={(e) => setTrackerForm((f) => ({ ...f, notes: e.target.value }))}
+                />
+              </div>
             </div>
-            <div className="bt-field">
-              <label>Portal URL</label>
-              <input
-                type="url"
-                placeholder="https://portal.example.com"
-                value={trackerForm.base_url}
-                onChange={(e) => setTrackerForm((f) => ({ ...f, base_url: e.target.value }))}
-              />
-            </div>
-            <div className="bt-field">
-              <label>Username (optional)</label>
-              <input
-                type="text"
-                placeholder="Portal login username"
-                value={trackerForm.username}
-                onChange={(e) => setTrackerForm((f) => ({ ...f, username: e.target.value }))}
-              />
-            </div>
-            <div className="bt-field">
-              <label>
-                Password (optional)
-                {trackerEditId && <span className="muted" style={{ marginLeft: 8, fontWeight: 400 }}>— leave blank to keep current</span>}
-              </label>
-              <input
-                type="password"
-                placeholder={trackerEditId ? '(unchanged)' : 'Portal login password'}
-                value={trackerForm.password}
-                onChange={(e) => setTrackerForm((f) => ({ ...f, password: e.target.value }))}
-                autoComplete="new-password"
-              />
-            </div>
-            <div className="bt-field">
-              <label>Notes (optional)</label>
-              <input
-                type="text"
-                placeholder="e.g. For internal vehicle monitoring"
-                value={trackerForm.notes}
-                onChange={(e) => setTrackerForm((f) => ({ ...f, notes: e.target.value }))}
-              />
-            </div>
-            <div className="bt-field" style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <div className="bt-field" style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 4 }}>
               <input
                 id="tracker-enabled"
                 type="checkbox"
@@ -2741,7 +2754,7 @@ export default function AdminPanel({
               />
               <label htmlFor="tracker-enabled" style={{ margin: 0 }}>Enabled (visible to users)</label>
             </div>
-            <div style={{ display: 'flex', gap: 10, marginTop: 8, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 10, marginTop: 12, flexWrap: 'wrap' }}>
               <button
                 type="button"
                 className="btn-primary"
@@ -2763,7 +2776,7 @@ export default function AdminPanel({
                       setMessage('Tracker added.');
                     }
                     setTrackerEditId('');
-                    setTrackerForm({ name: '', base_url: '', username: '', password: '', enabled: true, notes: '' });
+                    setTrackerForm({ name: '', base_url: '', username: '', password: '', enabled: true, notes: '', refresh_interval_seconds: 60 });
                   } catch (err) {
                     setMessage(err.message || 'Failed to save tracker');
                   } finally {
@@ -2778,7 +2791,7 @@ export default function AdminPanel({
                   type="button"
                   onClick={() => {
                     setTrackerEditId('');
-                    setTrackerForm({ name: '', base_url: '', username: '', password: '', enabled: true, notes: '' });
+                    setTrackerForm({ name: '', base_url: '', username: '', password: '', enabled: true, notes: '', refresh_interval_seconds: 60 });
                   }}
                 >
                   Cancel
@@ -2796,13 +2809,31 @@ export default function AdminPanel({
                   <div key={t.id} className={`tracker-card${!t.enabled ? ' tracker-card--disabled' : ''}`}>
                     <div className="tracker-card-header">
                       <span className="tracker-card-name">{t.name}</span>
-                      <span className={`tracker-badge ${t.enabled ? 'tracker-badge--on' : 'tracker-badge--off'}`}>
-                        {t.enabled ? 'Enabled' : 'Disabled'}
-                      </span>
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                        {t.sync_status && (
+                          <span className={`tracker-badge ${t.sync_status === 'success' ? 'tracker-badge--sync-ok' : 'tracker-badge--sync-err'}`}>
+                            {t.sync_status === 'success' ? 'Synced' : 'Sync Error'}
+                          </span>
+                        )}
+                        <span className={`tracker-badge ${t.enabled ? 'tracker-badge--on' : 'tracker-badge--off'}`}>
+                          {t.enabled ? 'Enabled' : 'Disabled'}
+                        </span>
+                      </div>
                     </div>
                     <p className="tracker-card-url">{t.base_url}</p>
                     {t.username && <p className="tracker-card-meta">Username: {t.username}</p>}
                     {t.has_password && <p className="tracker-card-meta">Password: ••••••••</p>}
+                    <p className="tracker-card-meta">Refresh: every {t.refresh_interval_seconds || 60}s</p>
+                    {t.last_sync_at && (
+                      <p className="tracker-card-meta">
+                        Last sync: {new Date(t.last_sync_at).toLocaleString()}
+                      </p>
+                    )}
+                    {t.sync_error && (
+                      <p className="tracker-card-notes" style={{ color: 'var(--danger)', fontStyle: 'normal' }}>
+                        Error: {t.sync_error}
+                      </p>
+                    )}
                     {t.notes && <p className="tracker-card-notes">{t.notes}</p>}
                     <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
                       <button
@@ -2817,10 +2848,34 @@ export default function AdminPanel({
                             password: '',
                             enabled: t.enabled,
                             notes: t.notes || '',
+                            refresh_interval_seconds: t.refresh_interval_seconds || 60,
                           });
                         }}
                       >
                         Edit
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-sm btn-primary"
+                        disabled={trackerSyncingId === t.id}
+                        onClick={async () => {
+                          setTrackerSyncingId(t.id);
+                          try {
+                            await apiRequest(`/tracking/${t.id}/sync`, { method: 'POST', token });
+                            // Reload tracker list to get updated sync status
+                            const data = await apiRequest('/tracking/admin', { token });
+                            setTrackers(data);
+                            setMessage('Sync triggered successfully.');
+                          } catch (err) {
+                            setMessage(err.message || 'Sync failed');
+                            const data = await apiRequest('/tracking/admin', { token }).catch(() => null);
+                            if (data) setTrackers(data);
+                          } finally {
+                            setTrackerSyncingId('');
+                          }
+                        }}
+                      >
+                        {trackerSyncingId === t.id ? 'Syncing…' : 'Sync Now'}
                       </button>
                       <button
                         type="button"

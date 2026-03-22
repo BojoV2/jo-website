@@ -2,13 +2,15 @@ import express from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { query } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
+import { getVehicleData, invalidateSession } from '../services/aikaService.js';
 
 const router = express.Router();
 
 // Columns returned to admin — password is intentionally excluded
 const ADMIN_SELECT = `id, name, base_url, username,
   CASE WHEN password IS NOT NULL AND password <> '' THEN true ELSE false END AS has_password,
-  enabled, notes, created_by, created_at, updated_at`;
+  enabled, notes, refresh_interval_seconds,
+  last_sync_at, sync_status, sync_error, created_by, created_at, updated_at`;
 
 // ── Admin: list all tracker configs ──────────────────────────────
 router.get('/admin', requireAuth, requireRole('super_admin', 'admin'), async (_req, res) => {
@@ -25,20 +27,22 @@ router.get('/admin', requireAuth, requireRole('super_admin', 'admin'), async (_r
 // ── Admin: create tracker config ──────────────────────────────────
 router.post('/', requireAuth, requireRole('super_admin', 'admin'), async (req, res) => {
   try {
-    const { name, base_url, username, password, enabled, notes } = req.body;
+    const { name, base_url, username, password, enabled, notes, refresh_interval_seconds } = req.body;
     if (!name || !base_url) {
       return res.status(400).json({ error: 'name and base_url are required' });
     }
     const id = uuidv4();
     await query(
-      `INSERT INTO tracker_settings (id, name, base_url, username, password, enabled, notes, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      `INSERT INTO tracker_settings
+         (id, name, base_url, username, password, enabled, notes, refresh_interval_seconds, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
       [id, name.trim(), base_url.trim(), username?.trim() || null,
-       password || null, enabled !== false, notes?.trim() || null, req.user.id]
+       password || null, enabled !== false,
+       notes?.trim() || null,
+       parseInt(refresh_interval_seconds) || 60,
+       req.user.id]
     );
-    const result = await query(
-      `SELECT ${ADMIN_SELECT} FROM tracker_settings WHERE id = $1`, [id]
-    );
+    const result = await query(`SELECT ${ADMIN_SELECT} FROM tracker_settings WHERE id = $1`, [id]);
     return res.status(201).json(result.rows[0]);
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -48,39 +52,36 @@ router.post('/', requireAuth, requireRole('super_admin', 'admin'), async (req, r
 // ── Admin: update tracker config ──────────────────────────────────
 router.put('/:id', requireAuth, requireRole('super_admin', 'admin'), async (req, res) => {
   try {
-    const { name, base_url, username, password, enabled, notes } = req.body;
+    const { name, base_url, username, password, enabled, notes, refresh_interval_seconds } = req.body;
     if (!name || !base_url) {
       return res.status(400).json({ error: 'name and base_url are required' });
     }
 
-    // Build SET clause — only update password if a new one was provided
-    const sets = [
-      'name = $1', 'base_url = $2', 'username = $3',
-      'enabled = $4', 'notes = $5', 'updated_at = NOW()'
-    ];
+    // Build parameterised update — only include password if a new value was given
+    const sets   = ['name=$1', 'base_url=$2', 'username=$3', 'enabled=$4',
+                    'notes=$5', 'refresh_interval_seconds=$6', 'updated_at=NOW()'];
     const params = [name.trim(), base_url.trim(), username?.trim() || null,
-                    enabled !== false, notes?.trim() || null];
+                    enabled !== false, notes?.trim() || null,
+                    parseInt(refresh_interval_seconds) || 60];
 
     if (password) {
-      sets.splice(3, 0, 'password = $6');
+      sets.push(`password=$${params.length + 1}`);
       params.push(password);
-      params.push(req.params.id);
-    } else {
-      params.push(req.params.id);
+      // Invalidate cached session when password changes
+      invalidateSession(req.params.id);
     }
 
-    const idParam = `$${params.length}`;
-    const result = await query(
-      `UPDATE tracker_settings SET ${sets.join(', ')} WHERE id = ${idParam} RETURNING id`,
+    params.push(req.params.id);
+    const idPlaceholder = `$${params.length}`;
+
+    const upd = await query(
+      `UPDATE tracker_settings SET ${sets.join(', ')} WHERE id = ${idPlaceholder} RETURNING id`,
       params
     );
-    if (result.rowCount === 0) {
-      return res.status(404).json({ error: 'Tracker not found' });
-    }
-    const updated = await query(
-      `SELECT ${ADMIN_SELECT} FROM tracker_settings WHERE id = $1`, [req.params.id]
-    );
-    return res.json(updated.rows[0]);
+    if (upd.rowCount === 0) return res.status(404).json({ error: 'Tracker not found' });
+
+    const result = await query(`SELECT ${ADMIN_SELECT} FROM tracker_settings WHERE id = $1`, [req.params.id]);
+    return res.json(result.rows[0]);
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -92,20 +93,63 @@ router.delete('/:id', requireAuth, requireRole('super_admin', 'admin'), async (r
     const result = await query(
       'DELETE FROM tracker_settings WHERE id = $1 RETURNING id', [req.params.id]
     );
-    if (result.rowCount === 0) {
-      return res.status(404).json({ error: 'Tracker not found' });
-    }
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Tracker not found' });
+    invalidateSession(req.params.id);
     return res.status(204).send();
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
 });
 
-// ── User: list enabled trackers (name + notes only, no credentials/URL) ──
+// ── Admin: force sync ────────────────────────────────────────────
+router.post('/:id/sync', requireAuth, requireRole('super_admin', 'admin'), async (req, res) => {
+  return syncTracker(req.params.id, res);
+});
+
+// ── Shared sync logic ─────────────────────────────────────────────
+async function syncTracker(trackerId, res) {
+  try {
+    const cfg = await query(
+      'SELECT id, base_url, username, password, enabled FROM tracker_settings WHERE id = $1',
+      [trackerId]
+    );
+    if (cfg.rowCount === 0) return res.status(404).json({ error: 'Tracker not found' });
+
+    const tracker = cfg.rows[0];
+    if (!tracker.enabled) return res.status(403).json({ error: 'Tracker is disabled' });
+    if (!tracker.username || !tracker.password) {
+      return res.status(422).json({ error: 'Tracker credentials not configured' });
+    }
+
+    const { source, vehicles } = await getVehicleData(trackerId, tracker);
+
+    await query(
+      `UPDATE tracker_settings
+         SET cached_vehicles = $1, last_sync_at = NOW(), sync_status = 'success', sync_error = NULL
+       WHERE id = $2`,
+      [JSON.stringify(vehicles), trackerId]
+    );
+
+    return res ? res.json({ vehicles, source, synced_at: new Date().toISOString() }) : { vehicles, source };
+  } catch (err) {
+    await query(
+      `UPDATE tracker_settings
+         SET sync_status = 'error', sync_error = $1, last_sync_at = NOW()
+       WHERE id = $2`,
+      [err.message, trackerId]
+    ).catch(() => {});
+
+    if (res) return res.status(502).json({ error: err.message });
+    throw err;
+  }
+}
+
+// ── User: list enabled trackers (safe — no credentials, no URL) ──
 router.get('/status', requireAuth, async (_req, res) => {
   try {
     const result = await query(
-      `SELECT id, name, notes, enabled FROM tracker_settings WHERE enabled = true ORDER BY created_at ASC`
+      `SELECT id, name, notes, enabled, sync_status, last_sync_at
+         FROM tracker_settings WHERE enabled = true ORDER BY created_at ASC`
     );
     return res.json(result.rows);
   } catch (err) {
@@ -113,21 +157,78 @@ router.get('/status', requireAuth, async (_req, res) => {
   }
 });
 
-// ── User: secure launch — validate tracker is enabled, return URL ──
-// The URL itself is not secret; credentials are never returned.
+// ── User: get vehicle data (from cache, sync if stale) ────────────
+router.get('/:id/vehicles', requireAuth, async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT id, enabled, username, password, base_url,
+              cached_vehicles, last_sync_at, sync_status, sync_error,
+              refresh_interval_seconds
+         FROM tracker_settings WHERE id = $1`,
+      [req.params.id]
+    );
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Tracker not found' });
+
+    const t = result.rows[0];
+    if (!t.enabled) return res.status(403).json({ error: 'Tracker is currently disabled' });
+    if (!t.username || !t.password) {
+      return res.status(422).json({ error: 'Tracker credentials not configured' });
+    }
+
+    // Serve cached data if it is fresh enough
+    const intervalMs = (t.refresh_interval_seconds || 60) * 1000;
+    const lastSync   = t.last_sync_at ? new Date(t.last_sync_at).getTime() : 0;
+    const isFresh    = Date.now() - lastSync < intervalMs;
+
+    if (isFresh && t.cached_vehicles && t.sync_status === 'success') {
+      return res.json({
+        vehicles:  t.cached_vehicles,
+        synced_at: t.last_sync_at,
+        cached:    true,
+      });
+    }
+
+    // Data is stale — trigger sync inline
+    try {
+      const { source, vehicles } = await getVehicleData(req.params.id, t);
+      await query(
+        `UPDATE tracker_settings
+           SET cached_vehicles = $1, last_sync_at = NOW(), sync_status = 'success', sync_error = NULL
+         WHERE id = $2`,
+        [JSON.stringify(vehicles), req.params.id]
+      );
+      return res.json({ vehicles, source, synced_at: new Date().toISOString(), cached: false });
+    } catch (syncErr) {
+      await query(
+        `UPDATE tracker_settings SET sync_status='error', sync_error=$1, last_sync_at=NOW() WHERE id=$2`,
+        [syncErr.message, req.params.id]
+      ).catch(() => {});
+
+      // Return stale cache if we have it, with error flag
+      if (t.cached_vehicles) {
+        return res.json({
+          vehicles:  t.cached_vehicles,
+          synced_at: t.last_sync_at,
+          cached:    true,
+          sync_error: syncErr.message,
+        });
+      }
+      return res.status(502).json({ error: syncErr.message });
+    }
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ── User: secure launch (legacy — opens portal in new tab) ────────
 router.post('/:id/launch', requireAuth, async (req, res) => {
   try {
     const result = await query(
-      'SELECT base_url, enabled FROM tracker_settings WHERE id = $1',
-      [req.params.id]
+      'SELECT base_url, enabled FROM tracker_settings WHERE id = $1', [req.params.id]
     );
-    if (result.rowCount === 0) {
-      return res.status(404).json({ error: 'Tracker not found' });
-    }
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Tracker not found' });
     const { base_url, enabled } = result.rows[0];
-    if (!enabled) {
-      return res.status(403).json({ error: 'Tracker is currently disabled' });
-    }
+    if (!enabled) return res.status(403).json({ error: 'Tracker is currently disabled' });
     return res.json({ url: base_url });
   } catch (err) {
     return res.status(500).json({ error: err.message });
