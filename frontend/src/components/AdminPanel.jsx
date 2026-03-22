@@ -222,7 +222,7 @@ export default function AdminPanel({
   const [trackerBusy, setTrackerBusy] = useState(false);
   const [trackerSyncingId, setTrackerSyncingId] = useState('');
   const [trackerForm, setTrackerForm] = useState({
-    name: '', base_url: '', username: '', password: '', enabled: true, notes: '', refresh_interval_seconds: 60
+    name: '', base_url: '', api_url: '', username: '', password: '', enabled: true, notes: '', refresh_interval_seconds: 60
   });
 
   const canvasRef = useRef(null);
@@ -2702,6 +2702,20 @@ export default function AdminPanel({
                   onChange={(e) => setTrackerForm((f) => ({ ...f, base_url: e.target.value }))}
                 />
               </div>
+              <div className="bt-field" style={{ gridColumn: '1 / -1' }}>
+                <label>
+                  Direct API URL
+                  <span className="muted" style={{ marginLeft: 8, fontWeight: 400, fontSize: '0.8rem' }}>
+                    — optional override (skip auto-discovery). Ask Aika168 support for this if sync fails.
+                  </span>
+                </label>
+                <input
+                  type="url"
+                  placeholder="e.g. http://app.aika168.com:8088/openapiv3.asmx"
+                  value={trackerForm.api_url}
+                  onChange={(e) => setTrackerForm((f) => ({ ...f, api_url: e.target.value }))}
+                />
+              </div>
               <div className="bt-field">
                 <label>Account Username</label>
                 <input
@@ -2776,7 +2790,7 @@ export default function AdminPanel({
                       setMessage('Tracker added.');
                     }
                     setTrackerEditId('');
-                    setTrackerForm({ name: '', base_url: '', username: '', password: '', enabled: true, notes: '', refresh_interval_seconds: 60 });
+                    setTrackerForm({ name: '', base_url: '', api_url: '', username: '', password: '', enabled: true, notes: '', refresh_interval_seconds: 60 });
                   } catch (err) {
                     setMessage(err.message || 'Failed to save tracker');
                   } finally {
@@ -2791,7 +2805,7 @@ export default function AdminPanel({
                   type="button"
                   onClick={() => {
                     setTrackerEditId('');
-                    setTrackerForm({ name: '', base_url: '', username: '', password: '', enabled: true, notes: '', refresh_interval_seconds: 60 });
+                    setTrackerForm({ name: '', base_url: '', api_url: '', username: '', password: '', enabled: true, notes: '', refresh_interval_seconds: 60 });
                   }}
                 >
                   Cancel
@@ -2844,6 +2858,7 @@ export default function AdminPanel({
                           setTrackerForm({
                             name: t.name,
                             base_url: t.base_url,
+                            api_url: t.api_url || '',
                             username: t.username || '',
                             password: '',
                             enabled: t.enabled,

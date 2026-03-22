@@ -183,3 +183,4 @@ ALTER TABLE tracker_settings ADD COLUMN IF NOT EXISTS cached_vehicles JSONB;
 ALTER TABLE tracker_settings ADD COLUMN IF NOT EXISTS last_sync_at TIMESTAMP;
 ALTER TABLE tracker_settings ADD COLUMN IF NOT EXISTS sync_status VARCHAR(50);
 ALTER TABLE tracker_settings ADD COLUMN IF NOT EXISTS sync_error TEXT;
+ALTER TABLE tracker_settings ADD COLUMN IF NOT EXISTS api_url TEXT;

@@ -3,23 +3,30 @@
  *
  * Protocol:  HTTP POST with application/x-www-form-urlencoded body
  * Responses: XML-wrapped JSON  →  <string xmlns="...">{"key":"value"}</string>
- * Discovery: GET {base_url}/getapp.aspx  →  returns actual API server address
- * Login:     POST {api_server}/Login     →  returns session key in deviceInfo.key2018
- * Tracking:  POST {api_server}/GetTracking
+ * Discovery: GET {base}/getapp.aspx  →  plain-text API server address
+ *            NOTE: en.aika168.com/getapp.aspx returns HTML (not the API URL).
+ *                  Use http://www.aika168.com/getapp.aspx for discovery.
+ * Login:     POST {api_server}/Login
  * Fleet:     POST {api_server}/GetCarList (or similar – tried in order)
  *
  * Credentials are NEVER exposed to the frontend.
  */
 
-const APP_KEY   = '7DU2DJFDR8321'; // Hardcoded by the platform (not our secret)
+const APP_KEY   = '7DU2DJFDR8321'; // Platform-hardcoded key (not a secret)
 const LOGIN_APP = 'AKSH';
 const GMT       = '8:00';          // GMT+8 (Philippines)
-const TIMEOUT   = 15_000;
+const TIMEOUT   = 20_000;
+
+// Candidate discovery URLs tried in order when the configured one returns HTML
+const DISCOVERY_FALLBACKS = [
+  'http://www.aika168.com/getapp.aspx',
+  'https://www.aika168.com/getapp.aspx',
+];
 
 // ── In-memory session cache ───────────────────────────────────────
 // trackerId → { apiAddress, sessionKey, deviceId, model, expiresAt }
 const sessionCache = new Map();
-const SESSION_TTL  = 28 * 60 * 1000; // 28 minutes (server sessions ~30 min)
+const SESSION_TTL  = 28 * 60 * 1000; // 28 minutes
 
 // ── HTTP helpers ──────────────────────────────────────────────────
 async function timedFetch(url, options = {}) {
@@ -27,19 +34,18 @@ async function timedFetch(url, options = {}) {
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT);
   try {
     const res = await fetch(url, { ...options, signal: ctrl.signal });
-    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText} — ${url}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
     return await res.text();
   } catch (err) {
-    // Translate raw network errors into helpful messages
     const msg = err.message || '';
     if (err.name === 'AbortError' || msg.includes('abort')) {
-      throw new Error(`Connection timeout reaching tracking server (${url}) — the API port may be blocked by a firewall`);
+      throw new Error(`Timeout connecting to ${url} — API port may be blocked`);
     }
     if (msg.includes('ECONNREFUSED') || msg.includes('ECONNRESET')) {
-      throw new Error(`Connection refused by tracking server (${url}) — port may not be accessible from this server`);
+      throw new Error(`Connection refused by ${url} — port not accessible from this server`);
     }
     if (msg.includes('ENOTFOUND') || msg.includes('getaddrinfo')) {
-      throw new Error(`Cannot resolve tracking server hostname (${url}) — check the Base URL setting`);
+      throw new Error(`Cannot resolve hostname in ${url} — check the Base URL`);
     }
     throw err;
   } finally {
@@ -47,25 +53,29 @@ async function timedFetch(url, options = {}) {
   }
 }
 
+function looksLikeHtml(text) {
+  const t = text.trimStart();
+  return t.startsWith('<!') || t.startsWith('<html') || t.startsWith('<HTML') ||
+         t.includes('<!DOCTYPE') || t.includes('<head>') || t.includes('<HEAD>');
+}
+
+function looksLikeApiUrl(text) {
+  const t = text.trim();
+  return /^https?:\/\/.{6,180}$/.test(t) && !t.includes('\n') && !t.includes('<');
+}
+
 /**
- * Aika responses are either plain JSON or JSON wrapped in an XML string element.
+ * Aika responses: plain JSON or XML-wrapped JSON.
  * <string xmlns="http://tempuri.org/">{"key":"value"}</string>
  */
 function parseResponse(text) {
   if (!text || !text.trim()) throw new Error('Empty response from tracking server');
   const trimmed = text.trim();
-
-  // Plain JSON
   if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
     return JSON.parse(trimmed);
   }
-
-  // XML-wrapped: extract content of first <string> element
   const m = trimmed.match(/<string[^>]*>([\s\S]*?)<\/string>/i);
-  if (m && m[1].trim()) {
-    return JSON.parse(m[1].trim());
-  }
-
+  if (m && m[1].trim()) return JSON.parse(m[1].trim());
   throw new Error(`Unexpected response format: ${trimmed.substring(0, 120)}`);
 }
 
@@ -81,26 +91,57 @@ async function apiPost(apiAddress, endpoint, payload) {
 }
 
 // ── Discovery ─────────────────────────────────────────────────────
-async function discoverApiAddress(baseUrl) {
-  const url  = `${baseUrl.replace(/\/$/, '')}/getapp.aspx`;
-  const text = await timedFetch(url);
-  const addr = text.trim();
-  if (!addr || addr.length < 10) throw new Error('Failed to discover API address from tracking server');
-  return addr;
+/**
+ * Fetch the API server address from getapp.aspx.
+ * en.aika168.com/getapp.aspx returns HTML (the homepage wrapper) — not the
+ * API URL. We fall back to www.aika168.com which returns the plain-text address.
+ *
+ * @param {string|null} overrideApiUrl  If admin set a direct API URL, use it.
+ * @param {string}      baseUrl         Configured portal base URL.
+ */
+async function discoverApiAddress(overrideApiUrl, baseUrl) {
+  // If admin has manually entered the API URL, use it directly — no discovery needed
+  if (overrideApiUrl && overrideApiUrl.trim().startsWith('http')) {
+    return overrideApiUrl.trim();
+  }
+
+  // Build the candidate list: configured URL first, then known fallbacks
+  const candidates = [
+    `${baseUrl.replace(/\/$/, '')}/getapp.aspx`,
+    ...DISCOVERY_FALLBACKS,
+  ];
+
+  const tried = [];
+  for (const url of candidates) {
+    try {
+      const text = await timedFetch(url);
+      if (looksLikeHtml(text)) {
+        tried.push(`${url} → returned HTML page (not an API address)`);
+        continue;
+      }
+      if (looksLikeApiUrl(text)) {
+        return text.trim();
+      }
+      tried.push(`${url} → unrecognised response: ${text.substring(0, 60)}`);
+    } catch (err) {
+      tried.push(`${url} → ${err.message}`);
+    }
+  }
+
+  throw new Error(
+    `Could not discover Aika168 API server address. Tried:\n` +
+    tried.map((t) => `  • ${t}`).join('\n') +
+    `\n\nFix: In Admin → Tracking, set the "Direct API URL" field to the ` +
+    `address provided by Aika168 support (e.g. http://app.aika168.com:8088/openapiv3.asmx).`
+  );
 }
 
 // ── Login ─────────────────────────────────────────────────────────
-async function doLogin(baseUrl, username, password) {
-  let apiAddress;
-  try {
-    apiAddress = await discoverApiAddress(baseUrl);
-  } catch (err) {
-    throw new Error(`API discovery failed (${baseUrl}/getapp.aspx): ${err.message}`);
-  }
+async function doLogin(overrideApiUrl, baseUrl, username, password) {
+  const apiAddress = await discoverApiAddress(overrideApiUrl, baseUrl);
 
   const errors = [];
 
-  // Try account login types in order (0 = fleet/account, 1 = IMEI/device, 2 = alternative)
   for (const loginType of ['0', '1', '2']) {
     try {
       const data = await apiPost(apiAddress, 'Login', {
@@ -114,7 +155,6 @@ async function doLogin(baseUrl, username, password) {
 
       const sessionKey = data?.deviceInfo?.key2018;
       if (!sessionKey) {
-        // Server responded but login was rejected
         const hint = data?.result || data?.msg || data?.message || JSON.stringify(data).substring(0, 80);
         errors.push(`LoginType ${loginType}: server rejected — ${hint}`);
         continue;
@@ -130,18 +170,22 @@ async function doLogin(baseUrl, username, password) {
       };
     } catch (err) {
       errors.push(`LoginType ${loginType}: ${err.message}`);
-      // If it's a network error (not a credential error), stop immediately — retrying won't help
-      if (err.message.includes('refused') || err.message.includes('timeout') || err.message.includes('blocked') || err.message.includes('resolve')) {
-        throw new Error(`Cannot connect to tracking API server (${apiAddress}): ${err.message}`);
+      // Network errors won't be fixed by retrying with a different LoginType
+      if (err.message.includes('refused') || err.message.includes('Timeout') ||
+          err.message.includes('blocked')  || err.message.includes('Cannot resolve')) {
+        throw new Error(
+          `Network error reaching API server (${apiAddress}): ${err.message}\n` +
+          `If port 8088 is blocked by your firewall, ask Aika168 support for an ` +
+          `alternative HTTPS API endpoint and enter it in the "Direct API URL" field.`
+        );
       }
     }
   }
 
-  throw new Error(`Authentication failed. Tried all login types. Details: ${errors.join(' | ')}`);
+  throw new Error(`Authentication failed — ${errors.join(' | ')}`);
 }
 
 // ── Fleet vehicle list ────────────────────────────────────────────
-// The fleet endpoint name varies by platform build. We try known names in order.
 const FLEET_ENDPOINTS = [
   'GetCarList',
   'GetDeviceList',
@@ -154,20 +198,15 @@ async function tryFleetEndpoints(apiAddress, sessionKey) {
   for (const ep of FLEET_ENDPOINTS) {
     try {
       const data = await apiPost(apiAddress, ep, { Key: sessionKey });
-
-      // Normalise response shape to an array
       let list = null;
       if (Array.isArray(data))               list = data;
       else if (Array.isArray(data?.carList)) list = data.carList;
       else if (Array.isArray(data?.list))    list = data.list;
       else if (Array.isArray(data?.devices)) list = data.devices;
       else if (Array.isArray(data?.data))    list = data.data;
-
-      if (list && list.length > 0) {
-        return { endpoint: ep, vehicles: list };
-      }
+      if (list && list.length > 0) return { endpoint: ep, vehicles: list };
     } catch {
-      // Try next
+      // Try next endpoint
     }
   }
   return null;
@@ -185,77 +224,68 @@ async function fetchSingleTracking(apiAddress, sessionKey, deviceId, model) {
   });
 }
 
-// ── Normalise raw vehicle record to our internal shape ────────────
+// ── Normalise raw vehicle record ──────────────────────────────────
 function normaliseVehicle(raw) {
   const speedVal = parseFloat(raw.speed || raw.Speed || 0);
   const stateStr = String(raw.state || raw.acc || raw.ACC || '').toLowerCase();
-
-  // isOnline: prefer explicit field; fall back to "has recent position"
   const isOnline =
     raw.isOnline !== undefined ? Boolean(Number(raw.isOnline)) :
     raw.online   !== undefined ? Boolean(Number(raw.online))   :
-    raw.Status === 'online'    ? true                          :
-    raw.status === 'online'    ? true                          :
-    false;
+    raw.Status   === 'online'  ? true :
+    raw.status   === 'online'  ? true : false;
 
   return {
-    id:           String(raw.deviceID || raw.DeviceID || raw.id || raw.ID || ''),
-    name:         raw.deviceName || raw.DeviceName || raw.name || raw.carName || raw.CarName || `Device ${raw.deviceID || raw.id}`,
-    plate:        raw.licensePlate || raw.LicensePlate || raw.plate || raw.carNum || raw.CarNum || '',
-    imei:         raw.IMEI || raw.imei || '',
-    lat:          parseFloat(raw.lat  || raw.Lat  || raw.latitude  || 0),
-    lng:          parseFloat(raw.lng  || raw.Lng  || raw.longitude || 0),
-    speed:        speedVal,
-    course:       parseInt(raw.course || raw.Course || raw.direction || 0, 10),
+    id:          String(raw.deviceID || raw.DeviceID || raw.id || raw.ID || ''),
+    name:        raw.deviceName || raw.DeviceName || raw.name || raw.carName || raw.CarName || `Device ${raw.deviceID || raw.id}`,
+    plate:       raw.licensePlate || raw.LicensePlate || raw.plate || raw.carNum || raw.CarNum || '',
+    imei:        raw.IMEI || raw.imei || '',
+    lat:         parseFloat(raw.lat  || raw.Lat  || raw.latitude  || 0),
+    lng:         parseFloat(raw.lng  || raw.Lng  || raw.longitude || 0),
+    speed:       speedVal,
+    course:      parseInt(raw.course || raw.Course || raw.direction || 0, 10),
     isOnline,
-    isMoving:     speedVal > 0 && !Boolean(Number(raw.is_stop ?? raw.isStop ?? 0)),
-    ignition:     stateStr.includes('acc on') || Boolean(Number(raw.ACC ?? raw.acc ?? 0)),
-    battery:      parseInt(raw.battery || raw.Battery || raw.voltage || 0, 10),
-    batteryStatus:raw.batteryStatus || raw.battery_status || '',
-    signal:       parseInt(raw.signalStrength || raw.signal || 0, 10),
-    address:      raw.address || raw.Address || raw.addr || raw.location || '',
-    lastUpdate:   raw.position_time || raw.positionTime || raw.updateTime || raw.lastUpdate || raw.LastUpdate || null,
-    mileage:      parseFloat(raw.mileage || raw.totalMileage || raw.Mileage || 0),
+    isMoving:    speedVal > 0 && !Boolean(Number(raw.is_stop ?? raw.isStop ?? 0)),
+    ignition:    stateStr.includes('acc on') || Boolean(Number(raw.ACC ?? raw.acc ?? 0)),
+    battery:     parseInt(raw.battery || raw.Battery || raw.voltage || 0, 10),
+    batteryStatus: raw.batteryStatus || raw.battery_status || '',
+    signal:      parseInt(raw.signalStrength || raw.signal || 0, 10),
+    address:     raw.address || raw.Address || raw.addr || raw.location || '',
+    lastUpdate:  raw.position_time || raw.positionTime || raw.updateTime || raw.lastUpdate || raw.LastUpdate || null,
+    mileage:     parseFloat(raw.mileage || raw.totalMileage || raw.Mileage || 0),
   };
 }
 
-// ── Main export: get all vehicle data for a tracker config ────────
+// ── Main export ───────────────────────────────────────────────────
 export async function getVehicleData(trackerId, config) {
-  const { base_url, username, password } = config;
+  const { base_url, username, password, api_url } = config;
   if (!username || !password) throw new Error('Tracker credentials not configured');
 
-  // Re-use cached session if valid
   let session = sessionCache.get(trackerId);
   if (!session || Date.now() > session.expiresAt) {
-    session = await doLogin(base_url, username, password);
+    session = await doLogin(api_url || null, base_url, username, password);
     session.expiresAt = Date.now() + SESSION_TTL;
     sessionCache.set(trackerId, session);
   }
 
   const { apiAddress, sessionKey, deviceId, model } = session;
 
-  // 1. Try fleet endpoint
   const fleet = await tryFleetEndpoints(apiAddress, sessionKey);
   if (fleet) {
-    return {
-      source:   fleet.endpoint,
-      vehicles: fleet.vehicles.map(normaliseVehicle),
-    };
+    return { source: fleet.endpoint, vehicles: fleet.vehicles.map(normaliseVehicle) };
   }
 
-  // 2. Fall back to single-device if login gave us a deviceId
   if (deviceId) {
     const raw = await fetchSingleTracking(apiAddress, sessionKey, deviceId, model);
-    return {
-      source:   'GetTracking',
-      vehicles: [normaliseVehicle({ deviceID: deviceId, ...raw })],
-    };
+    return { source: 'GetTracking', vehicles: [normaliseVehicle({ deviceID: deviceId, ...raw })] };
   }
 
-  throw new Error('No fleet endpoint available and no device ID from login. Check credentials and account type.');
+  throw new Error(
+    'Login succeeded but no vehicle data found. ' +
+    'Fleet endpoint not available and no device ID returned from login. ' +
+    'Contact Aika168 to confirm account type and fleet API endpoint name.'
+  );
 }
 
-/** Call this when credentials change so stale session is discarded */
 export function invalidateSession(trackerId) {
   sessionCache.delete(trackerId);
 }
