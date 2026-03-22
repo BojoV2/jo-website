@@ -56,27 +56,6 @@ function getDraftKey(userId, templateId) {
   return `user-panel:form-draft:${userId || 'anon'}:${templateId}`;
 }
 
-function getPresetsKey(userId, templateId) {
-  return `user-panel:presets:${userId || 'anon'}:${templateId}`;
-}
-
-function getRecentKey(userId) {
-  return `user-panel:recent-tpl:${userId || 'anon'}`;
-}
-
-function readRecentTemplates(userId) {
-  try { return JSON.parse(window.localStorage.getItem(getRecentKey(userId)) || '[]'); } catch { return []; }
-}
-
-function pushRecentTemplate(userId, templateId) {
-  try {
-    const existing = JSON.parse(window.localStorage.getItem(getRecentKey(userId)) || '[]');
-    const next = [templateId, ...existing.filter((id) => id !== templateId)].slice(0, 5);
-    window.localStorage.setItem(getRecentKey(userId), JSON.stringify(next));
-    return next;
-  } catch { return []; }
-}
-
 function humanFieldHint(field) {
   const rules = field.validation_rules || {};
   const parts = [];
@@ -314,10 +293,6 @@ export default function UserPanel({
   const [keepValues, setKeepValues] = useState(() => window.localStorage.getItem('user-panel:keep-values') === 'true');
   const [fieldTouched, setFieldTouched] = useState({});
   const [fieldErrors, setFieldErrors] = useState({});
-  const [presets, setPresets] = useState([]);
-  const [showPresetsPanel, setShowPresetsPanel] = useState(false);
-  const [presetName, setPresetName] = useState('');
-  const [recentTemplateIds, setRecentTemplateIds] = useState(() => readRecentTemplates(user?.id));
   const [showManualAddModal, setShowManualAddModal] = useState(false);
   const [manualAddValues, setManualAddValues] = useState({});
   const [openingPdfId, setOpeningPdfId] = useState(null);
@@ -478,11 +453,6 @@ export default function UserPanel({
     } catch { /* ignore */ }
     setFormValues(buildFieldValues(data, savedDraft));
     setManualAddValues((prev) => buildFieldValues(data, prev));
-    // Load presets for this template
-    try {
-      const presetsRaw = window.localStorage.getItem(getPresetsKey(user?.id, templateId));
-      setPresets(presetsRaw ? JSON.parse(presetsRaw) : []);
-    } catch { setPresets([]); }
     setFieldTouched({});
     setFieldErrors({});
   }
@@ -704,14 +674,6 @@ export default function UserPanel({
     window.localStorage.setItem(getDraftKey(user?.id, selectedTemplateId), JSON.stringify(formValues));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formValues, selectedTemplateId]);
-
-  // item 7: track recently used templates
-  useEffect(() => {
-    if (!selectedTemplateId) return;
-    const next = pushRecentTemplate(user?.id, selectedTemplateId);
-    setRecentTemplateIds(next);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTemplateId]);
 
   // item 5: Escape + focus management for manual-add modal
   useEffect(() => {
@@ -1035,26 +997,6 @@ export default function UserPanel({
     setMessage('Form filled from your last PDF. Review and generate.');
   }
 
-  // item 7: presets
-  function saveCurrentPreset() {
-    if (!presetName.trim() || !selectedTemplateId) return;
-    const next = [...presets, { name: presetName.trim(), values: { ...formValues } }];
-    window.localStorage.setItem(getPresetsKey(user?.id, selectedTemplateId), JSON.stringify(next));
-    setPresets(next);
-    setPresetName('');
-  }
-
-  function applyPreset(preset) {
-    setFormValues(buildFieldValues(fields, preset.values));
-    setShowPresetsPanel(false);
-  }
-
-  function deletePreset(index) {
-    const next = presets.filter((_, i) => i !== index);
-    window.localStorage.setItem(getPresetsKey(user?.id, selectedTemplateId), JSON.stringify(next));
-    setPresets(next);
-  }
-
   function focusUserSection(sectionId) {
     setActiveView('workspace');
     setActiveUserSection(sectionId);
@@ -1126,31 +1068,6 @@ export default function UserPanel({
             <span className="user-sidebar-label">Templates</span>
             <span className="user-sidebar-count">{orderedTemplates.length}</span>
           </div>
-
-          {/* Recent templates quick-access */}
-          {recentTemplateIds.filter((id) => templates.some((t) => t.id === id)).length > 0 && (
-            <div className="recent-templates">
-              <span className="user-sidebar-label recent-templates-label">Recent</span>
-              <div className="recent-templates-list">
-                {recentTemplateIds
-                  .filter((id) => templates.some((t) => t.id === id))
-                  .map((id) => {
-                    const tpl = templates.find((t) => t.id === id);
-                    return (
-                      <button
-                        key={id}
-                        type="button"
-                        className={`recent-tpl-btn${id === selectedTemplateId ? ' active' : ''}`}
-                        onClick={() => setSelectedTemplateId(id)}
-                        title={tpl?.title}
-                      >
-                        {tpl?.title}
-                      </button>
-                    );
-                  })}
-              </div>
-            </div>
-          )}
 
           <div className="template-stack" role="list" aria-label="Templates">
             {orderedTemplates.map((tpl) => (
@@ -1317,34 +1234,9 @@ export default function UserPanel({
                 >
                   Fill from Last
                 </button>
-                <button type="button" onClick={() => setShowPresetsPanel((p) => !p)}>
-                  Presets{presets.length > 0 ? ` (${presets.length})` : ''}
-                </button>
               </div>
             )}
           </div>
-
-          {showPresetsPanel && (
-            <div className="presets-panel">
-              <div className="presets-save-row">
-                <input
-                  value={presetName}
-                  onChange={(e) => setPresetName(e.target.value)}
-                  placeholder="Preset name…"
-                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); saveCurrentPreset(); } }}
-                />
-                <button type="button" onClick={saveCurrentPreset} disabled={!presetName.trim()}>Save Current</button>
-              </div>
-              {presets.length === 0 && <p className="muted" style={{ margin: '6px 0 0' }}>No presets saved yet.</p>}
-              {presets.map((preset, i) => (
-                <div key={i} className="preset-row">
-                  <span className="preset-name">{preset.name}</span>
-                  <button type="button" onClick={() => applyPreset(preset)}>Apply</button>
-                  <button type="button" className="btn-sm btn-danger" onClick={() => deletePreset(i)}>Delete</button>
-                </div>
-              ))}
-            </div>
-          )}
 
           {fields.map((field) => renderFormField(field, formValues, setFormValues, 'main'))}
           {fields.length === 0 && <p className="muted">No mapped fields for this template yet.</p>}

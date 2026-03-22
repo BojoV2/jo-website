@@ -3259,49 +3259,6 @@ input[list]::-webkit-calendar-picker-indicator {
   align-items: center;
 }
 
-/* ── Presets panel (item 7) ─────────────────────────────────────── */
-.presets-panel {
-  background: var(--surface-subtle);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 12px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-bottom: 4px;
-}
-
-.presets-save-row {
-  display: flex;
-  gap: 8px;
-}
-
-.presets-save-row input {
-  flex: 1;
-  margin: 0;
-  padding: 7px 10px;
-  font-size: 0.875rem;
-}
-
-.preset-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  background: var(--paper);
-  border: 1px solid var(--line);
-  border-radius: 7px;
-}
-
-.preset-name {
-  flex: 1;
-  font-size: 0.875rem;
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /* ── Row editing highlight (item 1) ────────────────────────────── */
 tr.row-editing {
   background: var(--primary-soft) !important;
@@ -3386,50 +3343,6 @@ tr.row-editing {
   min-width: 110px;
 }
 
-/* ── Recent templates (item 7) ──────────────────────────────────── */
-.recent-templates {
-  margin-bottom: 8px;
-}
-
-.recent-templates-label {
-  display: block;
-  margin-bottom: 4px;
-}
-
-.recent-templates-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.recent-tpl-btn {
-  width: 100%;
-  text-align: left;
-  padding: 5px 8px;
-  border-radius: 6px;
-  font-size: 0.8rem;
-  background: transparent;
-  border: 1px solid transparent;
-  color: var(--shell-muted);
-  cursor: pointer;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  transition: background 0.12s;
-}
-
-.recent-tpl-btn:hover {
-  background: var(--primary-soft);
-  color: var(--primary);
-  border-color: transparent;
-}
-
-.recent-tpl-btn.active {
-  background: var(--primary-soft);
-  color: var(--primary);
-  font-weight: 600;
-}
-
 @media (max-width: 720px) {
   .hide-on-mobile { display: none !important; }
   .show-on-mobile { display: block !important; }
@@ -3454,14 +3367,8 @@ tr.row-editing {
 }
 
 /* dark mode for new components */
-:root[data-theme='dark'] .filter-bar,
-:root[data-theme='dark'] .presets-panel {
+:root[data-theme='dark'] .filter-bar {
   background: #0d1e33;
-  border-color: #2f4f73;
-}
-
-:root[data-theme='dark'] .preset-row {
-  background: #0a1829;
   border-color: #2f4f73;
 }
 
