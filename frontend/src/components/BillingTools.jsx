@@ -2,6 +2,13 @@ import { useState, useEffect, useCallback } from 'react';
 import { apiRequest, getApiBase } from '../api.js';
 import QRCode from 'qrcode';
 
+// Fallback: read token directly from session storage in case the prop chain breaks
+function getSessionToken() {
+  const raw = localStorage.getItem('pdfwf.session') || sessionStorage.getItem('pdfwf.session');
+  if (!raw) return null;
+  try { return JSON.parse(raw)?.token || null; } catch { return null; }
+}
+
 const PLANS = [
   { value: 599,  speed: '35 Mbps'  },
   { value: 799,  speed: '50 Mbps'  },
@@ -557,6 +564,7 @@ const TOOL_COMPONENTS = {
 export default function BillingTools({ token }) {
   const [activeTool, setActiveTool] = useState('adjustment');
   const ActiveComponent = TOOL_COMPONENTS[activeTool];
+  const effectiveToken = token || getSessionToken();
 
   return (
     <div className="card bt-shell">
@@ -577,7 +585,7 @@ export default function BillingTools({ token }) {
         <div className="bt-content-header">
           <h3>{TOOLS.find((t) => t.id === activeTool)?.label}</h3>
         </div>
-        <ActiveComponent key={activeTool} token={token} />
+        <ActiveComponent key={activeTool} token={effectiveToken} />
       </div>
     </div>
   );

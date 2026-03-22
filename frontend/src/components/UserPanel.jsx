@@ -1048,7 +1048,7 @@ export default function UserPanel({
 
       {activeView === 'tools' && (
         <section className="tools-page">
-          <BillingTools />
+          <BillingTools token={token} />
         </section>
       )}
 
