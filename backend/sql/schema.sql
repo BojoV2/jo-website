@@ -162,3 +162,18 @@ CREATE TABLE IF NOT EXISTS generated_pdf_attachments (
 
 CREATE INDEX IF NOT EXISTS idx_template_doc_reqs_template_id ON template_document_requirements(template_id);
 CREATE INDEX IF NOT EXISTS idx_generated_pdf_attachments_pdf_id ON generated_pdf_attachments(generated_pdf_id);
+
+CREATE TABLE IF NOT EXISTS tracker_settings (
+    id UUID PRIMARY KEY,
+    name VARCHAR(200) NOT NULL,
+    base_url TEXT NOT NULL,
+    username TEXT,
+    password TEXT,
+    enabled BOOLEAN DEFAULT TRUE,
+    notes TEXT,
+    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_tracker_settings_enabled ON tracker_settings(enabled);

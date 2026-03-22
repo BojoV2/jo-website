@@ -10,6 +10,7 @@ import generatedRoutes from './routes/generatedPdfs.js';
 import autoReplyRoutes from './routes/autoReply.js';
 import qrLinkRoutes from './routes/qrLink.js';
 import attachmentRoutes from './routes/attachments.js';
+import trackingRoutes from './routes/tracking.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -37,6 +38,7 @@ app.use('/api/generated-pdfs', generatedRoutes);
 app.use('/api/auto-reply', autoReplyRoutes);
 app.use('/api/qr-link', qrLinkRoutes);
 app.use('/api', attachmentRoutes);
+app.use('/api/tracking', trackingRoutes);
 
 app.use((err, _req, res, _next) => {
   return res.status(500).json({ error: err.message || 'Internal server error' });

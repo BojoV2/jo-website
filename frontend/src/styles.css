@@ -3577,6 +3577,143 @@ tr.row-editing {
   transition: opacity 0.2s, transform 0.2s;
 }
 
+/* ── Imperial Tracking — user tool ──────────────────────────────── */
+.tracking-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 8px;
+}
+
+.tracking-card {
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 18px 20px;
+}
+
+.tracking-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.tracking-card-name {
+  font-weight: 700;
+  font-size: 1rem;
+  color: var(--heading);
+}
+
+.tracking-card-notes {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin: 0 0 12px;
+}
+
+/* ── Tracker config — admin panel ───────────────────────────────── */
+.tracker-form {
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 20px 22px;
+  margin-bottom: 8px;
+}
+
+.tracker-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.tracker-card {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px 18px;
+}
+
+.tracker-card--disabled {
+  opacity: 0.6;
+}
+
+.tracker-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.tracker-card-name {
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--heading);
+}
+
+.tracker-card-url {
+  font-size: 0.82rem;
+  color: var(--muted);
+  word-break: break-all;
+  margin: 0 0 4px;
+}
+
+.tracker-card-meta {
+  font-size: 0.82rem;
+  color: var(--muted);
+  margin: 2px 0;
+}
+
+.tracker-card-notes {
+  font-size: 0.83rem;
+  color: var(--ink);
+  margin: 6px 0 0;
+  font-style: italic;
+}
+
+.tracker-badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+
+.tracker-badge--on {
+  background: #d4edda;
+  color: #1a7a35;
+}
+
+.tracker-badge--off {
+  background: var(--surface-strong);
+  color: var(--muted);
+}
+
+[data-theme="dark"] .tracking-card {
+  background: var(--surface-raised);
+  border-color: var(--shell-border);
+}
+
+[data-theme="dark"] .tracker-form {
+  background: var(--surface-raised);
+  border-color: var(--shell-border);
+}
+
+[data-theme="dark"] .tracker-card {
+  background: var(--shell-sidebar-bg);
+  border-color: var(--shell-border);
+}
+
+[data-theme="dark"] .tracker-badge--on {
+  background: rgba(30, 180, 80, 0.15);
+  color: #5ad085;
+}
+
+[data-theme="dark"] .tracker-badge--off {
+  background: rgba(100, 120, 150, 0.15);
+  color: var(--muted);
+}
+
 .back-to-top:hover {
   opacity: 0.88;
   transform: translateY(-2px);

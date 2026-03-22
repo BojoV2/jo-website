@@ -20,12 +20,13 @@ const PLANS = [
 ];
 
 const TOOLS = [
-  { id: 'adjustment',  label: 'Bill Adjustment'     },
-  { id: 'calculator',  label: 'Bill Calculator'     },
-  { id: 'contract',    label: 'Contract End Date'   },
-  { id: 'discount',    label: 'Percentage Discount' },
-  { id: 'auto-reply',  label: 'Auto Reply'          },
-  { id: 'link-to-qr', label: 'Link to QR'          },
+  { id: 'adjustment',        label: 'Bill Adjustment'     },
+  { id: 'calculator',        label: 'Bill Calculator'     },
+  { id: 'contract',          label: 'Contract End Date'   },
+  { id: 'discount',          label: 'Percentage Discount' },
+  { id: 'auto-reply',        label: 'Auto Reply'          },
+  { id: 'link-to-qr',       label: 'Link to QR'          },
+  { id: 'imperial-tracking', label: 'Imperial Tracking'   },
 ];
 
 const HOW_TO_USE = {
@@ -559,14 +560,76 @@ function LinkToQR({ token }) {
   );
 }
 
+// ── Imperial Tracking ─────────────────────────────────────────────
+function ImperialTracking({ token }) {
+  const [trackers, setTrackers]   = useState([]);
+  const [loading, setLoading]     = useState(true);
+  const [error, setError]         = useState('');
+  const [launching, setLaunching] = useState('');
+
+  const load = useCallback(async () => {
+    try {
+      setLoading(true);
+      const data = await apiRequest('/tracking/status', { token });
+      setTrackers(data);
+    } catch (e) {
+      setError(e.message || 'Failed to load tracker info');
+    } finally {
+      setLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function openPortal(id) {
+    setLaunching(id);
+    try {
+      const { url } = await apiRequest(`/tracking/${id}/launch`, { method: 'POST', token });
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (e) {
+      setError(e.message || 'Failed to launch tracker');
+    } finally {
+      setLaunching('');
+    }
+  }
+
+  if (loading) return <p className="muted">Loading trackers…</p>;
+  if (error)   return <p className="bt-error">{error}</p>;
+  if (trackers.length === 0) return (
+    <p className="muted">No tracking portals are currently available. Check back later.</p>
+  );
+
+  return (
+    <div className="tracking-list">
+      {trackers.map((t) => (
+        <div key={t.id} className="tracking-card">
+          <div className="tracking-card-header">
+            <span className="tracking-card-name">{t.name}</span>
+          </div>
+          {t.notes && <p className="tracking-card-notes">{t.notes}</p>}
+          <button
+            type="button"
+            className="bt-submit"
+            disabled={launching === t.id}
+            onClick={() => openPortal(t.id)}
+          >
+            {launching === t.id ? 'Opening…' : 'Open Tracking Portal'}
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── Root component ────────────────────────────────────────────────
 const TOOL_COMPONENTS = {
-  adjustment:    BillAdjustment,
-  calculator:    BillCalculator,
-  contract:      ContractEndDate,
-  discount:      PercentageDiscount,
-  'auto-reply':  AutoReply,
-  'link-to-qr':  LinkToQR,
+  adjustment:          BillAdjustment,
+  calculator:          BillCalculator,
+  contract:            ContractEndDate,
+  discount:            PercentageDiscount,
+  'auto-reply':        AutoReply,
+  'link-to-qr':        LinkToQR,
+  'imperial-tracking': ImperialTracking,
 };
 
 export default function BillingTools({ token }) {

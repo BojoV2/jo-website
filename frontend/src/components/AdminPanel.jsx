@@ -19,6 +19,7 @@ const adminTabs = [
   { id: 'users',      label: 'Users'       },
   { id: 'auto-reply', label: 'Auto Reply'  },
   { id: 'qr-link',    label: 'QR Link'    },
+  { id: 'tracking',   label: 'Tracking'   },
 ];
 const DEFAULT_MONTHLY_RANGE = '3';
 
@@ -213,6 +214,15 @@ export default function AdminPanel({
   // Workflow attachments viewer
   const [workflowAttachmentRowId, setWorkflowAttachmentRowId] = useState('');
   const [workflowAttachments, setWorkflowAttachments] = useState([]);
+
+  // Tracker settings state
+  const [trackers, setTrackers] = useState([]);
+  const [trackerLoaded, setTrackerLoaded] = useState(false);
+  const [trackerEditId, setTrackerEditId] = useState('');
+  const [trackerBusy, setTrackerBusy] = useState(false);
+  const [trackerForm, setTrackerForm] = useState({
+    name: '', base_url: '', username: '', password: '', enabled: true, notes: ''
+  });
 
   const canvasRef = useRef(null);
   const overlayRef = useRef(null);
@@ -474,6 +484,11 @@ export default function AdminPanel({
     if (activeAdminTab === 'qr-link' && !qrLoaded) {
       apiRequest('/qr-link/all', { token })
         .then((data) => { setQrLinks(data); setQrLoaded(true); })
+        .catch((err) => setMessage(err.message));
+    }
+    if (activeAdminTab === 'tracking' && !trackerLoaded) {
+      apiRequest('/tracking/admin', { token })
+        .then((data) => { setTrackers(data); setTrackerLoaded(true); })
         .catch((err) => setMessage(err.message));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2652,6 +2667,185 @@ export default function AdminPanel({
                 ))}
               </div>
             </>
+          )}
+        </section>
+      )}
+
+      {/* ── Tracking tab ── */}
+      {activeAdminTab === 'tracking' && (
+        <section className="card">
+          <h3>Tracker Configuration</h3>
+          <p className="muted" style={{ marginBottom: 16 }}>
+            Configure tracking portals accessible to users. Credentials are stored securely and never exposed to the browser.
+          </p>
+
+          {/* Form */}
+          <div className="tracker-form">
+            <h4 style={{ marginBottom: 12 }}>{trackerEditId ? 'Edit Tracker' : 'Add Tracker'}</h4>
+            <div className="bt-field">
+              <label>Tracker Name</label>
+              <input
+                type="text"
+                placeholder="e.g. Imperial Tracking"
+                value={trackerForm.name}
+                onChange={(e) => setTrackerForm((f) => ({ ...f, name: e.target.value }))}
+              />
+            </div>
+            <div className="bt-field">
+              <label>Portal URL</label>
+              <input
+                type="url"
+                placeholder="https://portal.example.com"
+                value={trackerForm.base_url}
+                onChange={(e) => setTrackerForm((f) => ({ ...f, base_url: e.target.value }))}
+              />
+            </div>
+            <div className="bt-field">
+              <label>Username (optional)</label>
+              <input
+                type="text"
+                placeholder="Portal login username"
+                value={trackerForm.username}
+                onChange={(e) => setTrackerForm((f) => ({ ...f, username: e.target.value }))}
+              />
+            </div>
+            <div className="bt-field">
+              <label>
+                Password (optional)
+                {trackerEditId && <span className="muted" style={{ marginLeft: 8, fontWeight: 400 }}>— leave blank to keep current</span>}
+              </label>
+              <input
+                type="password"
+                placeholder={trackerEditId ? '(unchanged)' : 'Portal login password'}
+                value={trackerForm.password}
+                onChange={(e) => setTrackerForm((f) => ({ ...f, password: e.target.value }))}
+                autoComplete="new-password"
+              />
+            </div>
+            <div className="bt-field">
+              <label>Notes (optional)</label>
+              <input
+                type="text"
+                placeholder="e.g. For internal vehicle monitoring"
+                value={trackerForm.notes}
+                onChange={(e) => setTrackerForm((f) => ({ ...f, notes: e.target.value }))}
+              />
+            </div>
+            <div className="bt-field" style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <input
+                id="tracker-enabled"
+                type="checkbox"
+                checked={trackerForm.enabled}
+                onChange={(e) => setTrackerForm((f) => ({ ...f, enabled: e.target.checked }))}
+                style={{ width: 'auto' }}
+              />
+              <label htmlFor="tracker-enabled" style={{ margin: 0 }}>Enabled (visible to users)</label>
+            </div>
+            <div style={{ display: 'flex', gap: 10, marginTop: 8, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={trackerBusy || !trackerForm.name.trim() || !trackerForm.base_url.trim()}
+                onClick={async () => {
+                  setTrackerBusy(true);
+                  try {
+                    if (trackerEditId) {
+                      const updated = await apiRequest(`/tracking/${trackerEditId}`, {
+                        method: 'PUT', token, body: trackerForm
+                      });
+                      setTrackers((prev) => prev.map((t) => t.id === trackerEditId ? updated : t));
+                      setMessage('Tracker updated.');
+                    } else {
+                      const created = await apiRequest('/tracking', {
+                        method: 'POST', token, body: trackerForm
+                      });
+                      setTrackers((prev) => [...prev, created]);
+                      setMessage('Tracker added.');
+                    }
+                    setTrackerEditId('');
+                    setTrackerForm({ name: '', base_url: '', username: '', password: '', enabled: true, notes: '' });
+                  } catch (err) {
+                    setMessage(err.message || 'Failed to save tracker');
+                  } finally {
+                    setTrackerBusy(false);
+                  }
+                }}
+              >
+                {trackerBusy ? 'Saving…' : trackerEditId ? 'Update Tracker' : 'Add Tracker'}
+              </button>
+              {trackerEditId && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTrackerEditId('');
+                    setTrackerForm({ name: '', base_url: '', username: '', password: '', enabled: true, notes: '' });
+                  }}
+                >
+                  Cancel
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Tracker list */}
+          {trackers.length > 0 && (
+            <div style={{ marginTop: 28 }}>
+              <h4 style={{ marginBottom: 14 }}>Configured Trackers ({trackers.length})</h4>
+              <div className="tracker-list">
+                {trackers.map((t) => (
+                  <div key={t.id} className={`tracker-card${!t.enabled ? ' tracker-card--disabled' : ''}`}>
+                    <div className="tracker-card-header">
+                      <span className="tracker-card-name">{t.name}</span>
+                      <span className={`tracker-badge ${t.enabled ? 'tracker-badge--on' : 'tracker-badge--off'}`}>
+                        {t.enabled ? 'Enabled' : 'Disabled'}
+                      </span>
+                    </div>
+                    <p className="tracker-card-url">{t.base_url}</p>
+                    {t.username && <p className="tracker-card-meta">Username: {t.username}</p>}
+                    {t.has_password && <p className="tracker-card-meta">Password: ••••••••</p>}
+                    {t.notes && <p className="tracker-card-notes">{t.notes}</p>}
+                    <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+                      <button
+                        type="button"
+                        className="btn-sm"
+                        onClick={() => {
+                          setTrackerEditId(t.id);
+                          setTrackerForm({
+                            name: t.name,
+                            base_url: t.base_url,
+                            username: t.username || '',
+                            password: '',
+                            enabled: t.enabled,
+                            notes: t.notes || '',
+                          });
+                        }}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-sm btn-danger"
+                        onClick={async () => {
+                          if (!window.confirm(`Delete tracker "${t.name}"?`)) return;
+                          try {
+                            await apiRequest(`/tracking/${t.id}`, { method: 'DELETE', token });
+                            setTrackers((prev) => prev.filter((x) => x.id !== t.id));
+                            setMessage('Tracker deleted.');
+                          } catch (err) {
+                            setMessage(err.message || 'Failed to delete tracker');
+                          }
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {trackers.length === 0 && trackerLoaded && (
+            <p className="muted" style={{ marginTop: 20 }}>No trackers configured yet.</p>
           )}
         </section>
       )}
