@@ -255,6 +255,18 @@ function buildFieldValues(fieldList, previousValues = {}) {
   return next;
 }
 
+function DocFilePreview({ file }) {
+  const [src, setSrc] = React.useState('');
+  React.useEffect(() => {
+    if (!file || !file.type.startsWith('image/')) { setSrc(''); return; }
+    const url = URL.createObjectURL(file);
+    setSrc(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+  if (!file || !src) return null;
+  return <img src={src} alt={file.name} className="doc-preview-thumb" />;
+}
+
 export default function UserPanel({
   token,
   user,
@@ -308,6 +320,10 @@ export default function UserPanel({
   const manualAddTriggerRef = useRef(null);
   const modalRef = useRef(null);
   const filterDebounceRef = useRef(null);
+  const docFilesRef = useRef(docFiles);
+  const docRequirementsRef = useRef(docRequirements);
+  useEffect(() => { docFilesRef.current = docFiles; }, [docFiles]);
+  useEffect(() => { docRequirementsRef.current = docRequirements; }, [docRequirements]);
 
   const selectedTemplate = useMemo(
     () => templates.find((t) => t.id === selectedTemplateId),
@@ -1022,6 +1038,50 @@ export default function UserPanel({
     return 'image/jpeg,image/png,image/gif,image/webp,image/bmp,application/pdf';
   }
 
+  function clipboardImageToFile(clipboardData) {
+    const items = Array.from(clipboardData?.items || []);
+    const imageItem = items.find((i) => i.type.startsWith('image/'));
+    if (!imageItem) return null;
+    const blob = imageItem.getAsFile();
+    if (!blob) return null;
+    const ext = imageItem.type.includes('png') ? 'png'
+      : imageItem.type.includes('gif') ? 'gif'
+      : imageItem.type.includes('webp') ? 'webp'
+      : 'jpg';
+    return new File([blob], `pasted-image-${Date.now()}.${ext}`, { type: imageItem.type });
+  }
+
+  function handleDocPaste(e, reqId, allowedTypes) {
+    if (allowedTypes === 'pdf') return; // PDFs can't be pasted from clipboard
+    const file = clipboardImageToFile(e.clipboardData);
+    if (!file) return;
+    e.preventDefault();
+    setDocFiles((prev) => ({ ...prev, [reqId]: file }));
+    setDocFileErrors((prev) => ({ ...prev, [reqId]: '' }));
+  }
+
+  // Global paste: routes clipboard image to the first image-accepting requirement
+  // that doesn't have a file yet. Lets users press Ctrl+V anywhere on the page.
+  useEffect(() => {
+    function onGlobalPaste(e) {
+      const reqs = docRequirementsRef.current;
+      if (reqs.length === 0) return;
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      const file = clipboardImageToFile(e.clipboardData);
+      if (!file) return;
+      const files = docFilesRef.current;
+      const target =
+        reqs.find((r) => r.allowed_types !== 'pdf' && !files[r.id]) ||
+        reqs.find((r) => r.allowed_types !== 'pdf');
+      if (!target) return;
+      e.preventDefault();
+      setDocFiles((prev) => ({ ...prev, [target.id]: file }));
+      setDocFileErrors((prev) => ({ ...prev, [target.id]: '' }));
+    }
+    document.addEventListener('paste', onGlobalPaste);
+    return () => document.removeEventListener('paste', onGlobalPaste);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   function validateDocFiles() {
     const errors = {};
     for (const req of docRequirements) {
@@ -1322,35 +1382,79 @@ export default function UserPanel({
           {docRequirements.length > 0 && (
             <div className="doc-checklist">
               <h4 className="doc-checklist-title">Supporting Documents</h4>
-              <p className="muted doc-checklist-desc">Upload the required files before submitting.</p>
-              {docRequirements.map((req) => (
-                <div key={req.id} className={`doc-checklist-item${docFileErrors[req.id] ? ' doc-checklist-item--error' : ''}`}>
-                  <div className="doc-checklist-label">
-                    <span>{req.document_name}</span>
-                    <span className={`doc-checklist-badge${req.required ? '' : ' doc-checklist-badge--optional'}`}>
-                      {req.required ? 'Required' : 'Optional'}
-                    </span>
-                    <span className="doc-checklist-type-hint">
-                      {req.allowed_types === 'image_or_pdf' ? 'Image or PDF' : req.allowed_types === 'image' ? 'Image' : 'PDF'}
-                    </span>
+              <p className="muted doc-checklist-desc">
+                Upload a PDF or image for each item — or <strong>paste a copied screenshot</strong> directly (Ctrl+V / ⌘V).
+              </p>
+              {docRequirements.map((req) => {
+                const file = docFiles[req.id];
+                const canPaste = req.allowed_types !== 'pdf';
+                const typeLabel = req.allowed_types === 'image_or_pdf' ? 'image or PDF'
+                  : req.allowed_types === 'image' ? 'image' : 'PDF';
+                return (
+                  <div key={req.id} className={`doc-checklist-item${docFileErrors[req.id] ? ' doc-checklist-item--error' : ''}`}>
+                    <div className="doc-checklist-label">
+                      <span>{req.document_name}</span>
+                      <span className={`doc-checklist-badge${req.required ? '' : ' doc-checklist-badge--optional'}`}>
+                        {req.required ? 'Required' : 'Optional'}
+                      </span>
+                      <span className="doc-checklist-type-hint">
+                        {req.allowed_types === 'image_or_pdf' ? 'Image or PDF' : req.allowed_types === 'image' ? 'Image' : 'PDF'}
+                      </span>
+                    </div>
+
+                    {file ? (
+                      <div className="doc-preview-row">
+                        <DocFilePreview file={file} />
+                        <div className="doc-preview-meta">
+                          <span className="doc-checklist-selected">{file.name}</span>
+                          <button
+                            type="button"
+                            className="doc-remove-btn"
+                            onClick={() => {
+                              setDocFiles((prev) => { const n = { ...prev }; delete n[req.id]; return n; });
+                              setDocFileErrors((prev) => ({ ...prev, [req.id]: '' }));
+                            }}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <label
+                        className={`doc-dropzone${canPaste ? ' doc-dropzone--pasteable' : ''}`}
+                        onPaste={(e) => handleDocPaste(e, req.id, req.allowed_types)}
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') e.currentTarget.querySelector('input')?.click();
+                        }}
+                      >
+                        <input
+                          type="file"
+                          accept={getAcceptAttr(req.allowed_types)}
+                          style={{ display: 'none' }}
+                          onChange={(e) => {
+                            const f = e.target.files?.[0] || null;
+                            if (f) {
+                              setDocFiles((prev) => ({ ...prev, [req.id]: f }));
+                              setDocFileErrors((prev) => ({ ...prev, [req.id]: '' }));
+                            }
+                            e.target.value = '';
+                          }}
+                        />
+                        <span className="doc-dropzone-icon">📎</span>
+                        <span className="doc-dropzone-text">
+                          Click to upload {typeLabel}
+                          {canPaste && <> &middot; or <strong>paste</strong> a copied image</>}
+                        </span>
+                      </label>
+                    )}
+
+                    {docFileErrors[req.id] && (
+                      <span className="field-error">{docFileErrors[req.id]}</span>
+                    )}
                   </div>
-                  <input
-                    type="file"
-                    accept={getAcceptAttr(req.allowed_types)}
-                    onChange={(e) => {
-                      const file = e.target.files?.[0] || null;
-                      setDocFiles((prev) => ({ ...prev, [req.id]: file }));
-                      if (file) setDocFileErrors((prev) => ({ ...prev, [req.id]: '' }));
-                    }}
-                  />
-                  {docFiles[req.id] && (
-                    <span className="doc-checklist-selected">{docFiles[req.id].name}</span>
-                  )}
-                  {docFileErrors[req.id] && (
-                    <span className="field-error">{docFileErrors[req.id]}</span>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 

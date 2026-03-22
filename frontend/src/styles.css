@@ -3376,6 +3376,86 @@ tr.row-editing {
   font-weight: 500;
 }
 
+/* Dropzone upload zone */
+.doc-dropzone {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1.5px dashed var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+  background: var(--surface-subtle);
+  transition: border-color 0.15s, background 0.15s;
+  outline: none;
+  user-select: none;
+}
+
+.doc-dropzone:hover,
+.doc-dropzone:focus {
+  border-color: var(--primary);
+  background: var(--primary-soft, rgba(30,93,184,0.06));
+}
+
+.doc-dropzone--pasteable {
+  border-style: dashed;
+}
+
+.doc-dropzone-icon {
+  font-size: 1.1rem;
+  flex-shrink: 0;
+}
+
+.doc-dropzone-text {
+  font-size: 0.85rem;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.doc-dropzone-text strong {
+  color: var(--primary);
+}
+
+/* Preview row shown after a file is selected */
+.doc-preview-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.doc-preview-thumb {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  flex-shrink: 0;
+}
+
+.doc-preview-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.doc-remove-btn {
+  font-size: 0.78rem;
+  padding: 3px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  width: fit-content;
+}
+
+.doc-remove-btn:hover {
+  border-color: var(--danger, #c0392b);
+  color: var(--danger, #c0392b);
+  background: transparent;
+}
+
 /* ── Document requirements form (admin mapping tab) ──────────────── */
 .doc-req-form {
   padding: 14px 0 4px;
@@ -3458,6 +3538,21 @@ tr.row-editing {
 
 :root[data-theme='dark'] .doc-checklist-badge--optional {
   background: #0a1829;
+  border-color: #2f4f73;
+}
+
+:root[data-theme='dark'] .doc-dropzone {
+  background: #0a1829;
+  border-color: #2f4f73;
+}
+
+:root[data-theme='dark'] .doc-dropzone:hover,
+:root[data-theme='dark'] .doc-dropzone:focus {
+  background: rgba(30, 93, 184, 0.12);
+  border-color: var(--primary);
+}
+
+:root[data-theme='dark'] .doc-preview-thumb {
   border-color: #2f4f73;
 }
 
