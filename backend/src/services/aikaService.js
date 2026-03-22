@@ -29,6 +29,19 @@ async function timedFetch(url, options = {}) {
     const res = await fetch(url, { ...options, signal: ctrl.signal });
     if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText} — ${url}`);
     return await res.text();
+  } catch (err) {
+    // Translate raw network errors into helpful messages
+    const msg = err.message || '';
+    if (err.name === 'AbortError' || msg.includes('abort')) {
+      throw new Error(`Connection timeout reaching tracking server (${url}) — the API port may be blocked by a firewall`);
+    }
+    if (msg.includes('ECONNREFUSED') || msg.includes('ECONNRESET')) {
+      throw new Error(`Connection refused by tracking server (${url}) — port may not be accessible from this server`);
+    }
+    if (msg.includes('ENOTFOUND') || msg.includes('getaddrinfo')) {
+      throw new Error(`Cannot resolve tracking server hostname (${url}) — check the Base URL setting`);
+    }
+    throw err;
   } finally {
     clearTimeout(timer);
   }
@@ -78,13 +91,20 @@ async function discoverApiAddress(baseUrl) {
 
 // ── Login ─────────────────────────────────────────────────────────
 async function doLogin(baseUrl, username, password) {
-  const apiAddress = await discoverApiAddress(baseUrl);
+  let apiAddress;
+  try {
+    apiAddress = await discoverApiAddress(baseUrl);
+  } catch (err) {
+    throw new Error(`API discovery failed (${baseUrl}/getapp.aspx): ${err.message}`);
+  }
 
-  // Try account login (LoginType 0 = fleet/account, 1 = IMEI/device)
-  for (const loginType of ['0', '1']) {
+  const errors = [];
+
+  // Try account login types in order (0 = fleet/account, 1 = IMEI/device, 2 = alternative)
+  for (const loginType of ['0', '1', '2']) {
     try {
       const data = await apiPost(apiAddress, 'Login', {
-        Name:      username,
+        Name:      username.trim(),
         Pass:      password,
         LoginType: loginType,
         LoginAPP:  LOGIN_APP,
@@ -93,7 +113,12 @@ async function doLogin(baseUrl, username, password) {
       });
 
       const sessionKey = data?.deviceInfo?.key2018;
-      if (!sessionKey) continue; // Try next type
+      if (!sessionKey) {
+        // Server responded but login was rejected
+        const hint = data?.result || data?.msg || data?.message || JSON.stringify(data).substring(0, 80);
+        errors.push(`LoginType ${loginType}: server rejected — ${hint}`);
+        continue;
+      }
 
       return {
         apiAddress,
@@ -103,11 +128,16 @@ async function doLogin(baseUrl, username, password) {
         model:      data.deviceInfo?.model       ?? 0,
         loginType,
       };
-    } catch {
-      // Try next loginType
+    } catch (err) {
+      errors.push(`LoginType ${loginType}: ${err.message}`);
+      // If it's a network error (not a credential error), stop immediately — retrying won't help
+      if (err.message.includes('refused') || err.message.includes('timeout') || err.message.includes('blocked') || err.message.includes('resolve')) {
+        throw new Error(`Cannot connect to tracking API server (${apiAddress}): ${err.message}`);
+      }
     }
   }
-  throw new Error('Login failed — check username and password in tracker settings');
+
+  throw new Error(`Authentication failed. Tried all login types. Details: ${errors.join(' | ')}`);
 }
 
 // ── Fleet vehicle list ────────────────────────────────────────────
