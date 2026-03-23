@@ -7,6 +7,7 @@ import ProfileSidebar from './ProfileSidebar.jsx';
 import { resolveAvatar } from '../utils/avatar.js';
 import StatusStackedBarChart from './StatusStackedBarChart.jsx';
 import StatusDonutChart from './StatusDonutChart.jsx';
+import VehicleMap from './VehicleMap.jsx';
 
 GlobalWorkerOptions.workerSrc = workerSrc;
 
@@ -222,7 +223,7 @@ export default function AdminPanel({
   const [trackerBusy, setTrackerBusy] = useState(false);
   const [trackerSyncingId, setTrackerSyncingId] = useState('');
   const [trackerForm, setTrackerForm] = useState({
-    name: '', base_url: '', api_url: '', username: '', password: '', enabled: true, notes: '', refresh_interval_seconds: 60
+    name: '', base_url: '', api_url: '', login_mode: 'account', username: '', device_id: '', password: '', enabled: true, notes: '', refresh_interval_seconds: 60
   });
 
   const canvasRef = useRef(null);
@@ -2683,6 +2684,38 @@ export default function AdminPanel({
           {/* Form */}
           <div className="tracker-form">
             <h4 style={{ marginBottom: 12 }}>{trackerEditId ? 'Edit Tracker' : 'Add Tracker'}</h4>
+
+            {/* Login mode selector */}
+            <div className="bt-field" style={{ marginBottom: 16 }}>
+              <label style={{ marginBottom: 6, display: 'block' }}>Login Mode</label>
+              <div style={{ display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border)', width: 'fit-content' }}>
+                {[{ value: 'account', label: 'Fleet Account' }, { value: 'device', label: 'Device ID' }].map(({ value, label }) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setTrackerForm((f) => ({ ...f, login_mode: value }))}
+                    style={{
+                      padding: '6px 18px',
+                      border: 'none',
+                      cursor: 'pointer',
+                      fontWeight: 500,
+                      fontSize: '0.875rem',
+                      background: trackerForm.login_mode === value ? 'var(--accent)' : 'var(--surface)',
+                      color: trackerForm.login_mode === value ? '#fff' : 'var(--text)',
+                      transition: 'background 0.15s',
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <p className="muted" style={{ marginTop: 6, fontSize: '0.8rem' }}>
+                {trackerForm.login_mode === 'account'
+                  ? 'Use this for enterprise/fleet accounts with a username and password.'
+                  : 'Use this for individual device login using a device ID number (default password: 123456).'}
+              </p>
+            </div>
+
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
               <div className="bt-field">
                 <label>Tracker Name</label>
@@ -2706,7 +2739,7 @@ export default function AdminPanel({
                 <label>
                   Direct API URL
                   <span className="muted" style={{ marginLeft: 8, fontWeight: 400, fontSize: '0.8rem' }}>
-                    — optional override (skip auto-discovery). Ask Aika168 support for this if sync fails.
+                    — optional override (skip auto-discovery). Use the real API endpoint only, not a `Monitor.aspx` or other portal URL.
                   </span>
                 </label>
                 <input
@@ -2716,28 +2749,51 @@ export default function AdminPanel({
                   onChange={(e) => setTrackerForm((f) => ({ ...f, api_url: e.target.value }))}
                 />
               </div>
-              <div className="bt-field">
-                <label>Account Username</label>
-                <input
-                  type="text"
-                  placeholder="Portal account username"
-                  value={trackerForm.username}
-                  onChange={(e) => setTrackerForm((f) => ({ ...f, username: e.target.value }))}
-                />
-              </div>
+
+              {/* Account mode: username field */}
+              {trackerForm.login_mode === 'account' && (
+                <div className="bt-field">
+                  <label>Account Username</label>
+                  <input
+                    type="text"
+                    placeholder="Portal fleet account username"
+                    value={trackerForm.username}
+                    onChange={(e) => setTrackerForm((f) => ({ ...f, username: e.target.value }))}
+                  />
+                </div>
+              )}
+
+              {/* Device mode: device ID field */}
+              {trackerForm.login_mode === 'device' && (
+                <div className="bt-field">
+                  <label>Device ID Number</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 123456789 (from device label or platform)"
+                    value={trackerForm.device_id}
+                    onChange={(e) => setTrackerForm((f) => ({ ...f, device_id: e.target.value }))}
+                  />
+                </div>
+              )}
+
               <div className="bt-field">
                 <label>
-                  Account Password
+                  {trackerForm.login_mode === 'device' ? 'Device Password' : 'Account Password'}
                   {trackerEditId && <span className="muted" style={{ marginLeft: 8, fontWeight: 400 }}>— leave blank to keep</span>}
                 </label>
                 <input
                   type="password"
-                  placeholder={trackerEditId ? '(unchanged)' : 'Portal account password'}
+                  placeholder={
+                    trackerEditId ? '(unchanged)'
+                    : trackerForm.login_mode === 'device' ? 'Device password (default: 123456)'
+                    : 'Portal account password'
+                  }
                   value={trackerForm.password}
                   onChange={(e) => setTrackerForm((f) => ({ ...f, password: e.target.value }))}
                   autoComplete="new-password"
                 />
               </div>
+
               <div className="bt-field">
                 <label>Refresh Interval (seconds)</label>
                 <input
@@ -2752,7 +2808,7 @@ export default function AdminPanel({
                 <label>Notes (optional)</label>
                 <input
                   type="text"
-                  placeholder="e.g. Fleet vehicles — Aika168 account"
+                  placeholder={trackerForm.login_mode === 'device' ? 'e.g. Vehicle plate ABC 123' : 'e.g. Imperial fleet — Aika168 account'}
                   value={trackerForm.notes}
                   onChange={(e) => setTrackerForm((f) => ({ ...f, notes: e.target.value }))}
                 />
@@ -2790,7 +2846,7 @@ export default function AdminPanel({
                       setMessage('Tracker added.');
                     }
                     setTrackerEditId('');
-                    setTrackerForm({ name: '', base_url: '', api_url: '', username: '', password: '', enabled: true, notes: '', refresh_interval_seconds: 60 });
+                    setTrackerForm({ name: '', base_url: '', api_url: '', login_mode: 'account', username: '', device_id: '', password: '', enabled: true, notes: '', refresh_interval_seconds: 60 });
                   } catch (err) {
                     setMessage(err.message || 'Failed to save tracker');
                   } finally {
@@ -2805,7 +2861,7 @@ export default function AdminPanel({
                   type="button"
                   onClick={() => {
                     setTrackerEditId('');
-                    setTrackerForm({ name: '', base_url: '', api_url: '', username: '', password: '', enabled: true, notes: '', refresh_interval_seconds: 60 });
+                    setTrackerForm({ name: '', base_url: '', api_url: '', login_mode: 'account', username: '', device_id: '', password: '', enabled: true, notes: '', refresh_interval_seconds: 60 });
                   }}
                 >
                   Cancel
@@ -2835,7 +2891,11 @@ export default function AdminPanel({
                       </div>
                     </div>
                     <p className="tracker-card-url">{t.base_url}</p>
-                    {t.username && <p className="tracker-card-meta">Username: {t.username}</p>}
+                    <p className="tracker-card-meta">
+                      Mode: <strong>{t.login_mode === 'device' ? 'Device ID' : 'Fleet Account'}</strong>
+                      {t.login_mode === 'device' && t.device_id && ` — ID: ${t.device_id}`}
+                    </p>
+                    {t.login_mode !== 'device' && t.username && <p className="tracker-card-meta">Username: {t.username}</p>}
                     {t.has_password && <p className="tracker-card-meta">Password: ••••••••</p>}
                     <p className="tracker-card-meta">Refresh: every {t.refresh_interval_seconds || 60}s</p>
                     {t.last_sync_at && (
@@ -2859,7 +2919,9 @@ export default function AdminPanel({
                             name: t.name,
                             base_url: t.base_url,
                             api_url: t.api_url || '',
+                            login_mode: t.login_mode || 'account',
                             username: t.username || '',
+                            device_id: t.device_id || '',
                             password: '',
                             enabled: t.enabled,
                             notes: t.notes || '',
@@ -2917,6 +2979,14 @@ export default function AdminPanel({
           {trackers.length === 0 && trackerLoaded && (
             <p className="muted" style={{ marginTop: 20 }}>No trackers configured yet.</p>
           )}
+        </section>
+      )}
+
+      {/* ── Tracking live map ── */}
+      {activeAdminTab === 'tracking' && (
+        <section className="card" style={{ marginTop: 24 }}>
+          <h3>Live Vehicle Map</h3>
+          <VehicleMap token={token} />
         </section>
       )}
     </div>

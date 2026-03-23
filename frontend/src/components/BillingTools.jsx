@@ -690,6 +690,8 @@ function ImperialTracking({ token }) {
       maxZoom: 19,
     }).addTo(map);
     mapObj.current = map;
+    // Ensure Leaflet recalculates tile layout after the container is fully painted
+    setTimeout(() => map.invalidateSize(), 0);
     return () => {
       if (mapObj.current) { mapObj.current.remove(); mapObj.current = null; }
     };
@@ -775,11 +777,11 @@ function ImperialTracking({ token }) {
   }, [vehicles, search]);
 
   // ── Render ────────────────────────────────────────────────────
-  if (loading && trackerList.length === 0 && !error) {
-    return <p className="muted">Loading tracking system…</p>;
-  }
+  // Note: do NOT early-return before rendering the map div — the map useEffect fires
+  // once after mount and needs mapRef.current to be non-null. Loading state is shown
+  // inline inside the sidebar so the map container is always in the DOM.
   if (error) return <p className="bt-error">{error}</p>;
-  if (trackerList.length === 0) {
+  if (!loading && trackerList.length === 0) {
     return <p className="muted">No tracking portals are currently available. Contact your administrator.</p>;
   }
 

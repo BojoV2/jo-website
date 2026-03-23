@@ -7,7 +7,7 @@ import { getVehicleData, invalidateSession } from '../services/aikaService.js';
 const router = express.Router();
 
 // Columns returned to admin — password is intentionally excluded
-const ADMIN_SELECT = `id, name, base_url, api_url, username,
+const ADMIN_SELECT = `id, name, base_url, api_url, username, login_mode, device_id,
   CASE WHEN password IS NOT NULL AND password <> '' THEN true ELSE false END AS has_password,
   enabled, notes, refresh_interval_seconds,
   last_sync_at, sync_status, sync_error, created_by, created_at, updated_at`;
@@ -27,18 +27,19 @@ router.get('/admin', requireAuth, requireRole('super_admin', 'admin'), async (_r
 // ── Admin: create tracker config ──────────────────────────────────
 router.post('/', requireAuth, requireRole('super_admin', 'admin'), async (req, res) => {
   try {
-    const { name, base_url, api_url, username, password, enabled, notes, refresh_interval_seconds } = req.body;
+    const { name, base_url, api_url, username, password, enabled, notes, refresh_interval_seconds, login_mode, device_id } = req.body;
     if (!name || !base_url) {
       return res.status(400).json({ error: 'name and base_url are required' });
     }
     const id = uuidv4();
     await query(
       `INSERT INTO tracker_settings
-         (id, name, base_url, api_url, username, password, enabled, notes, refresh_interval_seconds, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+         (id, name, base_url, api_url, username, password, enabled, notes, refresh_interval_seconds, login_mode, device_id, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
       [id, name.trim(), base_url.trim(), api_url?.trim() || null,
        username?.trim() || null, password || null, enabled !== false,
        notes?.trim() || null, parseInt(refresh_interval_seconds) || 60,
+       login_mode || 'account', device_id?.trim() || null,
        req.user.id]
     );
     const result = await query(`SELECT ${ADMIN_SELECT} FROM tracker_settings WHERE id = $1`, [id]);
@@ -51,17 +52,18 @@ router.post('/', requireAuth, requireRole('super_admin', 'admin'), async (req, r
 // ── Admin: update tracker config ──────────────────────────────────
 router.put('/:id', requireAuth, requireRole('super_admin', 'admin'), async (req, res) => {
   try {
-    const { name, base_url, api_url, username, password, enabled, notes, refresh_interval_seconds } = req.body;
+    const { name, base_url, api_url, username, password, enabled, notes, refresh_interval_seconds, login_mode, device_id } = req.body;
     if (!name || !base_url) {
       return res.status(400).json({ error: 'name and base_url are required' });
     }
 
     // Build parameterised update — only include password if a new value was given
     const sets   = ['name=$1', 'base_url=$2', 'api_url=$3', 'username=$4', 'enabled=$5',
-                    'notes=$6', 'refresh_interval_seconds=$7', 'updated_at=NOW()'];
+                    'notes=$6', 'refresh_interval_seconds=$7', 'login_mode=$8', 'device_id=$9', 'updated_at=NOW()'];
     const params = [name.trim(), base_url.trim(), api_url?.trim() || null,
                     username?.trim() || null, enabled !== false,
-                    notes?.trim() || null, parseInt(refresh_interval_seconds) || 60];
+                    notes?.trim() || null, parseInt(refresh_interval_seconds) || 60,
+                    login_mode || 'account', device_id?.trim() || null];
 
     if (password) {
       sets.push(`password=$${params.length + 1}`);
@@ -108,14 +110,16 @@ router.post('/:id/sync', requireAuth, requireRole('super_admin', 'admin'), async
 async function syncTracker(trackerId, res) {
   try {
     const cfg = await query(
-      'SELECT id, base_url, api_url, username, password, enabled FROM tracker_settings WHERE id = $1',
+      'SELECT id, base_url, api_url, username, password, enabled, login_mode, device_id FROM tracker_settings WHERE id = $1',
       [trackerId]
     );
     if (cfg.rowCount === 0) return res.status(404).json({ error: 'Tracker not found' });
 
     const tracker = cfg.rows[0];
     if (!tracker.enabled) return res.status(403).json({ error: 'Tracker is disabled' });
-    if (!tracker.username || !tracker.password) {
+    const isDeviceMode = tracker.login_mode === 'device';
+    const hasIdentifier = isDeviceMode ? !!tracker.device_id : !!tracker.username;
+    if (!hasIdentifier || !tracker.password) {
       return res.status(422).json({ error: 'Tracker credentials not configured' });
     }
 
@@ -159,7 +163,7 @@ router.get('/status', requireAuth, async (_req, res) => {
 router.get('/:id/vehicles', requireAuth, async (req, res) => {
   try {
     const result = await query(
-      `SELECT id, enabled, username, password, base_url, api_url,
+      `SELECT id, enabled, username, password, base_url, api_url, login_mode, device_id,
               cached_vehicles, last_sync_at, sync_status, sync_error,
               refresh_interval_seconds
          FROM tracker_settings WHERE id = $1`,
@@ -169,7 +173,9 @@ router.get('/:id/vehicles', requireAuth, async (req, res) => {
 
     const t = result.rows[0];
     if (!t.enabled) return res.status(403).json({ error: 'Tracker is currently disabled' });
-    if (!t.username || !t.password) {
+    const isDeviceMode = t.login_mode === 'device';
+    const hasIdentifier = isDeviceMode ? !!t.device_id : !!t.username;
+    if (!hasIdentifier || !t.password) {
       return res.status(422).json({ error: 'Tracker credentials not configured' });
     }
 

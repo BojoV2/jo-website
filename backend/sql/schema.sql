@@ -184,3 +184,5 @@ ALTER TABLE tracker_settings ADD COLUMN IF NOT EXISTS last_sync_at TIMESTAMP;
 ALTER TABLE tracker_settings ADD COLUMN IF NOT EXISTS sync_status VARCHAR(50);
 ALTER TABLE tracker_settings ADD COLUMN IF NOT EXISTS sync_error TEXT;
 ALTER TABLE tracker_settings ADD COLUMN IF NOT EXISTS api_url TEXT;
+ALTER TABLE tracker_settings ADD COLUMN IF NOT EXISTS login_mode VARCHAR(20) DEFAULT 'account';
+ALTER TABLE tracker_settings ADD COLUMN IF NOT EXISTS device_id TEXT;
