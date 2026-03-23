@@ -564,27 +564,66 @@ function LinkToQR({ token }) {
 
 // ── Imperial Tracking ─────────────────────────────────────────────
 
-// SVG marker factories — different colours per vehicle state
-function makeMarkerIcon(color) {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="36" viewBox="0 0 28 36">
-    <path d="M14 0C6.27 0 0 6.27 0 14c0 9.625 14 22 14 22S28 23.625 28 14C28 6.27 21.73 0 14 0z" fill="${color}" stroke="#fff" stroke-width="2"/>
-    <circle cx="14" cy="14" r="5" fill="#fff" opacity="0.9"/>
+// SVG car marker — realistic top-down view, colour changes per vehicle state
+function makeCarIcon(color, rotateDeg = 0) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 64" width="24" height="38">
+    <!-- Drop shadow -->
+    <ellipse cx="20" cy="60" rx="10" ry="3" fill="rgba(0,0,0,0.25)"/>
+    <!-- Wheels (drawn first so body overlaps slightly) -->
+    <rect x="2"  y="10" width="8" height="13" rx="3" fill="#1a1a2e"/>
+    <rect x="30" y="10" width="8" height="13" rx="3" fill="#1a1a2e"/>
+    <rect x="2"  y="38" width="8" height="13" rx="3" fill="#1a1a2e"/>
+    <rect x="30" y="38" width="8" height="13" rx="3" fill="#1a1a2e"/>
+    <!-- Wheel shine -->
+    <rect x="3"  y="11" width="3" height="4" rx="1.5" fill="rgba(255,255,255,0.15)"/>
+    <rect x="31" y="11" width="3" height="4" rx="1.5" fill="rgba(255,255,255,0.15)"/>
+    <rect x="3"  y="39" width="3" height="4" rx="1.5" fill="rgba(255,255,255,0.15)"/>
+    <rect x="31" y="39" width="3" height="4" rx="1.5" fill="rgba(255,255,255,0.15)"/>
+    <!-- Main car body -->
+    <path d="M9,6 Q11,2 20,2 Q29,2 31,6 L33,18 L33,50 Q33,57 20,57 Q7,57 7,50 L7,18 Z"
+          fill="${color}" stroke="rgba(255,255,255,0.6)" stroke-width="1"/>
+    <!-- Body highlight (left side) -->
+    <path d="M10,8 Q11,5 20,4.5 L20,55 Q10,54 9,50 L9,18 Z"
+          fill="rgba(255,255,255,0.08)"/>
+    <!-- Front windshield -->
+    <path d="M12,16 L13,8 L27,8 L28,16 Q20,14.5 12,16 Z"
+          fill="rgba(180,220,255,0.75)" stroke="rgba(255,255,255,0.4)" stroke-width="0.5"/>
+    <!-- Windshield glare -->
+    <path d="M14,10 L16,9 L18,14 L15,14.5 Z" fill="rgba(255,255,255,0.35)"/>
+    <!-- Roof panel -->
+    <rect x="11" y="18" width="18" height="18" rx="2"
+          fill="${color}" stroke="rgba(0,0,0,0.1)" stroke-width="0.5"/>
+    <!-- Roof centre line -->
+    <line x1="20" y1="19" x2="20" y2="35" stroke="rgba(0,0,0,0.12)" stroke-width="1"/>
+    <!-- Rear windshield -->
+    <path d="M12,38 Q20,39.5 28,38 L27,46 L13,46 Z"
+          fill="rgba(180,220,255,0.5)" stroke="rgba(255,255,255,0.3)" stroke-width="0.5"/>
+    <!-- Headlights -->
+    <rect x="11" y="4"  width="7" height="3" rx="1.5" fill="#fffde7" opacity="0.95"/>
+    <rect x="22" y="4"  width="7" height="3" rx="1.5" fill="#fffde7" opacity="0.95"/>
+    <!-- Tail lights -->
+    <rect x="11" y="52" width="6" height="3" rx="1.5" fill="#ff1744" opacity="0.9"/>
+    <rect x="23" y="52" width="6" height="3" rx="1.5" fill="#ff1744" opacity="0.9"/>
+    <!-- Front bumper -->
+    <rect x="12" y="2" width="16" height="2" rx="1" fill="rgba(255,255,255,0.3)"/>
   </svg>`;
+  // Wrap in a div so CSS rotation keeps the anchor at the icon centre
+  const html = `<div style="width:24px;height:38px;transform:rotate(${rotateDeg}deg);transform-origin:12px 19px;line-height:0">${svg}</div>`;
   return L.divIcon({
-    html: svg,
+    html,
     className: '',
-    iconSize: [28, 36],
-    iconAnchor: [14, 36],
-    popupAnchor: [0, -36],
+    iconSize:    [24, 38],
+    iconAnchor:  [12, 19],   // centre of icon so rotation stays on the vehicle position
+    popupAnchor: [0, -22],
   });
 }
-const ICON_MOVING  = makeMarkerIcon('#22c55e');  // green
-const ICON_IDLE    = makeMarkerIcon('#f59e0b');  // amber
-const ICON_OFFLINE = makeMarkerIcon('#94a3b8');  // grey
+const ICON_IDLE    = makeCarIcon('#94a3b8', 0);  // grey  — idle / online but stopped
+const ICON_OFFLINE = makeCarIcon('#ef4444', 0);  // red   — offline / off
+// Moving icons are created per-vehicle to carry the correct heading
 
 function vehicleIcon(v) {
   if (!v.isOnline) return ICON_OFFLINE;
-  if (v.isMoving)  return ICON_MOVING;
+  if (v.isMoving)  return makeCarIcon('#22c55e', v.course || 0);  // rotated green car
   return ICON_IDLE;
 }
 
