@@ -4808,3 +4808,18 @@ tr.row-editing {
   color: var(--muted);
   white-space: nowrap;
 }
+
+/* export scope toggle inside the template extras strip */
+.tpl-extras-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.76rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.tpl-extras-toggle input {
+  width: auto;
+  margin: 0;
+}

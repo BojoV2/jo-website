@@ -555,7 +555,7 @@ router.get('/analytics/templates/monthly-by-status', requireAuth, async (req, re
 
 router.get('/export', requireAuth, async (req, res) => {
   try {
-    const { template_id, status, format = 'csv' } = req.query;
+    const { template_id, status, format = 'csv', mine } = req.query;
 
     if (!template_id) {
       return res.status(400).json({ error: 'template_id is required' });
@@ -577,7 +577,9 @@ router.get('/export', requireAuth, async (req, res) => {
       where.push(`g.status = $${params.length}`);
     }
 
-    if (!isPrivilegedRole(req.user.role)) {
+    // Export mirrors the list: reads are team-wide. `mine=1` narrows it to the
+    // caller's own records.
+    if (mine === '1' || mine === 'true') {
       params.push(req.user.id);
       where.push(`g.user_id = $${params.length}`);
     }

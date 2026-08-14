@@ -336,6 +336,7 @@ export default function UserPanel({
   const [showManualAddModal, setShowManualAddModal] = useState(false);
   const [manualAddValues, setManualAddValues] = useState({});
   const [openingPdfId, setOpeningPdfId] = useState(null);
+  const [exportOnlyMine, setExportOnlyMine] = useState(false);
   const [showBackTop, setShowBackTop] = useState(false);
   const canvasRef = useRef(null);
   const renderTaskRef = useRef(null);
@@ -482,7 +483,7 @@ export default function UserPanel({
     }
   }
 
-  async function exportMyTemplateData(format = 'csv') {
+  async function exportMyTemplateData(format = 'csv', onlyMine = false) {
     if (!selectedTemplateId) {
       setMessage('Please select a template first.');
       return;
@@ -492,6 +493,7 @@ export default function UserPanel({
         template_id: selectedTemplateId,
         format
       });
+      if (onlyMine) params.set('mine', '1');
       await downloadWithToken(`/generated-pdfs/export?${params.toString()}`, token);
     } catch (err) {
       setMessage(err.message);
@@ -1333,11 +1335,19 @@ export default function UserPanel({
             )}
           </div>
           <div className="tpl-extras-group">
-            <span className="tpl-extras-label">Export my data</span>
+            <span className="tpl-extras-label">Export this template</span>
             <div className="tpl-extras-chips">
-              <button type="button" className="tpl-extras-chip" onClick={() => exportMyTemplateData('csv')} disabled={!selectedTemplateId}>CSV</button>
-              <button type="button" className="tpl-extras-chip" onClick={() => exportMyTemplateData('json')} disabled={!selectedTemplateId}>JSON</button>
+              <button type="button" className="tpl-extras-chip" onClick={() => exportMyTemplateData('csv', exportOnlyMine)} disabled={!selectedTemplateId}>CSV</button>
+              <button type="button" className="tpl-extras-chip" onClick={() => exportMyTemplateData('json', exportOnlyMine)} disabled={!selectedTemplateId}>JSON</button>
             </div>
+            <label className="tpl-extras-toggle">
+              <input
+                type="checkbox"
+                checked={exportOnlyMine}
+                onChange={(e) => setExportOnlyMine(e.target.checked)}
+              />
+              Only records I created
+            </label>
           </div>
         </div>
       </details>
