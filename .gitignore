@@ -2,10 +2,20 @@ node_modules
 frontend/node_modules
 frontend/dist
 .env
+.env.*
+!.env.example
 npm-debug.log
 backend-dev.log
 frontend-dev.log
-storage/templates/*
-storage/generated/*
+
+# user uploads / generated artefacts — customer data, never commit
+storage/*
+!storage/.gitkeep
 !storage/templates/.gitkeep
 !storage/generated/.gitkeep
+
+# local rollback copies
+*.bak
+*.bak-*
+*.orig
+.attic/
