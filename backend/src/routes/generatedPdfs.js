@@ -17,6 +17,32 @@ fs.mkdirSync(generatedDir, { recursive: true });
 const allowedStatus = PDF_STATUSES;
 const autoDoneNote = 'Auto-moved to done after 30 days in pending';
 
+function currentMonthKey(date = new Date()) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}`;
+}
+
+// Allocate the next order number for the current month. The counter row for a new
+// month is created starting at 1 (ON CONFLICT bumps an existing month), so the
+// sequence resets to 1 automatically whenever the month rolls over. The atomic
+// upsert makes concurrent generations collision-safe. Format: YYYYMMDD-<seq>.
+async function allocateMonthlyOrderNumber(date = new Date()) {
+  const monthKey = currentMonthKey(date);
+  const result = await query(
+    `INSERT INTO order_number_counters (month_key, current_value)
+     VALUES ($1, 1)
+     ON CONFLICT (month_key)
+     DO UPDATE SET current_value = order_number_counters.current_value + 1,
+                   updated_at = NOW()
+     RETURNING current_value`,
+    [monthKey]
+  );
+  const seq = result.rows[0].current_value;
+  const pad = (n) => String(n).padStart(2, '0');
+  const datePart = `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}`;
+  return `${datePart}-${seq}`;
+}
+
 function normalizeSubmittedData(raw) {
   if (!raw) return {};
   if (typeof raw === 'object') return raw;
@@ -149,6 +175,16 @@ async function autoMovePendingToDone() {
   return moved.rowCount;
 }
 
+// Reads are team-wide (shared CSR queue). Writes are owner-only for the `user`
+// role — admin and super_admin may act on any record.
+function isPrivilegedRole(role) {
+  return role === 'admin' || role === 'super_admin';
+}
+
+function ownsRecord(req, row) {
+  return isPrivilegedRole(req.user.role) || row.user_id === req.user.id;
+}
+
 router.post('/generate', requireAuth, async (req, res) => {
   try {
     const { template_id, submitted_data } = req.body;
@@ -199,11 +235,17 @@ router.post('/generate', requireAuth, async (req, res) => {
     const outputRelativePath = path.join('generated', outputName);
     const outputAbsolutePath = path.join(storageRoot, outputRelativePath);
 
+    // Only consume a number if this template actually stamps an order number,
+    // so templates without one don't burn sequence values.
+    const hasOrderNumberField = fieldsResult.rows.some((f) => f.field_type === 'order_number');
+    const orderNumber = hasOrderNumberField ? await allocateMonthlyOrderNumber() : null;
+
     await generatePdfFromTemplate({
       templatePath,
       fields: fieldsResult.rows,
       payload: submitted_data,
-      outputPath: outputAbsolutePath
+      outputPath: outputAbsolutePath,
+      orderNumber
     });
 
     await query(
@@ -220,7 +262,10 @@ router.post('/generate', requireAuth, async (req, res) => {
     );
 
     try {
-      if (isGoogleSheetsEnabled()) {
+      // Only sync to Sheets for templates that ALREADY have a linked spreadsheet.
+      // Do not auto-create during generate: a service account cannot create a
+      // Drive file, so an unconditional create would 403 on every generation.
+      if (isGoogleSheetsEnabled() && templateResult.rows[0].google_spreadsheet_id) {
         const syncResult = await syncGeneratedPdfToGoogleSheets({
           template: templateResult.rows[0],
           generatedPdf: {
@@ -247,12 +292,11 @@ router.post('/generate', requireAuth, async (req, res) => {
         }
       }
     } catch (err) {
-      await query('DELETE FROM status_history WHERE generated_pdf_id = $1', [generatedId]);
-      await query('DELETE FROM generated_pdfs WHERE id = $1', [generatedId]);
-      if (fs.existsSync(outputAbsolutePath)) {
-        fs.unlinkSync(outputAbsolutePath);
-      }
-      throw err;
+      // Google Sheets sync is best-effort and MUST NOT fail PDF generation.
+      // A plain service account cannot create a template spreadsheet (403
+      // "caller does not have permission"), so this would otherwise 500 every
+      // generate. Keep the PDF + row; just log the sync failure.
+      console.error(`PDF ${generatedId} Google Sheets sync failed (non-fatal): ${err.message}`);
     }
 
     return res.status(201).json({
@@ -533,7 +577,7 @@ router.get('/export', requireAuth, async (req, res) => {
       where.push(`g.status = $${params.length}`);
     }
 
-    if (req.user.role === 'user') {
+    if (!isPrivilegedRole(req.user.role)) {
       params.push(req.user.id);
       where.push(`g.user_id = $${params.length}`);
     }
@@ -628,6 +672,9 @@ router.patch('/:generatedPdfId/status', requireAuth, async (req, res) => {
     const current = await query('SELECT id, user_id, status FROM generated_pdfs WHERE id = $1', [req.params.generatedPdfId]);
     if (current.rowCount === 0) {
       return res.status(404).json({ error: 'Generated PDF not found' });
+    }
+    if (!ownsRecord(req, current.rows[0])) {
+      return res.status(403).json({ error: 'Forbidden' });
     }
 
     const oldStatus = current.rows[0].status;
@@ -731,6 +778,7 @@ router.get('/:generatedPdfId/history', requireAuth, async (req, res) => {
     if (generatedPdf.rowCount === 0) {
       return res.status(404).json({ error: 'Generated PDF not found' });
     }
+
 
     const history = await query(
       `SELECT h.id, h.generated_pdf_id, h.old_status, h.new_status, h.changed_by, h.note, h.created_at, u.name AS changed_by_name

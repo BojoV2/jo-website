@@ -38,6 +38,16 @@ const attachmentUpload = multer({
 });
 
 // GET /api/generated-pdfs/:id/attachments — list attachments for a record
+// Reads are team-wide (shared CSR queue). Uploads are owner-only for the `user`
+// role — admin and super_admin may act on any record.
+function isPrivilegedRole(role) {
+  return role === 'admin' || role === 'super_admin';
+}
+
+function ownsRecord(req, row) {
+  return isPrivilegedRole(req.user.role) || row.user_id === req.user.id;
+}
+
 router.get('/generated-pdfs/:generatedPdfId/attachments', requireAuth, async (req, res) => {
   try {
     const result = await query(
@@ -67,10 +77,14 @@ router.post(
     try {
       const { generatedPdfId } = req.params;
 
-      const pdfResult = await query('SELECT id FROM generated_pdfs WHERE id = $1', [generatedPdfId]);
+      const pdfResult = await query('SELECT id, user_id FROM generated_pdfs WHERE id = $1', [generatedPdfId]);
       if (pdfResult.rowCount === 0) {
         for (const p of uploadedAbsPaths) { if (fs.existsSync(p)) fs.unlinkSync(p); }
         return res.status(404).json({ error: 'Generated PDF not found' });
+      }
+      if (!ownsRecord(req, pdfResult.rows[0])) {
+        for (const p of uploadedAbsPaths) { if (fs.existsSync(p)) fs.unlinkSync(p); }
+        return res.status(403).json({ error: 'Forbidden' });
       }
 
       const files = req.files || [];
@@ -137,12 +151,16 @@ router.post(
 router.get('/attachments/:attachmentId/file', requireAuth, async (req, res) => {
   try {
     const result = await query(
-      'SELECT id, file_path, original_name, mime_type FROM generated_pdf_attachments WHERE id = $1',
+      `SELECT a.id, a.file_path, a.original_name, a.mime_type, g.user_id
+         FROM generated_pdf_attachments a
+         JOIN generated_pdfs g ON g.id = a.generated_pdf_id
+        WHERE a.id = $1`,
       [req.params.attachmentId]
     );
     if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Attachment not found' });
     }
+
     const { file_path, original_name, mime_type } = result.rows[0];
     const absolutePath = path.join(storageRoot, file_path);
     if (!fs.existsSync(absolutePath)) {

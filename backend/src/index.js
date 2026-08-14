@@ -47,6 +47,9 @@ async function start() {
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error(`Failed to start server: ${err.message}`);
+    // Exit non-zero so the container restart policy (or nodemon --exitcrash in dev)
+    // recycles the process instead of leaving a dead backend behind a live port.
+    process.exitCode = 1;
     process.exit(1);
   }
 }

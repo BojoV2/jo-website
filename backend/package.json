@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "nodemon src/index.js",
+    "dev": "nodemon --exitcrash src/index.js",
     "start": "node src/index.js",
     "db:init": "node src/scripts/initDb.js",
     "test": "vitest run"

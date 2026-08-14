@@ -13,13 +13,62 @@ function wait(ms) {
   });
 }
 
+// Split on semicolons that actually terminate a statement: semicolons inside line
+// comments, block comments or quoted strings must not break the statement apart.
+export function splitSqlStatements(sql) {
+  const statements = [];
+  let current = '';
+  let inLineComment = false;
+  let inBlockComment = false;
+  let quote = null; // "'" or '"'
+
+  for (let i = 0; i < sql.length; i += 1) {
+    const ch = sql[i];
+    const next = sql[i + 1];
+
+    if (inLineComment) {
+      if (ch === '\n') inLineComment = false;
+      continue;
+    }
+    if (inBlockComment) {
+      if (ch === '*' && next === '/') { inBlockComment = false; i += 1; }
+      continue;
+    }
+    if (quote) {
+      current += ch;
+      if (ch === quote) {
+        if (next === quote) { current += next; i += 1; } else { quote = null; }
+      }
+      continue;
+    }
+    if (ch === '-' && next === '-') { inLineComment = true; i += 1; continue; }
+    if (ch === '/' && next === '*') { inBlockComment = true; i += 1; continue; }
+    if (ch === "'" || ch === '"') { quote = ch; current += ch; continue; }
+    if (ch === ';') {
+      const trimmed = current.trim();
+      if (trimmed) statements.push(trimmed);
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+
+  const tail = current.trim();
+  if (tail) statements.push(tail);
+  return statements;
+}
+
 async function applySchemaAndSeed() {
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = path.dirname(__filename);
   const schemaPath = path.resolve(__dirname, '../sql/schema.sql');
   const schemaSql = fs.readFileSync(schemaPath, 'utf8');
 
-  await query(schemaSql);
+  const statements = splitSqlStatements(schemaSql);
+
+  for (const statement of statements) {
+    await query(`${statement};`);
+  }
 
   const email = String(process.env.SEED_SUPER_ADMIN_EMAIL || '').toLowerCase().trim();
   const password = String(process.env.SEED_SUPER_ADMIN_PASSWORD || '');
