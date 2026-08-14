@@ -4773,3 +4773,38 @@ tr.row-editing {
 .user-main .analytics-strip-item-featured {
   grid-column: auto;
 }
+
+/* ---------- .ui-plain: opt out of the global form-element bleed ----------
+   styles.css sets `label { text-transform: uppercase }` and
+   `input, textarea, select, button { width: 100% }` globally. Any new
+   component that is not a legacy form should carry `ui-plain` on its root
+   instead of re-declaring these overrides each time. */
+
+.ui-plain label {
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: inherit;
+  color: inherit;
+  margin-top: 0;
+  font-weight: inherit;
+}
+
+.ui-plain input:not([type='checkbox']):not([type='radio']),
+.ui-plain textarea,
+.ui-plain select,
+.ui-plain button {
+  width: auto;
+}
+
+.ui-plain input[type='checkbox'],
+.ui-plain input[type='radio'] {
+  width: auto;
+  margin-top: 0;
+}
+
+/* row-range readout next to the Rows selector */
+.pager-range {
+  font-size: 0.78rem;
+  color: var(--muted);
+  white-space: nowrap;
+}

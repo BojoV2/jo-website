@@ -366,20 +366,29 @@ export default function UserPanel({
     [fields]
   );
   const pendingTotalPages = useMemo(() => {
-    if (activeStatus !== 'pending' || pendingPageSize === 'all') {
+    if (pendingPageSize === 'all') {
       return 1;
     }
     const pageSize = Number(pendingPageSize) || 20;
     return Math.max(1, Math.ceil(generated.length / pageSize));
-  }, [activeStatus, pendingPageSize, generated.length]);
+  }, [pendingPageSize, generated.length]);
   const visibleGenerated = useMemo(() => {
-    if (activeStatus !== 'pending' || pendingPageSize === 'all') {
+    if (pendingPageSize === 'all') {
       return generated;
     }
     const pageSize = Number(pendingPageSize) || 20;
     const start = (pendingPage - 1) * pageSize;
     return generated.slice(start, start + pageSize);
-  }, [activeStatus, generated, pendingPage, pendingPageSize]);
+  }, [generated, pendingPage, pendingPageSize]);
+  const rowRangeLabel = useMemo(() => {
+    const total = generated.length;
+    if (total === 0) return 'No records';
+    if (pendingPageSize === 'all') return `Showing all ${total}`;
+    const size = Number(pendingPageSize) || 20;
+    const start = (pendingPage - 1) * size + 1;
+    const end = Math.min(total, pendingPage * size);
+    return `Showing ${start}-${end} of ${total}`;
+  }, [generated.length, pendingPage, pendingPageSize]);
   const pendingPageItems = useMemo(
     () => buildPageItems(pendingTotalPages, pendingPage),
     [pendingTotalPages, pendingPage]
@@ -1200,6 +1209,7 @@ export default function UserPanel({
               key={item.id}
               type="button"
               className={activeView === item.id ? 'user-nav-btn active' : 'user-nav-btn'}
+              aria-current={activeView === item.id ? 'page' : undefined}
               onClick={() => setActiveView(item.id)}
             >
               <span className={`user-nav-chip user-nav-chip--${item.id}`}>{item.chip}</span>
@@ -1243,7 +1253,7 @@ export default function UserPanel({
         </header>
 
       {message && (
-        <div className={`notice ${messageTone(message)}`}>
+        <div className={`notice ${messageTone(message)}`} role="status" aria-live="polite">
           <div className="notice-title">{messageTone(message) === 'is-error' ? 'Attention needed' : 'Update'}</div>
           <div>{message}</div>
         </div>
@@ -1256,7 +1266,7 @@ export default function UserPanel({
       )}
 
       {activeView === 'create' && (<>
-      <section className="tpl-row-card">
+      <section className="tpl-row-card ui-plain">
         <div className="tpl-row-head">
           <h3>Templates</h3>
           <span className="tpl-row-count">{orderedTemplates.length}</span>
@@ -1291,7 +1301,7 @@ export default function UserPanel({
         </div>
       </section>
 
-      <details className="tpl-extras">
+      <details className="tpl-extras ui-plain">
         <summary>
           <span className="tpl-extras-title">Template extras</span>
           <small>
@@ -1513,19 +1523,20 @@ export default function UserPanel({
               key={tab}
               type="button"
               className={tab === activeStatus ? 'tab active' : 'tab'}
+              aria-pressed={tab === activeStatus}
               onClick={() => setActiveStatus(tab)}
             >
               {tab}
             </button>
           ))}
         </div>
-        {activeStatus === 'pending' && (
+        {(
           <div className="pagination-stack">
             <div className="actions" style={{ alignItems: 'center', marginBottom: '8px' }}>
-              <label htmlFor="user-pending-rows" style={{ marginTop: 0 }}>Rows</label>
+              <label htmlFor="user-list-rows" style={{ marginTop: 0 }}>Rows</label>
               <select
-                id="user-pending-rows"
-                name="pending_page_size"
+                id="user-list-rows"
+                name="list_page_size"
                 value={pendingPageSize}
                 onChange={(e) => {
                   setPendingPageSize(e.target.value);
@@ -1536,10 +1547,11 @@ export default function UserPanel({
                 <option value="50">50</option>
                 <option value="all">All</option>
               </select>
+              <span className="pager-range">{rowRangeLabel}</span>
             </div>
             {pendingPageSize !== 'all' && (
               <div className="pager-shell">
-                <button type="button" className="pager-nav" onClick={() => setPendingPage((p) => Math.max(1, p - 1))} disabled={pendingPage <= 1}>
+                <button type="button" className="pager-nav" aria-label="Previous page" onClick={() => setPendingPage((p) => Math.max(1, p - 1))} disabled={pendingPage <= 1}>
                   Previous
                 </button>
                 <div className="pager-pages">
@@ -1551,6 +1563,8 @@ export default function UserPanel({
                           key={`page-${item}`}
                           type="button"
                           className={Number(item) === pendingPage ? 'pager-page active' : 'pager-page'}
+                          aria-label={`Page ${item}`}
+                          aria-current={Number(item) === pendingPage ? 'page' : undefined}
                           onClick={() => setPendingPage(Number(item))}
                         >
                           {item}
@@ -1558,7 +1572,7 @@ export default function UserPanel({
                       )
                   ))}
                 </div>
-                <button type="button" className="pager-nav" onClick={() => setPendingPage((p) => Math.min(pendingTotalPages, p + 1))} disabled={pendingPage >= pendingTotalPages}>
+                <button type="button" className="pager-nav" aria-label="Next page" onClick={() => setPendingPage((p) => Math.min(pendingTotalPages, p + 1))} disabled={pendingPage >= pendingTotalPages}>
                   Next
                 </button>
               </div>
@@ -1571,12 +1585,12 @@ export default function UserPanel({
             <thead>
               <tr>
                 {listColumns.map((column, index) => (
-                  <th key={`head-${index}-${column}`}>{column}</th>
+                  <th scope="col" key={`head-${index}-${column}`}>{column}</th>
                 ))}
-                <th>Created</th>
-                <th>Note</th>
-                <th>Reschedule Date</th>
-                <th>Action</th>
+                <th scope="col">Created</th>
+                <th scope="col">Note</th>
+                <th scope="col">Reschedule Date</th>
+                <th scope="col">Action</th>
               </tr>
             </thead>
             <tbody>
@@ -1595,7 +1609,7 @@ export default function UserPanel({
                           autoFocus
                           id={`user-note-${item.id}`}
                           name={`status_note_${item.id}`}
-                          aria-label={`Note for record`}
+                          aria-label={`Note for record ${item.id.slice(0, 8)}`}
                           value={rowEdit.note}
                           onChange={(e) => setRowEdit((prev) => ({ ...prev, note: e.target.value }))}
                           onKeyDown={(e) => { if (e.key === 'Enter') saveRowEdit(item); if (e.key === 'Escape') cancelRowEdit(); }}
@@ -1608,7 +1622,7 @@ export default function UserPanel({
                         <input
                           id={`user-reschedule-${item.id}`}
                           name={`reschedule_date_${item.id}`}
-                          aria-label={`Reschedule date`}
+                          aria-label={`Reschedule date for record ${item.id.slice(0, 8)}`}
                           type="datetime-local"
                           value={rowEdit.reschedule_date}
                           onChange={(e) => setRowEdit((prev) => ({ ...prev, reschedule_date: e.target.value }))}
@@ -1627,7 +1641,7 @@ export default function UserPanel({
                           <select
                             id={`user-status-${item.id}`}
                             name={`status_${item.id}`}
-                            aria-label={`Status`}
+                            aria-label={`Status for record ${item.id.slice(0, 8)}`}
                             value={statusDrafts[item.id] || item.status}
                             onChange={(e) => setStatusDrafts({ ...statusDrafts, [item.id]: e.target.value })}
                           >
