@@ -4768,3 +4768,8 @@ tr.row-editing {
     max-width: 150px;
   }
 }
+
+/* six analytics tiles on one row: drop the featured 2-column span in the portal */
+.user-main .analytics-strip-item-featured {
+  grid-column: auto;
+}
