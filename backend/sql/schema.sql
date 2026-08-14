@@ -186,3 +186,72 @@ ALTER TABLE tracker_settings ADD COLUMN IF NOT EXISTS sync_error TEXT;
 ALTER TABLE tracker_settings ADD COLUMN IF NOT EXISTS api_url TEXT;
 ALTER TABLE tracker_settings ADD COLUMN IF NOT EXISTS login_mode VARCHAR(20) DEFAULT 'account';
 ALTER TABLE tracker_settings ADD COLUMN IF NOT EXISTS device_id TEXT;
+
+-- Monthly-resetting order number counter (one row per month, month_key YYYYMM).
+-- current_value holds the last number issued. A new month inserts a fresh row
+-- starting at 1, so the sequence resets automatically when the month rolls over.
+-- NOTE keep these comment lines free of the statement separator character
+-- because bootstrap.js splits the schema file on that character.
+CREATE TABLE IF NOT EXISTS order_number_counters (
+    month_key VARCHAR(6) PRIMARY KEY,
+    current_value INT NOT NULL DEFAULT 0,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Generic key/value settings store (used to remember the auto-created tickets sheet).
+CREATE TABLE IF NOT EXISTS app_settings (
+    key VARCHAR(120) PRIMARY KEY,
+    value TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- CSR support tickets.
+-- status open by default. Closing sets closed_at/closed_by and drops it from the
+-- live queue. sheet_tab/sheet_row remember where the row lives in the Google Sheet
+-- so a close can update that exact row instead of searching.
+CREATE TABLE IF NOT EXISTS tickets (
+    id UUID PRIMARY KEY,
+    ticket_number VARCHAR(30) UNIQUE NOT NULL,
+    customer_name VARCHAR(200) NOT NULL,
+    customer_address TEXT,
+    customer_contact VARCHAR(120),
+    concern TEXT NOT NULL,
+    status VARCHAR(10) NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'closed')),
+    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    closed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    closed_at TIMESTAMP NULL,
+    sheet_tab VARCHAR(20),
+    sheet_row INT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status);
+CREATE INDEX IF NOT EXISTS idx_tickets_created_at ON tickets(created_at);
+
+-- TSR troubleshooting checklist ticked by the CSR. Array of {category, group, item}.
+ALTER TABLE tickets ADD COLUMN IF NOT EXISTS tsr_checklist JSONB DEFAULT '[]'::jsonb;
+
+-- Live-chat messages attached to a ticket.
+CREATE TABLE IF NOT EXISTS ticket_messages (
+    id UUID PRIMARY KEY,
+    ticket_id UUID REFERENCES tickets(id) ON DELETE CASCADE,
+    author_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    author_name VARCHAR(200),
+    body TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_ticket_messages_ticket_id ON ticket_messages(ticket_id);
+
+-- Optional image attachment on a chat message.
+ALTER TABLE ticket_messages ADD COLUMN IF NOT EXISTS image_path TEXT;
+ALTER TABLE ticket_messages ADD COLUMN IF NOT EXISTS image_name TEXT;
+ALTER TABLE ticket_messages ADD COLUMN IF NOT EXISTS mime_type TEXT;
+
+-- Monthly-resetting ticket number counter (same pattern as order_number_counters).
+CREATE TABLE IF NOT EXISTS ticket_counters (
+    month_key VARCHAR(6) PRIMARY KEY,
+    current_value INT NOT NULL DEFAULT 0,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

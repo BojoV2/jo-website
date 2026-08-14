@@ -54,6 +54,9 @@ function computeAutoFontSize(font, text, boxWidth, boxHeight, manualSize = 12) {
   return Math.max(minReadable, fitted);
 }
 
+// Fallback only. The monthly-resetting order number is normally allocated by the
+// caller (routes/generatedPdfs.js) and passed in as `orderNumber`. This is used
+// solely if a caller renders a template without supplying one.
 function generateOrderNumber() {
   const now = new Date();
   const pad = (n) => String(n).padStart(2, '0');
@@ -120,11 +123,11 @@ function drawCheckboxMark(page, field) {
   });
 }
 
-export async function generatePdfFromTemplate({ templatePath, fields, payload, outputPath }) {
+export async function generatePdfFromTemplate({ templatePath, fields, payload, outputPath, orderNumber }) {
   const bytes = fs.readFileSync(templatePath);
   const pdfDoc = await PDFDocument.load(bytes);
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const orderNumberValue = generateOrderNumber();
+  const orderNumberValue = orderNumber || generateOrderNumber();
 
   for (const field of fields) {
     const value = field.field_type === 'order_number'

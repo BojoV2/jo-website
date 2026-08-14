@@ -3,6 +3,7 @@ import { apiRequest, getApiBase } from '../api.js';
 import QRCode from 'qrcode';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import Ticketing from './Ticketing.jsx';
 
 // Fallback: read token directly from session storage in case the prop chain breaks
 function getSessionToken() {
@@ -29,6 +30,7 @@ const TOOLS = [
   { id: 'auto-reply',        label: 'Auto Reply'          },
   { id: 'link-to-qr',       label: 'Link to QR'          },
   { id: 'imperial-tracking', label: 'Imperial Tracking'   },
+  { id: 'ticketing',         label: 'Tiketing'            },
 ];
 
 const HOW_TO_USE = {
@@ -999,6 +1001,7 @@ const TOOL_COMPONENTS = {
   'auto-reply':        AutoReply,
   'link-to-qr':        LinkToQR,
   'imperial-tracking': ImperialTracking,
+  ticketing:           Ticketing,
 };
 
 export default function BillingTools({ token }) {
