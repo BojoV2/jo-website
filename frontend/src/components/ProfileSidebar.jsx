@@ -14,7 +14,10 @@ export default function ProfileSidebar({
   onClose,
   token,
   user,
-  onUserUpdated
+  onUserUpdated,
+  theme = 'light',
+  onToggleTheme,
+  onLogout
 }) {
   const [profileForm, setProfileForm] = useState({
     name: user?.name || '',
@@ -297,6 +300,22 @@ export default function ProfileSidebar({
             <button disabled={savingPassword}>{savingPassword ? 'Saving...' : 'Change Password'}</button>
           </form>
         </div>
+
+        {(onToggleTheme || onLogout) && (
+          <div className="sidebar-section sidebar-account">
+            <h3>Session</h3>
+            <div className="sidebar-account-actions">
+              {onToggleTheme && (
+                <button type="button" className="theme-btn" onClick={onToggleTheme}>
+                  {theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
+                </button>
+              )}
+              {onLogout && (
+                <button type="button" className="logout-btn" onClick={onLogout}>Logout</button>
+              )}
+            </div>
+          </div>
+        )}
       </aside>
     </>
   );

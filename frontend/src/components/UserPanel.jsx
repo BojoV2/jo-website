@@ -11,6 +11,29 @@ import { resolveAvatar } from '../utils/avatar.js';
 GlobalWorkerOptions.workerSrc = workerSrc;
 
 const statusTabs = ['pending', 'done', 'cancelled', 'rescheduled'];
+const userViews = [
+  {
+    id: 'create',
+    label: 'PDF Creation',
+    chip: 'PC',
+    title: 'Generate a new document',
+    description: 'Pick a template, fill the mapped fields, and track everything you generated.'
+  },
+  {
+    id: 'tools',
+    label: 'Tools',
+    chip: 'TL',
+    title: 'Support tools',
+    description: 'Billing helpers, auto reply, QR links, tracking, and ticketing.'
+  },
+  {
+    id: 'analytics',
+    label: 'Analytics',
+    chip: 'AN',
+    title: 'Template analytics',
+    description: 'Month-to-date metrics, monthly outcomes, and the field position mapper.'
+  }
+];
 const userSections = [
   {
     id: 'create',
@@ -299,7 +322,7 @@ export default function UserPanel({
   const [pendingPage, setPendingPage] = useState(1);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [activeUserSection, setActiveUserSection] = useState('create');
-  const [activeView, setActiveView] = useState('workspace');
+  const [activeView, setActiveView] = useState('create');
   const [listFilters, setListFilters] = useState(emptyListFilters);   // committed/applied
   const [draftFilters, setDraftFilters] = useState(emptyListFilters); // in-progress input
   const [keepValues, setKeepValues] = useState(() => window.localStorage.getItem('user-panel:keep-values') === 'true');
@@ -406,6 +429,10 @@ export default function UserPanel({
     const templateIds = new Set(templates.map((template) => template.id));
     return monthlyReport.filter((template) => templateIds.has(template.template_id));
   }, [monthlyReport, templates]);
+  const activeViewMeta = useMemo(
+    () => userViews.find((item) => item.id === activeView) || userViews[0],
+    [activeView]
+  );
   const activeSectionMeta = useMemo(
     () => userSections.find((section) => section.id === activeUserSection) || userSections[0],
     [activeUserSection]
@@ -1136,7 +1163,7 @@ export default function UserPanel({
   }
 
   function focusUserSection(sectionId) {
-    setActiveView('workspace');
+    setActiveView(sectionId === 'analytics' || sectionId === 'preview' ? 'analytics' : 'create');
     setActiveUserSection(sectionId);
     const node = document.getElementById(`user-section-${sectionId}`);
     if (node) {
@@ -1152,113 +1179,36 @@ export default function UserPanel({
         token={token}
         user={user}
         onUserUpdated={onSessionUserUpdate}
+        theme={theme}
+        onToggleTheme={onToggleTheme}
+        onLogout={onLogout}
       />
 
       <aside className="user-sidebar">
         <div className="user-sidebar-brand">
-          <button
-            type="button"
-            className="avatar-trigger user-sidebar-avatar"
-            onClick={() => setIsSidebarOpen(true)}
-            title="Open settings"
-          >
-            <img className="avatar avatar-md" src={resolveAvatar(user)} alt={user.name} />
-          </button>
-          <div className="user-sidebar-brand-copy">
-            <strong>Imperial Network</strong>
-            <span>User portal</span>
-          </div>
+          <img
+            className="user-brand-logo"
+            src="/imperial-network-logo.svg"
+            alt="Imperial Network Incorporated"
+          />
+          <span className="user-brand-caption">User portal</span>
         </div>
 
-        <div className="user-sidebar-group">
-          <span className="user-sidebar-label">Workspace</span>
-          <nav className="user-nav">
-            {userSections.map((section) => (
-              <button
-                key={section.id}
-                type="button"
-                className={activeUserSection === section.id ? 'user-nav-btn active' : 'user-nav-btn'}
-                onClick={() => focusUserSection(section.id)}
-              >
-                <span className="user-nav-chip">{section.chip}</span>
-                <span>{section.label}</span>
-              </button>
-            ))}
-          </nav>
-        </div>
-
-        <div className="user-sidebar-group">
-          <span className="user-sidebar-label">Tools</span>
-          <nav className="user-nav">
+        <nav className="user-nav user-nav--main">
+          {userViews.map((item) => (
             <button
+              key={item.id}
               type="button"
-              className={activeView === 'tools' ? 'user-nav-btn active' : 'user-nav-btn'}
-              onClick={() => setActiveView('tools')}
+              className={activeView === item.id ? 'user-nav-btn active' : 'user-nav-btn'}
+              onClick={() => setActiveView(item.id)}
             >
-              <span className="user-nav-chip user-nav-chip--tools">TL</span>
-              <span>Tools</span>
+              <span className={`user-nav-chip user-nav-chip--${item.id}`}>{item.chip}</span>
+              <span>{item.label}</span>
             </button>
-          </nav>
-        </div>
+          ))}
+        </nav>
 
-        <div className="user-sidebar-group user-sidebar-templates">
-          <div className="user-sidebar-heading">
-            <span className="user-sidebar-label">Templates</span>
-            <span className="user-sidebar-count">{orderedTemplates.length}</span>
-          </div>
-
-          <div className="template-stack" role="list" aria-label="Templates">
-            {orderedTemplates.map((tpl) => (
-              <div
-                key={tpl.id}
-                role="listitem"
-                className={tpl.id === selectedTemplateId ? 'template-stack-item active' : 'template-stack-item'}
-              >
-                <button
-                  type="button"
-                  className="template-stack-select"
-                  onClick={() => setSelectedTemplateId(tpl.id)}
-                  title={`${tpl.title}${tpl.description ? ` - ${tpl.description}` : ''}`}
-                >
-                  <span className="template-stack-title-row">
-                    <span className="template-stack-title">{tpl.title}</span>
-                    {user?.favorite_template_id === tpl.id && (
-                      <span className="template-badge">Favorite</span>
-                    )}
-                  </span>
-                  <span className="template-stack-desc">{tpl.description || 'No description.'}</span>
-                </button>
-                <button
-                  type="button"
-                  className={user?.favorite_template_id === tpl.id ? 'template-favorite-btn active' : 'template-favorite-btn'}
-                  onClick={() => setFavoriteTemplate(tpl.id)}
-                  disabled={user?.favorite_template_id === tpl.id}
-                >
-                  {user?.favorite_template_id === tpl.id ? 'Pinned' : 'Pin'}
-                </button>
-              </div>
-            ))}
-            {templates.length === 0 && (
-              <div className="template-stack-empty">No templates available.</div>
-            )}
-          </div>
-        </div>
-
-        <div className="user-sidebar-footer">
-          <button type="button" className="user-sidebar-profile" onClick={() => setIsSidebarOpen(true)}>
-            <img className="avatar avatar-sm" src={resolveAvatar(user)} alt={user.name} />
-            <span>
-              <strong>{user.name}</strong>
-              <small>{user.email || user.role}</small>
-            </span>
-          </button>
-          <div className="topbar-actions user-sidebar-actions">
-            <button type="button" className="theme-btn" onClick={onToggleTheme}>
-              {theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
-            </button>
-            <button type="button" className="logout-btn" onClick={onLogout}>Logout</button>
-          </div>
-        </div>
+        <div className="user-sidebar-spacer" />
       </aside>
 
       <main className="user-main">
@@ -1267,17 +1217,20 @@ export default function UserPanel({
             <div className="user-breadcrumb">
               <span>User portal</span>
               <span>/</span>
-              {activeView === 'tools' ? (
-                <strong>Tools</strong>
-              ) : (
+              <strong>{activeViewMeta.label}</strong>
+              {activeView !== 'tools' && selectedTemplate && (
                 <>
-                  <span>{activeSectionMeta.label}</span>
                   <span>/</span>
-                  <strong>{selectedTemplate?.title || 'Select template'}</strong>
+                  <span>{selectedTemplate.title}</span>
                 </>
               )}
             </div>
-            {activeView !== 'tools' && <h2>{activeSectionMeta.title}</h2>}
+            {activeView !== 'tools' && (
+              <>
+                <h2>{activeViewMeta.title}</h2>
+                <p className="muted user-main-subtitle">{activeViewMeta.description}</p>
+              </>
+            )}
           </div>
           <button
             type="button"
@@ -1302,60 +1255,84 @@ export default function UserPanel({
         </section>
       )}
 
-      {activeView === 'workspace' && (<>
-      <section id="user-section-create" className="grid two user-create-grid">
-        <div className="card user-summary-card">
-          <div className="section-heading">
-            <div>
-              <h3>Template workspace</h3>
-              <p className="muted">Quick details and exports for the selected template.</p>
-            </div>
-          </div>
-          {selectedTemplate ? (
-            <>
-              <div className="template-stack-summary">
-                <span className="template-stack-summary-title">{selectedTemplate.title}</span>
-                <span className="template-stack-summary-desc">{selectedTemplate.description || 'No description.'}</span>
-              </div>
-              {predefinedPdfs.length > 0 && (
-                <div className="workspace-resource-panel">
-                  <div className="workspace-resource-head">
-                    <strong>Predefined PDFs</strong>
-                  </div>
-                  <div className="workspace-resource-list">
-                    {predefinedPdfs.map((item) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        className="workspace-resource-btn"
-                        disabled={openingPdfId === item.id}
-                        onClick={() => openPredefinedPdf(item)}
-                      >
-                        <span>{openingPdfId === item.id ? 'Opening…' : item.name}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-              <div className="user-quick-metrics">
-                {compactAnalyticsItems.map((item) => (
-                  <div key={item.label} className="user-quick-metric">
-                    <span>{item.label}</span>
-                    <strong>{item.value}</strong>
-                    <small>{item.meta}</small>
-                  </div>
+      {activeView === 'create' && (<>
+      <section className="tpl-row-card">
+        <div className="tpl-row-head">
+          <h3>Templates</h3>
+          <span className="tpl-row-count">{orderedTemplates.length}</span>
+        </div>
+        <div className="tpl-row" role="list" aria-label="Templates">
+          {orderedTemplates.map((tpl) => (
+            <article
+              key={tpl.id}
+              role="listitem"
+              className={tpl.id === selectedTemplateId ? 'tpl-card active' : 'tpl-card'}
+            >
+              <button
+                type="button"
+                className="tpl-card-select"
+                onClick={() => setSelectedTemplateId(tpl.id)}
+                title={`${tpl.title}${tpl.description ? ` - ${tpl.description}` : ''}`}
+              >
+                <span className="tpl-card-title">{tpl.title}</span>
+                <span className="tpl-card-desc">{tpl.description || 'No description.'}</span>
+              </button>
+              <button
+                type="button"
+                className={user?.favorite_template_id === tpl.id ? 'tpl-card-pin active' : 'tpl-card-pin'}
+                onClick={() => setFavoriteTemplate(tpl.id)}
+                disabled={user?.favorite_template_id === tpl.id}
+              >
+                {user?.favorite_template_id === tpl.id ? 'Pinned' : 'Pin'}
+              </button>
+            </article>
+          ))}
+          {templates.length === 0 && <div className="tpl-empty">No templates available.</div>}
+        </div>
+      </section>
+
+      <details className="tpl-extras">
+        <summary>
+          <span className="tpl-extras-title">Template extras</span>
+          <small>
+            {selectedTemplate ? selectedTemplate.title : 'No template selected'}
+            {' · '}
+            {predefinedPdfs.length} predefined PDF{predefinedPdfs.length === 1 ? '' : 's'}
+            {' · export CSV / JSON'}
+          </small>
+        </summary>
+        <div className="tpl-extras-body">
+          <div className="tpl-extras-group">
+            <span className="tpl-extras-label">Predefined PDFs</span>
+            {predefinedPdfs.length > 0 ? (
+              <div className="tpl-extras-chips">
+                {predefinedPdfs.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className="tpl-extras-chip"
+                    disabled={openingPdfId === item.id}
+                    onClick={() => openPredefinedPdf(item)}
+                  >
+                    {openingPdfId === item.id ? 'Opening…' : item.name}
+                  </button>
                 ))}
               </div>
-              <div className="actions user-export-actions">
-                <button type="button" onClick={() => exportMyTemplateData('csv')} disabled={!selectedTemplateId}>Export My Data CSV</button>
-                <button type="button" onClick={() => exportMyTemplateData('json')} disabled={!selectedTemplateId}>Export My Data JSON</button>
-              </div>
-            </>
-          ) : (
-            <p className="muted">Select a template from the sidebar to load exports and the form.</p>
-          )}
+            ) : (
+              <p className="muted tpl-extras-empty">None available.</p>
+            )}
+          </div>
+          <div className="tpl-extras-group">
+            <span className="tpl-extras-label">Export my data</span>
+            <div className="tpl-extras-chips">
+              <button type="button" className="tpl-extras-chip" onClick={() => exportMyTemplateData('csv')} disabled={!selectedTemplateId}>CSV</button>
+              <button type="button" className="tpl-extras-chip" onClick={() => exportMyTemplateData('json')} disabled={!selectedTemplateId}>JSON</button>
+            </div>
+          </div>
         </div>
+      </details>
 
+      <div className="user-work-grid">
         <form className="card user-form-card" onSubmit={submitGeneration}>
           <div className="section-heading">
             <div>
@@ -1475,93 +1452,6 @@ export default function UserPanel({
             </label>
           </div>
         </form>
-      </section>
-
-      <section id="user-section-analytics" className="card">
-        <h3>Template Analytics</h3>
-        <p className="muted">Current month metrics for the selected template.</p>
-        {analytics ? (
-          <>
-            <div className="analytics-strip">
-              {analyticsItems.map((item, index) => (
-                <div
-                  key={item.label}
-                  className={`analytics-strip-item analytics-tone-${item.tone || 'primary'}${index === 0 ? ' analytics-strip-item-featured' : ''}`}
-                >
-                  <span className="analytics-strip-kicker">{selectedTemplate?.title || 'Template'}</span>
-                  <span className="analytics-strip-label">{item.label}</span>
-                  <strong className="analytics-strip-value">{item.value}</strong>
-                  <span className="analytics-strip-meta">{item.meta}</span>
-                </div>
-              ))}
-            </div>
-            <div className="analytics-chart-block">
-              <div className="chart-combo">
-                <StatusStackedBarChart
-                  monthlyData={monthlyByStatus}
-                  timeRange={monthlyReportRange}
-                  onTimeRangeChange={setMonthlyReportRange}
-                  description="Monthly PDF outcomes by status for the selected template."
-                  emptyText="No monthly data available for this template yet."
-                />
-                <StatusDonutChart analytics={analytics} />
-              </div>
-            </div>
-          </>
-        ) : (
-          <p className="muted">Select a template to view analytics.</p>
-        )}
-      </section>
-
-      <section id="user-section-preview" className="card">
-        <div className="actions" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-          <h3>Template Preview Mapper</h3>
-          <button type="button" onClick={() => setShowPreviewMapper((prev) => !prev)}>
-            {showPreviewMapper ? 'Hide Preview' : 'Show Preview'}
-          </button>
-        </div>
-        {!showPreviewMapper && (
-          <p className="muted">Preview is hidden. Click "Show Preview" if you want to see mapped field positions.</p>
-        )}
-        {showPreviewMapper && (
-          <>
-            <p className="muted">Preview where each field is placed on the PDF.</p>
-            <label htmlFor="user-preview-page">Preview Page</label>
-            <input
-              id="user-preview-page"
-              name="preview_page"
-              type="number"
-              min="1"
-              max={pdfMeta.pages || 1}
-              value={previewPage}
-              onChange={(e) => setPreviewPage(Number(e.target.value || 1))}
-            />
-            <div className="pdf-stage">
-              <canvas ref={canvasRef} className="pdf-canvas" />
-              <div className="pdf-overlay" style={{ width: `${renderMeta.width}px`, height: `${renderMeta.height}px` }}>
-                {fields
-                  .filter((field) => Number(field.page_number) === Number(previewPage))
-                  .map((field) => {
-                    const left = (Number(field.x_position) / pdfMeta.width) * renderMeta.width;
-                    const top = ((pdfMeta.height - Number(field.y_position) - Number(field.box_height || 0)) / pdfMeta.height) * renderMeta.height;
-                    const width = (Number(field.box_width || 0) / pdfMeta.width) * renderMeta.width;
-                    const height = (Number(field.box_height || 0) / pdfMeta.height) * renderMeta.height;
-                    return (
-                      <div
-                        key={field.id}
-                        className="field-rect existing"
-                        style={{ left, top, width, height }}
-                        title={field.field_name}
-                      >
-                        <span>{field.field_name}</span>
-                      </div>
-                    );
-                  })}
-              </div>
-            </div>
-          </>
-        )}
-      </section>
 
       <section id="user-section-history" className="card">
         <div className="actions" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1795,6 +1685,96 @@ export default function UserPanel({
         </div>
 
       </section>
+      </div>
+      </>)}
+
+      {activeView === 'analytics' && (<>
+      <section id="user-section-analytics" className="card">
+        <h3>Template Analytics</h3>
+        <p className="muted">Current month metrics for the selected template.</p>
+        {analytics ? (
+          <>
+            <div className="analytics-strip">
+              {analyticsItems.map((item, index) => (
+                <div
+                  key={item.label}
+                  className={`analytics-strip-item analytics-tone-${item.tone || 'primary'}${index === 0 ? ' analytics-strip-item-featured' : ''}`}
+                >
+                  <span className="analytics-strip-kicker">{selectedTemplate?.title || 'Template'}</span>
+                  <span className="analytics-strip-label">{item.label}</span>
+                  <strong className="analytics-strip-value">{item.value}</strong>
+                  <span className="analytics-strip-meta">{item.meta}</span>
+                </div>
+              ))}
+            </div>
+            <div className="analytics-chart-block">
+              <div className="chart-combo">
+                <StatusStackedBarChart
+                  monthlyData={monthlyByStatus}
+                  timeRange={monthlyReportRange}
+                  onTimeRangeChange={setMonthlyReportRange}
+                  description="Monthly PDF outcomes by status for the selected template."
+                  emptyText="No monthly data available for this template yet."
+                />
+                <StatusDonutChart analytics={analytics} />
+              </div>
+            </div>
+          </>
+        ) : (
+          <p className="muted">Select a template to view analytics.</p>
+        )}
+      </section>
+
+      <section id="user-section-preview" className="card">
+        <div className="actions" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+          <h3>Template Preview Mapper</h3>
+          <button type="button" onClick={() => setShowPreviewMapper((prev) => !prev)}>
+            {showPreviewMapper ? 'Hide Preview' : 'Show Preview'}
+          </button>
+        </div>
+        {!showPreviewMapper && (
+          <p className="muted">Preview is hidden. Click "Show Preview" if you want to see mapped field positions.</p>
+        )}
+        {showPreviewMapper && (
+          <>
+            <p className="muted">Preview where each field is placed on the PDF.</p>
+            <label htmlFor="user-preview-page">Preview Page</label>
+            <input
+              id="user-preview-page"
+              name="preview_page"
+              type="number"
+              min="1"
+              max={pdfMeta.pages || 1}
+              value={previewPage}
+              onChange={(e) => setPreviewPage(Number(e.target.value || 1))}
+            />
+            <div className="pdf-stage">
+              <canvas ref={canvasRef} className="pdf-canvas" />
+              <div className="pdf-overlay" style={{ width: `${renderMeta.width}px`, height: `${renderMeta.height}px` }}>
+                {fields
+                  .filter((field) => Number(field.page_number) === Number(previewPage))
+                  .map((field) => {
+                    const left = (Number(field.x_position) / pdfMeta.width) * renderMeta.width;
+                    const top = ((pdfMeta.height - Number(field.y_position) - Number(field.box_height || 0)) / pdfMeta.height) * renderMeta.height;
+                    const width = (Number(field.box_width || 0) / pdfMeta.width) * renderMeta.width;
+                    const height = (Number(field.box_height || 0) / pdfMeta.height) * renderMeta.height;
+                    return (
+                      <div
+                        key={field.id}
+                        className="field-rect existing"
+                        style={{ left, top, width, height }}
+                        title={field.field_name}
+                      >
+                        <span>{field.field_name}</span>
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+          </>
+        )}
+      </section>
+
       </>)}
 
       </main>
