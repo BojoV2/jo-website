@@ -4,6 +4,7 @@ import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import { query, pool } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
+import { buildMergedPdf } from '../services/pdfMerge.js';
 import { generatePdfFromTemplate } from '../services/pdfService.js';
 import { syncGeneratedPdfToGoogleSheets, isGoogleSheetsEnabled } from '../services/googleSheetsService.js';
 import { PDF_STATUSES } from '../constants.js';
@@ -809,7 +810,37 @@ router.get('/:generatedPdfId/download', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'File not found in storage' });
     }
 
-    return res.download(absolutePath);
+    // ?raw=1 returns the stamped template on its own, without supporting documents.
+    if (req.query.raw === '1' || req.query.raw === 'true') {
+      return res.download(absolutePath);
+    }
+
+    const attachments = await query(
+      `SELECT file_path, mime_type, original_name
+         FROM generated_pdf_attachments
+        WHERE generated_pdf_id = $1
+        ORDER BY created_at ASC`,
+      [req.params.generatedPdfId]
+    );
+
+    if (attachments.rowCount === 0) {
+      return res.download(absolutePath);
+    }
+
+    // Page 1..n = the generated document, then the supporting documents in the
+    // order they were uploaded. Assembled per request so it always matches the
+    // attachments that exist right now; the stored file is never rewritten.
+    try {
+      const { bytes } = await buildMergedPdf(absolutePath, attachments.rows, storageRoot);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${path.basename(record.rows[0].file_path)}"`);
+      return res.send(Buffer.from(bytes));
+    } catch (mergeErr) {
+      // Never lose access to the document because the merge failed.
+      // eslint-disable-next-line no-console
+      console.error(`attachment merge failed for ${req.params.generatedPdfId}: ${mergeErr.message}`);
+      return res.download(absolutePath);
+    }
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }

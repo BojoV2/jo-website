@@ -954,14 +954,23 @@ export default function UserPanel({
     setLoading(true);
     setMessage('');
     try {
-      const created = await createGeneratedPdf(formValues, { autoDownload: true });
-      // Upload supporting documents if any were selected
-      if (created?.id && Object.keys(docFiles).some((k) => docFiles[k])) {
+      const hasDocs = Object.keys(docFiles).some((k) => docFiles[k]);
+      // Upload the supporting documents FIRST when there are any: the generated
+      // PDF is assembled at download time, so opening it before the upload would
+      // show page 1 only.
+      const created = await createGeneratedPdf(formValues, { autoDownload: !hasDocs });
+      if (created?.id && hasDocs) {
         try {
           await uploadDocFiles(created.id);
         } catch (uploadErr) {
           setMessage(`PDF generated but file upload failed: ${uploadErr.message}`);
           return;
+        }
+        try {
+          await openWithTokenInNewTab(`/generated-pdfs/${created.id}/download`, token);
+          setMessage('PDF generated with supporting documents attached, opened in a new tab, and queued as pending.');
+        } catch (_openErr) {
+          setMessage('PDF generated with supporting documents. It could not be opened automatically, use Open PDF in the list.');
         }
       }
       setDocFiles({});
