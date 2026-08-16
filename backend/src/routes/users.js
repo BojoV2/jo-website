@@ -2,7 +2,7 @@ import express from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
-import { query } from '../db.js';
+import { pool, query } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -99,6 +99,106 @@ router.post('/:userId/password/reset', async (req, res) => {
     return res.json({ temp_password: tempPassword });
   } catch (err) {
     return res.status(500).json({ error: err.message });
+  }
+});
+// ── delete a user account ──────────────────────────────────────────
+// Policy: the account row goes, the work stays. Every FK to users(id) is
+// ON DELETE SET NULL except status_history.changed_by, which has no action
+// and would block the delete, so it is nulled explicitly first.
+async function loadDeletionTarget(userId) {
+  const target = await query('SELECT id, name, email, role FROM users WHERE id = $1', [userId]);
+  return target.rowCount === 0 ? null : target.rows[0];
+}
+
+async function countUserRecords(userId) {
+  const counts = await query(
+    `SELECT
+       (SELECT COUNT(*) FROM generated_pdfs WHERE user_id = $1)            AS generated_pdfs,
+       (SELECT COUNT(*) FROM tickets WHERE created_by = $1)                AS tickets,
+       (SELECT COUNT(*) FROM ticket_messages WHERE author_id = $1)         AS ticket_messages,
+       (SELECT COUNT(*) FROM generated_pdf_attachments WHERE uploaded_by = $1) AS attachments,
+       (SELECT COUNT(*) FROM pdf_templates WHERE created_by = $1)          AS templates,
+       (SELECT COUNT(*) FROM status_history WHERE changed_by = $1)         AS status_changes`,
+    [userId]
+  );
+  const row = counts.rows[0];
+  return Object.fromEntries(Object.entries(row).map(([key, value]) => [key, Number(value)]));
+}
+
+function denyDeletion(req, target) {
+  if (target.id === req.user.id) {
+    return 'You cannot delete your own account';
+  }
+  if (['super_admin', 'admin'].includes(target.role) && req.user.role !== 'super_admin') {
+    return 'Only super_admin can delete admin accounts';
+  }
+  return null;
+}
+
+router.get('/:userId/deletion-preview', async (req, res) => {
+  try {
+    const target = await loadDeletionTarget(req.params.userId);
+    if (!target) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    const blocked = denyDeletion(req, target);
+    return res.json({
+      user: target,
+      records: await countUserRecords(target.id),
+      can_delete: !blocked,
+      blocked_reason: blocked || null
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/:userId', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const target = await loadDeletionTarget(req.params.userId);
+    if (!target) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const blocked = denyDeletion(req, target);
+    if (blocked) {
+      return res.status(403).json({ error: blocked });
+    }
+
+    if (target.role === 'super_admin') {
+      const remaining = await query(
+        "SELECT COUNT(*)::int AS count FROM users WHERE role = 'super_admin' AND id <> $1",
+        [target.id]
+      );
+      if (remaining.rows[0].count === 0) {
+        return res.status(409).json({ error: 'Cannot delete the last super_admin account' });
+      }
+    }
+
+    const records = await countUserRecords(target.id);
+
+    await client.query('BEGIN');
+    // status_history.changed_by has no ON DELETE action - null it so the audit
+    // rows survive the delete instead of blocking it.
+    await client.query('UPDATE status_history SET changed_by = NULL WHERE changed_by = $1', [target.id]);
+    await client.query('DELETE FROM users WHERE id = $1', [target.id]);
+    await client.query('COMMIT');
+
+    return res.json({
+      success: true,
+      deleted: { id: target.id, name: target.name, email: target.email, role: target.role },
+      unassigned_records: records
+    });
+  } catch (err) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (_rollbackErr) {
+      // connection already gone - nothing to roll back
+    }
+    return res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 

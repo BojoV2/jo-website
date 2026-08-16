@@ -13,15 +13,64 @@ GlobalWorkerOptions.workerSrc = workerSrc;
 
 const statusTabs = ['pending', 'done', 'cancelled', 'rescheduled'];
 const adminTabs = [
-  { id: 'home',       label: 'Home'        },
-  { id: 'templates',  label: 'Templates'   },
-  { id: 'mapping',    label: 'Field Mapping'},
-  { id: 'workflow',   label: 'Workflow'    },
-  { id: 'users',      label: 'Users'       },
-  { id: 'auto-reply', label: 'Auto Reply'  },
-  { id: 'qr-link',    label: 'QR Link'    },
-  { id: 'tracking',   label: 'Tracking'   },
+  {
+    id: 'home',
+    label: 'Home',
+    chip: 'HM',
+    title: 'Template operations dashboard',
+    description: 'Overview counters, month-to-date analytics, and monthly outcomes.'
+  },
+  {
+    id: 'templates',
+    label: 'Templates',
+    chip: 'TP',
+    title: 'Template library',
+    description: 'Upload, rename, replace, and retire the PDF templates users fill.'
+  },
+  {
+    id: 'mapping',
+    label: 'Field Mapping',
+    chip: 'FM',
+    title: 'Field mapping',
+    description: 'Place fields on the PDF, tune validation, presets, and requirements.'
+  },
+  {
+    id: 'workflow',
+    label: 'Workflow',
+    chip: 'WF',
+    title: 'Generated PDF workflow',
+    description: 'Filter generated documents, change status, and audit the history.'
+  },
+  {
+    id: 'users',
+    label: 'Users',
+    chip: 'US',
+    title: 'User management',
+    description: 'Roles, password resets, and who is active right now.'
+  },
+  {
+    id: 'auto-reply',
+    label: 'Auto Reply',
+    chip: 'AR',
+    title: 'Auto reply library',
+    description: 'Canned support messages and images the staff reuse.'
+  },
+  {
+    id: 'qr-link',
+    label: 'QR Link',
+    chip: 'QR',
+    title: 'QR links',
+    description: 'Publishable short links with printable QR codes.'
+  },
+  {
+    id: 'tracking',
+    label: 'Tracking',
+    chip: 'TK',
+    title: 'Fleet tracking',
+    description: 'Tracker credentials, cached vehicles, and the live map.'
+  }
 ];
+const templateScopedTabs = ['home', 'templates', 'mapping', 'workflow'];
 const DEFAULT_MONTHLY_RANGE = '3';
 
 function clampRect(rect) {
@@ -284,7 +333,13 @@ export default function AdminPanel({
       ];
     }, [analytics]);
 
+  const activeTabMeta = useMemo(
+    () => adminTabs.find((tab) => tab.id === activeAdminTab) || adminTabs[0],
+    [activeAdminTab]
+  );
+
   const adminOverviewStats = useMemo(() => ([
+
     { label: 'Templates', value: templates.length, meta: 'Configured PDFs' },
     { label: 'Users', value: users.length, meta: 'Portal accounts' },
     { label: 'Mapped Fields', value: fields.length, meta: selectedTemplate?.title || 'Current template' },
@@ -1209,7 +1264,63 @@ export default function AdminPanel({
     }
   }
 
+  async function deleteUser(target) {
+    setMessage('');
+    let preview;
+    try {
+      preview = await apiRequest(`/users/${target.id}/deletion-preview`, { token });
+    } catch (err) {
+      setMessage(err.message);
+      return;
+    }
+
+    if (!preview.can_delete) {
+      setMessage(preview.blocked_reason || 'This account cannot be deleted.');
+      return;
+    }
+
+    const records = preview.records || {};
+    const kept = [
+      [records.generated_pdfs, 'generated PDF'],
+      [records.tickets, 'ticket'],
+      [records.ticket_messages, 'chat message'],
+      [records.attachments, 'attachment'],
+      [records.templates, 'template']
+    ].filter(([count]) => count > 0)
+      .map(([count, label]) => `${count} ${label}${count === 1 ? '' : 's'}`);
+
+    const summary = kept.length
+      ? `Their work is kept but loses the owner name: ${kept.join(', ')}.`
+      : 'This account owns no records.';
+
+    if (kept.length) {
+      const typed = window.prompt(
+        `Delete ${target.name} (${target.role})?\n\n${summary}\n\nType the account name to confirm:`,
+        ''
+      );
+      if (typed === null) return;
+      if (typed.trim() !== target.name) {
+        setMessage('Name did not match. Account was not deleted.');
+        return;
+      }
+    } else if (!window.confirm(`Delete ${target.name} (${target.role})? ${summary}`)) {
+      return;
+    }
+
+    setBusy(true);
+    try {
+      await apiRequest(`/users/${target.id}`, { method: 'DELETE', token });
+      await loadUsers();
+      setMessage(`Deleted ${target.name}.`);
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function resetAndShowUserPassword(userId) {
+
     const ok = window.confirm('Reset this user password and view the temporary password?');
     if (!ok) return;
     setBusy(true);
@@ -1233,36 +1344,90 @@ export default function AdminPanel({
   }
 
   return (
-    <div className="layout">
-      <header className="topbar">
-        <div className="profile-head">
-          <button
-            type="button"
-            className="avatar-trigger"
-            onClick={() => setIsSidebarOpen(true)}
-            title="Open settings"
-          >
-            <img className="avatar avatar-md" src={resolveAvatar(user)} alt={user.name} />
-          </button>
-          <div>
-            <h2>Admin Console</h2>
-            <p className="muted">{user.name} ({user.role})</p>
-          </div>
-        </div>
-        <div className="topbar-actions">
-          <button type="button" className="theme-btn" onClick={onToggleTheme}>
-            {theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
-          </button>
-          <button type="button" className="logout-btn" onClick={onLogout}>Logout</button>
-        </div>
-      </header>
+    <div className="layout user-shell admin-shell">
       <ProfileSidebar
         open={isSidebarOpen}
         onClose={() => setIsSidebarOpen(false)}
         token={token}
         user={user}
         onUserUpdated={onSessionUserUpdate}
+        theme={theme}
+        onToggleTheme={onToggleTheme}
+        onLogout={onLogout}
       />
+
+      <aside className="user-sidebar">
+        <div className="user-sidebar-brand">
+          <img
+            className="user-brand-logo"
+            src="/imperial-network-logo.svg"
+            alt="Imperial Network Incorporated"
+          />
+          <span className="user-brand-caption">Admin portal</span>
+        </div>
+
+        <nav className="user-nav user-nav--main">
+          {adminTabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              className={activeAdminTab === tab.id ? 'user-nav-btn active' : 'user-nav-btn'}
+              aria-current={activeAdminTab === tab.id ? 'page' : undefined}
+              onClick={() => setActiveAdminTab(tab.id)}
+            >
+              <span className={`user-nav-chip user-nav-chip--${tab.id}`}>{tab.chip}</span>
+              <span>{tab.label}</span>
+            </button>
+          ))}
+        </nav>
+
+        <div className="user-sidebar-spacer" />
+      </aside>
+
+      <main className="user-main">
+        <header className="topbar user-main-topbar">
+          <div>
+            <div className="user-breadcrumb">
+              <span>Admin console</span>
+              <span>/</span>
+              <strong>{activeTabMeta.label}</strong>
+              {templateScopedTabs.includes(activeAdminTab) && selectedTemplate && (
+                <>
+                  <span>/</span>
+                  <span>{selectedTemplate.title}</span>
+                </>
+              )}
+            </div>
+            <h2>{activeTabMeta.title}</h2>
+            <p className="muted user-main-subtitle">{activeTabMeta.description}</p>
+          </div>
+          <div className="admin-topbar-actions">
+            {templateScopedTabs.includes(activeAdminTab) && (
+              <label className="admin-topbar-template">
+                <span>Focus template</span>
+                <select
+                  id="admin-topbar-template"
+                  name="focus_template"
+                  value={selectedTemplateId}
+                  onChange={(e) => setSelectedTemplateId(e.target.value)}
+                >
+                  <option value="">Select template</option>
+                  {templates.map((tpl) => (
+                    <option key={tpl.id} value={tpl.id}>{tpl.title}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <button
+              type="button"
+              className="avatar-trigger user-main-settings"
+              onClick={() => setIsSidebarOpen(true)}
+              title="Open settings"
+            >
+              <img className="avatar avatar-md" src={resolveAvatar(user)} alt={user.name} />
+            </button>
+          </div>
+        </header>
 
       {message && (
         <div className={`notice ${messageTone(message)}`}>
@@ -1271,56 +1436,24 @@ export default function AdminPanel({
         </div>
       )}
 
-      <section className="admin-hero">
-        <div className="card admin-hero-card">
-          <span className="admin-hero-kicker">Admin home</span>
-          <h3>Template operations dashboard</h3>
-          <p className="muted">Use this dashboard to monitor template activity, switch templates quickly, and open the tools for uploads, field mapping, workflow, and user management.</p>
-          <div className="actions">
+      {activeAdminTab === 'home' && (
+        <section className="admin-quick ui-plain">
+          <div className="admin-quick-copy">
+            <strong>Quick actions</strong>
+            <span className="muted">
+              {selectedTemplate
+                ? `Focused on ${selectedTemplate.title} (v${selectedTemplate.version || 1}).`
+                : 'Pick a focus template in the header to load analytics, mapping, and workflow.'}
+            </span>
+          </div>
+          <div className="admin-quick-actions">
             <button type="button" onClick={() => setActiveAdminTab('templates')}>Manage Templates</button>
             <button type="button" onClick={() => setActiveAdminTab('mapping')}>Map Fields</button>
             <button type="button" onClick={() => setActiveAdminTab('workflow')}>Open Workflow</button>
           </div>
-        </div>
+        </section>
+      )}
 
-        <div className="card admin-focus-card">
-          <div className="section-heading">
-            <div>
-              <h3>Focus Template</h3>
-              <p className="muted">Pick the template used by analytics, mapping, and workflow tabs.</p>
-            </div>
-          </div>
-          <label htmlFor="admin-focus-template">Selected Template</label>
-          <select id="admin-focus-template" name="selected_template_focus" value={selectedTemplateId} onChange={(e) => setSelectedTemplateId(e.target.value)}>
-            <option value="">Select template</option>
-            {templates.map((tpl) => (
-              <option key={tpl.id} value={tpl.id}>{tpl.title}</option>
-            ))}
-          </select>
-          {selectedTemplate ? (
-            <div className="template-meta">
-              <div><strong>Title:</strong> {selectedTemplate.title}</div>
-              <div><strong>Description:</strong> {selectedTemplate.description || '-'}</div>
-              <div><strong>Version:</strong> {selectedTemplate.version || 1}</div>
-            </div>
-          ) : (
-            <p className="muted">Select a template to load analytics and workflow data.</p>
-          )}
-        </div>
-      </section>
-
-      <section className="admin-nav">
-        {adminTabs.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            className={activeAdminTab === tab.id ? 'admin-nav-btn active' : 'admin-nav-btn'}
-            onClick={() => setActiveAdminTab(tab.id)}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </section>
 
       {activeAdminTab === 'templates' && (
       <>
@@ -1536,7 +1669,7 @@ export default function AdminPanel({
 
         <div className="card">
           <h3>User Accounts</h3>
-          <p className="muted">Stored passwords are hashed. Use "View Temp" to reset and reveal a temporary password.</p>
+          <p className="muted">Stored passwords are hashed. Use "View Temp" to reset and reveal a temporary password. Deleting an account keeps its PDFs and tickets, but they lose the owner name.</p>
           <div className="table-wrap">
             <table>
               <thead>
@@ -1544,7 +1677,7 @@ export default function AdminPanel({
                   <th>Name</th>
                   <th>Email</th>
                   <th>Role</th>
-                  <th>Password</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -1561,6 +1694,15 @@ export default function AdminPanel({
                     <td className="actions">
                       <button type="button" onClick={() => changeUserPassword(u.id)}>Change</button>
                       <button type="button" onClick={() => resetAndShowUserPassword(u.id)}>View Temp</button>
+                      <button
+                        type="button"
+                        className="btn-danger"
+                        disabled={busy || u.id === user.id}
+                        title={u.id === user.id ? 'You cannot delete your own account' : 'Delete this account'}
+                        onClick={() => deleteUser(u)}
+                      >
+                        Delete
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -2989,6 +3131,7 @@ export default function AdminPanel({
           <VehicleMap token={token} />
         </section>
       )}
+      </main>
     </div>
   );
 }

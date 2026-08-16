@@ -4823,3 +4823,182 @@ tr.row-editing {
   width: auto;
   margin: 0;
 }
+
+/* ==========================================================================
+   Admin console v2 — same shell as the user portal (slim sidebar + breadcrumb
+   header). Reuses .user-shell/.user-sidebar/.user-nav/.user-main; this block
+   only adds the admin-specific bits. Token-based: works light + dark.
+   ========================================================================== */
+
+.admin-shell .user-nav--main {
+  gap: 4px;
+}
+
+.admin-shell .user-nav--main .user-nav-btn {
+  padding: 9px 12px;
+  font-size: 0.88rem;
+}
+
+.admin-shell .user-nav-chip {
+  width: 30px;
+  height: 30px;
+  font-size: 10px;
+}
+
+/* per-tab chip accents */
+.user-nav-chip--home {
+  background: rgba(30, 93, 184, 0.12);
+  color: var(--primary-strong);
+}
+
+.user-nav-chip--templates {
+  background: rgba(14, 165, 233, 0.14);
+  color: #0284c7;
+}
+
+.user-nav-chip--mapping {
+  background: rgba(139, 92, 246, 0.14);
+  color: #7c3aed;
+}
+
+.user-nav-chip--workflow {
+  background: rgba(34, 197, 94, 0.14);
+  color: #16a34a;
+}
+
+.user-nav-chip--users {
+  background: rgba(245, 158, 11, 0.16);
+  color: #b45309;
+}
+
+.user-nav-chip--auto-reply {
+  background: rgba(236, 72, 153, 0.14);
+  color: #db2777;
+}
+
+.user-nav-chip--qr-link {
+  background: rgba(20, 184, 166, 0.14);
+  color: #0d9488;
+}
+
+.user-nav-chip--tracking {
+  background: rgba(244, 63, 94, 0.14);
+  color: #e11d48;
+}
+
+/* ---------- topbar: focus-template picker beside the avatar ---------- */
+
+.admin-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 0 0 auto;
+}
+
+.admin-topbar-template {
+  display: grid;
+  gap: 2px;
+  width: auto;
+  margin: 0;
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 600;
+}
+
+.admin-topbar-template > span {
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--shell-muted);
+}
+
+.admin-topbar-template select {
+  width: auto;
+  min-width: 210px;
+  max-width: 320px;
+  margin: 0;
+  padding: 7px 10px;
+  border-radius: 10px;
+  font-size: 0.86rem;
+}
+
+/* ---------- home hero sits inside the padded main column ---------- */
+
+.admin-shell .admin-hero {
+  grid-template-columns: minmax(0, 1.6fr) minmax(300px, 0.9fr);
+}
+
+.admin-shell .admin-hero-card {
+  min-height: 190px;
+}
+
+@media (max-width: 1240px) {
+  .admin-shell .admin-hero {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .admin-topbar-template select {
+    min-width: 160px;
+  }
+}
+
+@media (max-width: 900px) {
+  /* 8 tabs never fit one row - keep two columns instead of the portal's strip */
+  .admin-shell .user-nav--main {
+    grid-auto-flow: row;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-shell .user-main-topbar {
+    flex-wrap: wrap;
+  }
+
+  .admin-topbar-template select {
+    min-width: 0;
+    width: 100%;
+  }
+}
+
+/* ---------- admin home: quick-actions strip (replaces the old hero) ---------- */
+
+.admin-quick {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 14px 18px;
+  border-radius: 18px;
+  border: 1px solid var(--shell-border);
+  background: var(--shell-card-bg);
+  box-shadow: 0 18px 40px rgba(20, 44, 74, 0.1);
+}
+
+.admin-quick-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.admin-quick-copy strong {
+  color: var(--shell-heading);
+  font-size: 1rem;
+}
+
+.admin-quick-copy .muted {
+  font-size: 0.85rem;
+}
+
+.admin-quick-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.admin-quick-actions button {
+  width: auto;
+  margin: 0;
+  padding: 9px 14px;
+  border-radius: 10px;
+  font-size: 0.86rem;
+}
