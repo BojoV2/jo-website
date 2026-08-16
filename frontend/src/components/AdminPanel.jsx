@@ -8,6 +8,7 @@ import { resolveAvatar } from '../utils/avatar.js';
 import StatusStackedBarChart from './StatusStackedBarChart.jsx';
 import StatusDonutChart from './StatusDonutChart.jsx';
 import VehicleMap from './VehicleMap.jsx';
+import Profiling from './Profiling.jsx';
 
 GlobalWorkerOptions.workerSrc = workerSrc;
 
@@ -68,6 +69,13 @@ const adminTabs = [
     chip: 'TK',
     title: 'Fleet tracking',
     description: 'Tracker credentials, cached vehicles, and the live map.'
+  },
+  {
+    id: 'profiling',
+    label: 'Profiling',
+    chip: 'PF',
+    title: 'Document archive',
+    description: 'Control the year/month archive: rename, move, lock, hide, and audit every upload.'
   }
 ];
 const templateScopedTabs = ['home', 'templates', 'mapping', 'workflow'];
@@ -1454,6 +1462,10 @@ export default function AdminPanel({
         </section>
       )}
 
+
+      {activeAdminTab === 'profiling' && (
+        <Profiling token={token} user={user} mode="admin" />
+      )}
 
       {activeAdminTab === 'templates' && (
       <>

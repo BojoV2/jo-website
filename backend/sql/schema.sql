@@ -255,3 +255,40 @@ CREATE TABLE IF NOT EXISTS ticket_counters (
     current_value INT NOT NULL DEFAULT 0,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS profiling_folders (
+    id UUID PRIMARY KEY,
+    parent_id UUID REFERENCES profiling_folders(id) ON DELETE CASCADE,
+    name VARCHAR(120) NOT NULL,
+    kind VARCHAR(10) NOT NULL DEFAULT 'manual',
+    year INTEGER,
+    month INTEGER,
+    locked BOOLEAN DEFAULT FALSE,
+    hidden BOOLEAN DEFAULT FALSE,
+    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_profiling_folders_root_name
+    ON profiling_folders (lower(name)) WHERE parent_id IS NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_profiling_folders_child_name
+    ON profiling_folders (parent_id, lower(name)) WHERE parent_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_profiling_folders_parent ON profiling_folders(parent_id);
+
+CREATE TABLE IF NOT EXISTS profiling_files (
+    id UUID PRIMARY KEY,
+    folder_id UUID REFERENCES profiling_folders(id) ON DELETE CASCADE,
+    title VARCHAR(200) NOT NULL,
+    date_installed DATE,
+    file_path TEXT NOT NULL,
+    original_name TEXT,
+    mime_type VARCHAR(120),
+    size_bytes BIGINT,
+    uploaded_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_profiling_files_folder ON profiling_files(folder_id);

@@ -5002,3 +5002,425 @@ tr.row-editing {
   border-radius: 10px;
   font-size: 0.86rem;
 }
+
+/* ==========================================================================
+   Profiling - document archive (user portal view + admin tab). Token-based,
+   works light + dark. Scoped under .pf so the global form-element rules
+   (label uppercase, inputs width:100%) do not bleed in.
+   ========================================================================== */
+
+.pf {
+  display: grid;
+  gap: 16px;
+}
+
+.pf-message {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--shell-border);
+  background: var(--shell-card-bg);
+  font-size: 0.9rem;
+}
+
+.pf-message-close {
+  width: auto;
+  margin: 0;
+  padding: 0 6px;
+  background: none;
+  border: 0;
+  color: var(--muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.pf-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.pf-stat {
+  display: grid;
+  gap: 2px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--shell-border);
+  background: var(--shell-card-bg);
+}
+
+.pf-stat span {
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--shell-muted);
+}
+
+.pf-stat strong {
+  font-size: 1.35rem;
+  color: var(--shell-heading);
+  font-variant-numeric: tabular-nums;
+}
+
+.pf-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--shell-border);
+  background: var(--shell-card-bg);
+}
+
+.pf-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.pf-crumb {
+  width: auto;
+  margin: 0;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--shell-muted);
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pf-crumb:hover { background: rgba(44, 130, 237, 0.1); }
+
+.pf-crumb.active {
+  color: var(--shell-heading);
+  background: rgba(44, 130, 237, 0.12);
+}
+
+.pf-crumb-sep { color: var(--shell-muted); font-size: 0.8rem; }
+
+.pf-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.pf-bar-actions button {
+  width: auto;
+  margin: 0;
+  padding: 8px 14px;
+  border-radius: 10px;
+  font-size: 0.86rem;
+}
+
+.pf-search {
+  width: auto;
+  min-width: 210px;
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 0.86rem;
+}
+
+.pf-locked-note {
+  margin: 0;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(214, 158, 46, 0.4);
+  background: rgba(214, 158, 46, 0.1);
+  color: #92610a;
+  font-size: 0.86rem;
+}
+
+[data-theme='dark'] .pf-locked-note { color: #e5b45c; }
+
+/* ---------- upload form ---------- */
+
+.pf-upload {
+  display: grid;
+  gap: 14px;
+  padding: 16px 18px;
+  border-radius: 16px;
+  border: 1px solid var(--shell-border);
+  background: var(--shell-card-bg);
+}
+
+.pf-upload-head h4 { margin: 0; color: var(--shell-heading); }
+.pf-upload-head p { margin: 2px 0 0; font-size: 0.85rem; }
+
+.pf-upload-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1.4fr);
+  gap: 12px;
+}
+
+.pf-field {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 600;
+}
+
+.pf-field > span {
+  font-size: 0.72rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--shell-muted);
+}
+
+.pf-field input {
+  width: 100%;
+  margin: 0;
+  padding: 9px 11px;
+  border-radius: 10px;
+  font-size: 0.9rem;
+}
+
+.pf-upload-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.pf-upload-actions .muted { font-size: 0.8rem; }
+
+.pf-upload-actions button {
+  width: auto;
+  margin: 0;
+  padding: 9px 18px;
+  border-radius: 10px;
+}
+
+/* ---------- sections ---------- */
+
+.pf-section {
+  display: grid;
+  gap: 10px;
+  padding: 16px 18px;
+  border-radius: 16px;
+  border: 1px solid var(--shell-border);
+  background: var(--shell-card-bg);
+}
+
+.pf-section-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pf-section-head h4 {
+  margin: 0;
+  color: var(--shell-heading);
+  font-size: 1rem;
+}
+
+.pf-count {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(30, 93, 184, 0.12);
+  color: var(--primary-strong);
+}
+
+.pf-empty { margin: 0; font-size: 0.9rem; }
+
+/* ---------- folder cards ---------- */
+
+.pf-folder-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 12px;
+}
+
+.pf-folder {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--shell-border);
+  background: var(--shell-main-bg);
+}
+
+.pf-folder.is-hidden { opacity: 0.62; }
+
+.pf-folder-open {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pf-folder-icon {
+  width: 34px;
+  height: 26px;
+  border-radius: 5px 8px 8px 8px;
+  background: linear-gradient(135deg, #2b8cf2 0%, #1c5ed7 100%);
+  position: relative;
+}
+
+.pf-folder-icon::before {
+  content: '';
+  position: absolute;
+  top: -5px;
+  left: 0;
+  width: 15px;
+  height: 6px;
+  border-radius: 4px 4px 0 0;
+  background: inherit;
+}
+
+.pf-folder-icon--manual {
+  background: linear-gradient(135deg, #f0b445 0%, #d18f14 100%);
+}
+
+.pf-folder-name {
+  font-weight: 700;
+  color: var(--shell-heading);
+  font-size: 0.98rem;
+  word-break: break-word;
+}
+
+.pf-folder-meta {
+  font-size: 0.78rem;
+  color: var(--shell-muted);
+}
+
+.pf-folder-badges {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.pf-badge {
+  font-size: 0.64rem;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 6px;
+}
+
+.pf-badge--auto { background: rgba(30, 93, 184, 0.13); color: var(--primary-strong); }
+.pf-badge--manual { background: rgba(240, 180, 69, 0.2); color: #9a6a06; }
+.pf-badge--locked { background: rgba(214, 158, 46, 0.2); color: #92610a; }
+.pf-badge--hidden { background: rgba(120, 130, 145, 0.2); color: var(--muted); }
+
+[data-theme='dark'] .pf-badge--manual,
+[data-theme='dark'] .pf-badge--locked { color: #e5b45c; }
+
+.pf-folder-admin {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  padding-top: 6px;
+  border-top: 1px dashed var(--shell-border);
+}
+
+.pf-folder-admin button {
+  width: auto;
+  margin: 0;
+  padding: 4px 9px;
+  border-radius: 8px;
+  font-size: 0.74rem;
+}
+
+/* ---------- file table ---------- */
+
+.pf-table { width: 100%; }
+
+.pf-table td { vertical-align: middle; }
+
+.pf-file-name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.pf-file-name > div { display: grid; gap: 1px; min-width: 0; }
+
+.pf-file-glyph {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 30px;
+  border-radius: 7px;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  background: rgba(30, 93, 184, 0.12);
+  color: var(--primary-strong);
+}
+
+.pf-file-glyph--img { background: rgba(34, 197, 94, 0.15); color: #16a34a; }
+.pf-file-glyph--xls { background: rgba(16, 163, 127, 0.15); color: #0f8a6c; }
+.pf-file-glyph--doc { background: rgba(139, 92, 246, 0.15); color: #7c3aed; }
+.pf-file-glyph--file { background: rgba(120, 130, 145, 0.16); color: var(--muted); }
+
+.pf-file-sub {
+  font-size: 0.76rem;
+  color: var(--shell-muted);
+  word-break: break-all;
+}
+
+.pf-table .actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.pf-table .actions button {
+  width: auto;
+  margin: 0;
+  padding: 5px 10px;
+  border-radius: 8px;
+  font-size: 0.76rem;
+}
+
+@media (max-width: 1100px) {
+  .pf-upload-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 760px) {
+  .pf-bar { align-items: stretch; }
+  .pf-bar-actions { justify-content: flex-start; }
+  .pf-search { min-width: 0; flex: 1 1 160px; }
+}
+.pf-more {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 2px 2px;
+  font-size: 0.84rem;
+}
+
+.pf-more button {
+  width: auto;
+  margin: 0;
+  padding: 6px 14px;
+  border-radius: 9px;
+  font-size: 0.82rem;
+}

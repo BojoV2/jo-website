@@ -6,6 +6,7 @@ import ProfileSidebar from './ProfileSidebar.jsx';
 import StatusStackedBarChart from './StatusStackedBarChart.jsx';
 import StatusDonutChart from './StatusDonutChart.jsx';
 import BillingTools from './BillingTools.jsx';
+import Profiling from './Profiling.jsx';
 import { resolveAvatar } from '../utils/avatar.js';
 
 GlobalWorkerOptions.workerSrc = workerSrc;
@@ -32,6 +33,13 @@ const userViews = [
     chip: 'AN',
     title: 'Template analytics',
     description: 'Month-to-date metrics, monthly outcomes, and the field position mapper.'
+  },
+  {
+    id: 'profiling',
+    label: 'Profiling',
+    chip: 'PR',
+    title: 'Document archive',
+    description: 'Every generated PDF filed by year and month, plus the older paperwork you upload yourself.'
   }
 ];
 const userSections = [
@@ -1239,7 +1247,7 @@ export default function UserPanel({
               <span>User portal</span>
               <span>/</span>
               <strong>{activeViewMeta.label}</strong>
-              {activeView !== 'tools' && selectedTemplate && (
+              {!['tools', 'profiling'].includes(activeView) && selectedTemplate && (
                 <>
                   <span>/</span>
                   <span>{selectedTemplate.title}</span>
@@ -1273,6 +1281,12 @@ export default function UserPanel({
       {activeView === 'tools' && (
         <section className="tools-page">
           <BillingTools token={token} />
+        </section>
+      )}
+
+      {activeView === 'profiling' && (
+        <section className="tools-page">
+          <Profiling token={token} user={user} mode="user" />
         </section>
       )}
 
