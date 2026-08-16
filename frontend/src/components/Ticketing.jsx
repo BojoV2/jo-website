@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { apiRequest, getApiBase } from '../api.js';
 
-const chatImageUrl = (messageId) => `${getApiBase()}/tickets/messages/${messageId}/image`;
+const chatImageUrl = (messageId, token) =>
+  `${getApiBase()}/tickets/messages/${messageId}/image?t=${encodeURIComponent(token || '')}`;
 
 // Group a flat checklist [{category, group, item}] by category for display.
 function groupChecklist(list) {
@@ -404,8 +405,8 @@ export default function Ticketing({ token }) {
                     </div>
                     {m.body && <div className="tk-msg-body">{m.body}</div>}
                     {m.has_image && (
-                      <a href={chatImageUrl(m.id)} target="_blank" rel="noopener noreferrer">
-                        <img className="tk-msg-img" src={chatImageUrl(m.id)} alt={m.image_name || 'attachment'} />
+                      <a href={chatImageUrl(m.id, token)} target="_blank" rel="noopener noreferrer">
+                        <img className="tk-msg-img" src={chatImageUrl(m.id, token)} alt={m.image_name || 'attachment'} />
                       </a>
                     )}
                   </div>

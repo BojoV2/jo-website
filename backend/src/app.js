@@ -27,7 +27,43 @@ fs.mkdirSync(path.join(storageRoot, 'attachments'), { recursive: true });
 
 const app = express();
 
-app.use(cors({ origin: process.env.CORS_ORIGIN || 'http://localhost:3000' }));
+// Hand-rolled instead of pulling in helmet: the API serves JSON and files, so a
+// handful of headers covers it without adding a dependency to install inside a
+// running container.
+// One nginx container terminates TLS in front of this, so without this the rate
+// limiter would see every HTTPS user as the same address and one person's failed
+// logins would lock out the whole office.
+app.set('trust proxy', 1);
+app.disable('x-powered-by');
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+  // The portal (:3000 / :443) and the API (:8080) are separate origins, so
+  // same-site here blocks the app's own images. Access is controlled by the
+  // token the image routes now require, not by this header.
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  if (process.env.FORCE_HSTS === 'true') {
+    res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
+  }
+  next();
+});
+
+// CORS_ORIGIN takes a comma-separated list; '*' is refused so a stray default
+// cannot quietly open the API to every site.
+const allowedOrigins = String(process.env.CORS_ORIGIN || 'http://localhost:3000')
+  .split(',')
+  .map((value) => value.trim())
+  .filter((value) => value && value !== '*');
+
+app.use(cors({
+  origin(origin, callback) {
+    // same-origin and non-browser callers send no Origin header
+    if (!origin) return callback(null, true);
+    return callback(null, allowedOrigins.includes(origin));
+  }
+}));
 app.use(express.json({ limit: '5mb' }));
 
 app.get('/health', (_req, res) => {

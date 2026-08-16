@@ -20,6 +20,22 @@ SSH_OPTS="-i $SSH_KEY -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
 KEEP_LOCAL_DAYS=14
 KEEP_REMOTE_DAYS=30
 
+PASS_FILE=/home/jo-ssh/.jo-backup-pass
+
+# Dumps and secrets leave this host, so they are encrypted before they do. The
+# passphrase lives only here, chmod 600 - keep a copy somewhere off-box, or
+# losing this machine also makes the off-box copies unreadable.
+if [ ! -s "$PASS_FILE" ]; then
+  openssl rand -base64 48 > "$PASS_FILE"
+  chmod 600 "$PASS_FILE"
+fi
+
+encrypt() {
+  # encrypt <file> -> <file>.enc, plaintext removed
+  openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt \
+    -pass "file:$PASS_FILE" -in "$1" -out "$1.enc" && rm -f "$1"
+}
+
 STAMP=$(date +%Y%m%d-%H%M%S)
 DAY=$(date +%Y%m%d)
 DEST="$LOCAL_DIR/daily/$DAY"
@@ -47,7 +63,8 @@ if docker exec pdf_workflow_db pg_dump -U postgres -d pdf_workflow --clean --if-
     size=$(du -h "$DEST/jo-pdf_workflow-$STAMP.sql.gz" | cut -f1)
     rows=$(docker exec pdf_workflow_db psql -U postgres -d pdf_workflow -tAc \
            "SELECT count(*) FROM generated_pdfs" 2>/dev/null | tr -d '[:space:]')
-    log "JO database dumped ($size, generated_pdfs=$rows)"
+    encrypt "$DEST/jo-pdf_workflow-$STAMP.sql.gz" || fail "encrypting the JO dump"
+    log "JO database dumped and encrypted ($size, generated_pdfs=$rows)"
   else
     fail "JO dump is not a valid gzip"
   fi
@@ -57,19 +74,36 @@ fi
 
 if docker exec peering-manager-docker-postgres-1 sh -c 'pg_dumpall -U "$POSTGRES_USER"' \
      | gzip > "$DEST/peering-manager-$STAMP.sql.gz"; then
-  gzip -t "$DEST/peering-manager-$STAMP.sql.gz" \
-    && log "Peering Manager database dumped ($(du -h "$DEST/peering-manager-$STAMP.sql.gz" | cut -f1))" \
-    || fail "Peering Manager dump is not a valid gzip"
+  if gzip -t "$DEST/peering-manager-$STAMP.sql.gz"; then
+    pm_size=$(du -h "$DEST/peering-manager-$STAMP.sql.gz" | cut -f1)
+    encrypt "$DEST/peering-manager-$STAMP.sql.gz" || fail "encrypting the Peering Manager dump"
+    log "Peering Manager database dumped and encrypted ($pm_size)"
+  else
+    fail "Peering Manager dump is not a valid gzip"
+  fi
 else
   fail "Peering Manager pg_dumpall"
 fi
 
 # ---------------------------------------------------------------- secrets
-cp "$APP_DIR/backend/.env" "$DEST/backend-env-$STAMP.txt" 2>/dev/null \
-  && log "backend/.env copied" || fail "copying backend/.env"
+if cp "$APP_DIR/backend/.env" "$DEST/backend-env-$STAMP.txt" 2>/dev/null; then
+  chmod 600 "$DEST/backend-env-$STAMP.txt"
+  encrypt "$DEST/backend-env-$STAMP.txt" \
+    && log "backend/.env copied and encrypted" || fail "encrypting backend/.env"
+else
+  fail "copying backend/.env"
+fi
+
+# the project .env carries the database password that compose substitutes in
+if cp "$APP_DIR/.env" "$DEST/project-env-$STAMP.txt" 2>/dev/null; then
+  chmod 600 "$DEST/project-env-$STAMP.txt"
+  encrypt "$DEST/project-env-$STAMP.txt" || fail "encrypting the project .env"
+else
+  fail "copying the project .env"
+fi
+
 cp "$APP_DIR/docker-compose.yml" "$DEST/docker-compose-$STAMP.yml" 2>/dev/null
 cp "$APP_DIR/docker-compose.prod.yml" "$DEST/docker-compose-prod-$STAMP.yml" 2>/dev/null
-chmod 600 "$DEST"/backend-env-*.txt 2>/dev/null
 
 # ---------------------------------------------------------------- documents
 if rsync -a --delete --human-readable \

@@ -298,3 +298,5 @@ ALTER TABLE profiling_folders ADD COLUMN IF NOT EXISTS template_id UUID REFERENC
 CREATE INDEX IF NOT EXISTS idx_profiling_folders_template ON profiling_folders(template_id);
 
 ALTER TABLE generated_pdfs ADD COLUMN IF NOT EXISTS auto_closed BOOLEAN DEFAULT FALSE;
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER DEFAULT 0;

@@ -4,7 +4,7 @@ import fs from 'fs';
 import multer from 'multer';
 import { v4 as uuidv4 } from 'uuid';
 import { query } from '../db.js';
-import { requireAuth, requireRole } from '../middleware/auth.js';
+import { requireAuth, requireAuthOrQueryToken, requireRole } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -70,7 +70,7 @@ router.get('/', requireAuth, async (_req, res) => {
 });
 
 // ── GET /api/auto-reply/images/:imageId — serve image (public, UUIDs are non-guessable) ──
-router.get('/images/:imageId', async (req, res) => {
+router.get('/images/:imageId', requireAuthOrQueryToken, async (req, res) => {
   try {
     const row = await query(
       'SELECT file_path, original_name FROM auto_reply_images WHERE id = $1',

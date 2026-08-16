@@ -4,7 +4,7 @@ import fs from 'fs';
 import multer from 'multer';
 import { v4 as uuidv4 } from 'uuid';
 import { query } from '../db.js';
-import { requireAuth } from '../middleware/auth.js';
+import { requireAuth, requireAuthOrQueryToken } from '../middleware/auth.js';
 import { recordTicketCreated, updateTicketRow, isTicketSheetsEnabled } from '../services/ticketSheetService.js';
 import { emailNocNewTicket, isTicketMailEnabled } from '../services/ticketMailService.js';
 
@@ -261,7 +261,7 @@ router.post('/:id/messages', requireAuth, chatImageUpload.single('image'), async
 });
 
 // ── Serve a chat image (public by obscurity — message UUID is unguessable) ──
-router.get('/messages/:messageId/image', async (req, res) => {
+router.get('/messages/:messageId/image', requireAuthOrQueryToken, async (req, res) => {
   try {
     const row = await query(
       'SELECT image_path, image_name, mime_type FROM ticket_messages WHERE id = $1',

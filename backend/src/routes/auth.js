@@ -9,9 +9,58 @@ import { requireAuth } from '../middleware/auth.js';
 const router = express.Router();
 const allowedRoles = ['super_admin', 'admin', 'user'];
 
+// Anyone who could reach the API used to be able to create their own account
+// and read the whole shared queue. Registration is now closed; accounts come
+// from an admin. Set PUBLIC_REGISTRATION=true to reopen it.
+const publicRegistrationEnabled = String(process.env.PUBLIC_REGISTRATION || '').toLowerCase() === 'true';
+
+const MIN_PASSWORD_LENGTH = 10;
+
+export function checkPasswordStrength(password) {
+  const value = String(password || '');
+  if (value.length < MIN_PASSWORD_LENGTH) {
+    return `Password must be at least ${MIN_PASSWORD_LENGTH} characters`;
+  }
+  if (!/[A-Za-z]/.test(value) || !/[0-9]/.test(value)) {
+    return 'Password must contain both letters and numbers';
+  }
+  if (/^(?:password|welcome|imperial|qwerty|admin)/i.test(value)) {
+    return 'Password is too easy to guess';
+  }
+  return null;
+}
+
+// Failed logins are counted per account, so spraying one password across many
+// accounts from many IPs still trips the lock. Cleared by a successful login.
+const LOCKOUT_THRESHOLD = 8;
+const LOCKOUT_MINUTES = 15;
+const failedLogins = new Map();
+
+function lockoutState(key) {
+  const entry = failedLogins.get(key);
+  if (!entry) return { locked: false, count: 0 };
+  if (Date.now() - entry.first > LOCKOUT_MINUTES * 60 * 1000) {
+    failedLogins.delete(key);
+    return { locked: false, count: 0 };
+  }
+  return { locked: entry.count >= LOCKOUT_THRESHOLD, count: entry.count };
+}
+
+function noteFailedLogin(key) {
+  const entry = failedLogins.get(key);
+  if (!entry || Date.now() - entry.first > LOCKOUT_MINUTES * 60 * 1000) {
+    failedLogins.set(key, { count: 1, first: Date.now() });
+    return;
+  }
+  entry.count += 1;
+}
+
+// Per-IP ceiling is a blunt backstop; the per-account lockout below is what
+// actually stops password guessing, so this can stay generous enough that a
+// busy office behind one address is not locked out of its own portal.
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 20,
+  max: 60,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many requests, please try again later.' }
@@ -32,10 +81,19 @@ function mapUser(row) {
 
 router.post('/register', authLimiter, async (req, res) => {
   try {
+    if (!publicRegistrationEnabled) {
+      return res.status(403).json({ error: 'Registration is closed. Ask an admin to create your account.' });
+    }
+
     const { name, email, password, role } = req.body;
 
     if (!name || !email || !password) {
       return res.status(400).json({ error: 'name, email, and password are required' });
+    }
+
+    const weak = checkPasswordStrength(password);
+    if (weak) {
+      return res.status(400).json({ error: weak });
     }
 
     const normalizedEmail = String(email).toLowerCase().trim();
@@ -86,19 +144,28 @@ router.post('/login', authLimiter, async (req, res) => {
     }
 
     const normalizedLogin = loginValue.toLowerCase();
+
+    const lock = lockoutState(normalizedLogin);
+    if (lock.locked) {
+      return res.status(429).json({
+        error: `Too many failed attempts. Try again in ${LOCKOUT_MINUTES} minutes.`
+      });
+    }
+
     let result = await query(
-      'SELECT id, name, email, password_hash, role, avatar_url, favorite_template_id, last_active_at FROM users WHERE LOWER(email) = $1',
+      'SELECT id, name, email, password_hash, role, avatar_url, favorite_template_id, last_active_at, token_version FROM users WHERE LOWER(email) = $1',
       [normalizedLogin]
     );
 
     if (result.rowCount === 0) {
       result = await query(
-        'SELECT id, name, email, password_hash, role, avatar_url, favorite_template_id, last_active_at FROM users WHERE LOWER(name) = $1',
+        'SELECT id, name, email, password_hash, role, avatar_url, favorite_template_id, last_active_at, token_version FROM users WHERE LOWER(name) = $1',
         [normalizedLogin]
       );
     }
 
     if (result.rowCount === 0) {
+      noteFailedLogin(normalizedLogin);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
@@ -110,9 +177,11 @@ router.post('/login', authLimiter, async (req, res) => {
     const valid = await bcrypt.compare(password, user.password_hash);
 
     if (!valid) {
+      noteFailedLogin(normalizedLogin);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
+    failedLogins.delete(normalizedLogin);
     await query('UPDATE users SET last_active_at = NOW() WHERE id = $1', [user.id]);
 
     const token = jwt.sign(
@@ -120,10 +189,13 @@ router.post('/login', authLimiter, async (req, res) => {
         id: user.id,
         email: user.email,
         role: user.role,
-        name: user.name
+        name: user.name,
+        // Bumping a user's token_version invalidates every token they hold,
+        // which is what makes "sign out everywhere" and off-boarding work.
+        tv: user.token_version ?? 0
       },
       process.env.JWT_SECRET,
-      { expiresIn: remember_me ? '30d' : '12h' }
+      { expiresIn: remember_me ? '7d' : '12h' }
     );
 
     return res.json({
@@ -240,6 +312,11 @@ router.patch('/me/password', requireAuth, async (req, res) => {
     const valid = await bcrypt.compare(String(current_password), current.rows[0].password_hash);
     if (!valid) {
       return res.status(401).json({ error: 'Current password is incorrect' });
+    }
+
+    const weakPassword = checkPasswordStrength(new_password);
+    if (weakPassword) {
+      return res.status(400).json({ error: weakPassword });
     }
 
     const hash = await bcrypt.hash(String(new_password), 10);

@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { pool, query } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
+import { checkPasswordStrength } from './auth.js';
 
 const router = express.Router();
 
@@ -19,6 +20,11 @@ router.post('/', async (req, res) => {
 
     if (!['super_admin', 'admin', 'user'].includes(role)) {
       return res.status(400).json({ error: 'Invalid role' });
+    }
+
+    const weakPassword = checkPasswordStrength(password);
+    if (weakPassword) {
+      return res.status(400).json({ error: weakPassword });
     }
 
     if (role === 'super_admin' && req.user.role !== 'super_admin') {
@@ -61,8 +67,9 @@ router.get('/', async (_req, res) => {
 router.patch('/:userId/password', async (req, res) => {
   try {
     const { password } = req.body;
-    if (!password || String(password).length < 6) {
-      return res.status(400).json({ error: 'password is required and must be at least 6 chars' });
+    const weakPassword = checkPasswordStrength(password);
+    if (weakPassword) {
+      return res.status(400).json({ error: weakPassword });
     }
 
     const target = await query('SELECT id, role FROM users WHERE id = $1', [req.params.userId]);
@@ -75,8 +82,11 @@ router.patch('/:userId/password', async (req, res) => {
     }
 
     const hash = await bcrypt.hash(password, 10);
-    await query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, req.params.userId]);
-    return res.json({ success: true });
+    await query(
+      'UPDATE users SET password_hash = $1, token_version = COALESCE(token_version, 0) + 1 WHERE id = $2',
+      [hash, req.params.userId]
+    );
+    return res.json({ success: true, sessions_ended: true });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -93,10 +103,14 @@ router.post('/:userId/password/reset', async (req, res) => {
       return res.status(403).json({ error: 'Only super_admin can reset super_admin password' });
     }
 
-    const tempPassword = crypto.randomBytes(6).toString('base64url');
+    // long enough to satisfy the password rules the user will be held to
+    const tempPassword = `${crypto.randomBytes(6).toString('base64url')}${crypto.randomInt(10, 99)}`;
     const hash = await bcrypt.hash(tempPassword, 10);
-    await query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, req.params.userId]);
-    return res.json({ temp_password: tempPassword });
+    await query(
+      'UPDATE users SET password_hash = $1, token_version = COALESCE(token_version, 0) + 1 WHERE id = $2',
+      [hash, req.params.userId]
+    );
+    return res.json({ temp_password: tempPassword, sessions_ended: true });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -199,6 +213,23 @@ router.delete('/:userId', async (req, res) => {
     return res.status(500).json({ error: err.message });
   } finally {
     client.release();
+  }
+});
+
+// POST /api/users/:userId/sign-out-everywhere - kill every token an account holds
+router.post('/:userId/sign-out-everywhere', async (req, res) => {
+  try {
+    const target = await query('SELECT id, name, role FROM users WHERE id = $1', [req.params.userId]);
+    if (target.rowCount === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    if (target.rows[0].role === 'super_admin' && req.user.role !== 'super_admin') {
+      return res.status(403).json({ error: 'Only super_admin can end super_admin sessions' });
+    }
+    await query('UPDATE users SET token_version = COALESCE(token_version, 0) + 1 WHERE id = $1', [req.params.userId]);
+    return res.json({ success: true, user: target.rows[0].name });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
   }
 });
 

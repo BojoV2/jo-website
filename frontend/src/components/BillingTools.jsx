@@ -418,7 +418,7 @@ function AutoReply({ token }) {
   }
 
   function imageUrl(imageId) {
-    return `${getApiBase()}/auto-reply/images/${imageId}`;
+    return `${getApiBase()}/auto-reply/images/${imageId}?t=${encodeURIComponent(token || '')}`;
   }
 
   // Sort so pinned message appears first

@@ -2639,10 +2639,10 @@ export default function AdminPanel({
                   {msg.images.map((img) => (
                     <div key={img.id} className="ar-thumb-wrap">
                       <img
-                        src={`${getApiBase()}/auto-reply/images/${img.id}`}
+                        src={`${getApiBase()}/auto-reply/images/${img.id}?t=${encodeURIComponent(token || '')}`}
                         alt={img.original_name || 'image'}
                         className="ar-thumb"
-                        onClick={() => setArLightbox({ src: `${getApiBase()}/auto-reply/images/${img.id}`, alt: img.original_name || 'image' })}
+                        onClick={() => setArLightbox({ src: `${getApiBase()}/auto-reply/images/${img.id}?t=${encodeURIComponent(token || '')}`, alt: img.original_name || 'image' })}
                         title="Click to enlarge"
                       />
                       <button
