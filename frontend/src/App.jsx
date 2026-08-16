@@ -2,8 +2,32 @@ import { Suspense, lazy, useEffect, useState } from 'react';
 import { apiRequest } from './api.js';
 import LoginForm from './components/LoginForm.jsx';
 
-const AdminPanel = lazy(() => import('./components/AdminPanel.jsx'));
-const UserPanel = lazy(() => import('./components/UserPanel.jsx'));
+/* A deploy replaces the hashed chunk files, so a tab that was already open
+   asks for a chunk that no longer exists. The dev server answers with
+   index.html, which fails as "Expected a JavaScript module script" and the
+   panel never renders. Retry once by reloading (guarded so it can never loop). */
+const CHUNK_RELOAD_KEY = 'pdfwf.chunkReload';
+
+function lazyWithReload(loader) {
+  return lazy(() =>
+    loader()
+      .then((mod) => {
+        sessionStorage.removeItem(CHUNK_RELOAD_KEY);
+        return mod;
+      })
+      .catch((error) => {
+        if (!sessionStorage.getItem(CHUNK_RELOAD_KEY)) {
+          sessionStorage.setItem(CHUNK_RELOAD_KEY, '1');
+          window.location.reload();
+          return new Promise(() => {});
+        }
+        throw error;
+      })
+  );
+}
+
+const AdminPanel = lazyWithReload(() => import('./components/AdminPanel.jsx'));
+const UserPanel = lazyWithReload(() => import('./components/UserPanel.jsx'));
 
 function readSession() {
   const raw = localStorage.getItem('pdfwf.session') || sessionStorage.getItem('pdfwf.session');
