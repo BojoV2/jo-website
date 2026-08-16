@@ -425,9 +425,15 @@ export default function UserPanel({
       },
       {
         label: 'Done',
-        value: analytics.done_count ?? 0,
-        meta: 'Completed',
+        value: analytics.done_confirmed_count ?? analytics.done_count ?? 0,
+        meta: 'Closed by staff',
         tone: 'success'
+      },
+      {
+        label: 'Auto-closed',
+        value: analytics.auto_closed_count ?? 0,
+        meta: 'Aged out after 30 days',
+        tone: 'muted'
       },
       {
         label: 'Cancelled',
@@ -1056,6 +1062,10 @@ export default function UserPanel({
     let status = item.status;
     let rescheduleDate = rowEdit.reschedule_date ? new Date(rowEdit.reschedule_date).toISOString() : null;
     if (rescheduleDate) status = 'rescheduled';
+    if (status === 'rescheduled' && !rescheduleDate) {
+      setMessage('Pick a reschedule date before saving.');
+      return;
+    }
     setLoading(true);
     setMessage('');
     try {
@@ -1741,6 +1751,11 @@ export default function UserPanel({
                             ))}
                           </select>
                           <button type="button" onClick={() => applyStatusChange(item)}>Move</button>
+                          {item.auto_closed && (
+                            <span className="auto-closed-tag" title="Closed automatically after 30 days in pending, not by a person">
+                              auto
+                            </span>
+                          )}
                           <button type="button" onClick={() => startRowEdit(item)}>Edit</button>
                           <button type="button" onClick={() => openWithTokenInNewTab(`/generated-pdfs/${item.id}/download`, token)}>Open PDF</button>
                           <button type="button" onClick={() => toggleRowAttachments(item.id)}>

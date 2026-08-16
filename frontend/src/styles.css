@@ -5592,3 +5592,207 @@ tr.row-editing {
   .user-main-topbar { flex-wrap: wrap; }
   .user-topbar-template select { min-width: 0; width: 100%; }
 }
+
+/* ---------- auto-closed marker ----------
+   The 30-day sweeper closes records nobody touched; they should not read as
+   work someone finished. */
+
+.auto-closed-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(120, 130, 145, 0.18);
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* ==========================================================================
+   Client Lookup - one customer, every document, file and ticket.
+   ========================================================================== */
+
+.cl { display: grid; gap: 16px; }
+
+.cl-searchbar {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.cl-field {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  flex: 1 1 320px;
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 600;
+}
+
+.cl-field > span {
+  font-size: 0.72rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--shell-muted);
+}
+
+.cl-field input {
+  width: 100%;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 0.92rem;
+}
+
+.cl-searchbar button {
+  width: auto;
+  margin: 0;
+  padding: 9px 16px;
+  border-radius: 10px;
+  font-size: 0.86rem;
+}
+
+.cl-error {
+  margin: 0;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: rgba(201, 52, 52, 0.12);
+  color: var(--danger);
+  font-size: 0.88rem;
+}
+
+.cl-results { display: grid; gap: 8px; }
+
+.cl-result {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--shell-border);
+  border-radius: 14px;
+  background: var(--shell-card-bg);
+  text-align: left;
+  cursor: pointer;
+}
+
+.cl-result:hover { border-color: rgba(44, 130, 237, 0.4); }
+
+.cl-result-name {
+  font-weight: 700;
+  font-size: 1rem;
+  color: var(--shell-heading);
+}
+
+.cl-result-meta { font-size: 0.84rem; color: var(--shell-muted); }
+
+.cl-result-stats {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 0.8rem;
+}
+
+.cl-profile { display: grid; gap: 16px; }
+
+.cl-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 16px 18px;
+  border: 1px solid var(--shell-border);
+  border-radius: 16px;
+  background: var(--shell-card-bg);
+}
+
+.cl-head h3 { margin: 0; color: var(--shell-heading); }
+.cl-head p { margin: 2px 0 0; font-size: 0.88rem; }
+.cl-head-sub { font-size: 0.8rem; }
+
+.cl-stats {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.cl-stat {
+  display: grid;
+  gap: 1px;
+  min-width: 92px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: var(--shell-main-bg);
+  border: 1px solid var(--shell-border);
+}
+
+.cl-stat span {
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--shell-muted);
+}
+
+.cl-stat strong {
+  font-size: 1.2rem;
+  color: var(--shell-heading);
+  font-variant-numeric: tabular-nums;
+}
+
+.cl-section {
+  display: grid;
+  gap: 10px;
+  padding: 16px 18px;
+  border: 1px solid var(--shell-border);
+  border-radius: 16px;
+  background: var(--shell-card-bg);
+}
+
+.cl-section h4 { margin: 0; color: var(--shell-heading); font-size: 1rem; }
+
+.cl-section .actions button {
+  width: auto;
+  margin: 0;
+  padding: 5px 12px;
+  border-radius: 8px;
+  font-size: 0.78rem;
+}
+
+.cl-chip {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: rgba(120, 130, 145, 0.16);
+  color: var(--muted);
+}
+
+.cl-chip--pending, .cl-chip--open { background: rgba(214, 158, 46, 0.18); color: #92610a; }
+.cl-chip--done, .cl-chip--closed { background: rgba(34, 197, 94, 0.16); color: #16a34a; }
+.cl-chip--cancelled { background: rgba(201, 52, 52, 0.14); color: var(--danger); }
+.cl-chip--rescheduled { background: rgba(30, 93, 184, 0.14); color: var(--primary-strong); }
+
+[data-theme='dark'] .cl-chip--pending,
+[data-theme='dark'] .cl-chip--open { color: #e5b45c; }
+
+/* ---------- analytics strip: seven tiles since Done split from Auto-closed ---------- */
+
+.user-main .analytics-strip,
+.admin-shell .analytics-strip {
+  grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+}
+
+@media (max-width: 1240px) {
+  .user-main .analytics-strip,
+  .admin-shell .analytics-strip {
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  }
+}

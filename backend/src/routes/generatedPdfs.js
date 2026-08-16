@@ -144,6 +144,7 @@ async function autoMovePendingToDone() {
   const moved = await query(
     `UPDATE generated_pdfs
      SET status = 'done',
+         auto_closed = TRUE,
          status_note = CASE
            WHEN status_note IS NULL OR status_note = '' THEN $1
            ELSE status_note
@@ -365,7 +366,7 @@ router.get('/', requireAuth, async (req, res) => {
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     const result = await query(
-      `SELECT g.id, g.template_id, g.user_id, g.file_path, g.submitted_data, g.status, g.status_note, g.reschedule_date, g.created_at, g.updated_at,
+      `SELECT g.id, g.template_id, g.user_id, g.file_path, g.submitted_data, g.status, g.status_note, g.auto_closed, g.reschedule_date, g.created_at, g.updated_at,
               t.title AS template_title,
               u.name AS user_name,
               u.avatar_url AS user_avatar_url
@@ -398,9 +399,11 @@ router.get('/analytics/template/:templateId', requireAuth, async (req, res) => {
           COUNT(*) FILTER (WHERE created_at >= date_trunc('day', NOW()))::int AS today_generated,
           COUNT(*) FILTER (WHERE status = 'pending')::int AS pending_backlog,
           COUNT(*) FILTER (WHERE status = 'done')::int AS done_count,
+          COUNT(*) FILTER (WHERE status = 'done' AND NOT COALESCE(auto_closed, FALSE))::int AS done_confirmed_count,
+          COUNT(*) FILTER (WHERE COALESCE(auto_closed, FALSE))::int AS auto_closed_count,
           COUNT(*) FILTER (WHERE status = 'cancelled')::int AS cancelled_count,
           COUNT(*) FILTER (WHERE status = 'rescheduled')::int AS rescheduled_count,
-          COALESCE(AVG(EXTRACT(EPOCH FROM (updated_at - created_at))) FILTER (WHERE status = 'done'), 0) AS avg_processing_seconds,
+          COALESCE(AVG(EXTRACT(EPOCH FROM (updated_at - created_at))) FILTER (WHERE status = 'done' AND NOT COALESCE(auto_closed, FALSE)), 0) AS avg_processing_seconds,
           CASE WHEN COUNT(*) = 0 THEN 0
                ELSE (COUNT(*) FILTER (WHERE status = 'cancelled')::float / COUNT(*)::float) * 100
           END AS cancellation_rate
@@ -586,7 +589,7 @@ router.get('/export', requireAuth, async (req, res) => {
     }
 
     const result = await query(
-      `SELECT g.id, g.template_id, g.user_id, g.file_path, g.submitted_data, g.status, g.status_note, g.reschedule_date, g.created_at, g.updated_at,
+      `SELECT g.id, g.template_id, g.user_id, g.file_path, g.submitted_data, g.status, g.status_note, g.auto_closed, g.reschedule_date, g.created_at, g.updated_at,
               t.title AS template_title
        FROM generated_pdfs g
        LEFT JOIN pdf_templates t ON t.id = g.template_id
@@ -672,6 +675,11 @@ router.patch('/:generatedPdfId/status', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'reschedule_date is only allowed for rescheduled status' });
     }
 
+    // A reschedule without a date is not a reschedule - it is a lost record.
+    if (status === 'rescheduled' && !reschedule_date) {
+      return res.status(400).json({ error: 'A reschedule date is required when moving a record to rescheduled' });
+    }
+
     const current = await query('SELECT id, user_id, status FROM generated_pdfs WHERE id = $1', [req.params.generatedPdfId]);
     if (current.rowCount === 0) {
       return res.status(404).json({ error: 'Generated PDF not found' });
@@ -685,6 +693,7 @@ router.patch('/:generatedPdfId/status', requireAuth, async (req, res) => {
     const updated = await query(
       `UPDATE generated_pdfs
        SET status = $1,
+           auto_closed = FALSE,
            status_note = $2,
            reschedule_date = $3,
            updated_at = NOW()
@@ -718,6 +727,11 @@ router.post('/bulk-status', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'reschedule_date is only allowed for rescheduled status' });
     }
 
+    // A reschedule without a date is not a reschedule - it is a lost record.
+    if (status === 'rescheduled' && !reschedule_date) {
+      return res.status(400).json({ error: 'A reschedule date is required when moving a record to rescheduled' });
+    }
+
     const placeholders = ids.map((_, i) => `$${i + 1}`).join(',');
     const ownershipParams = [...ids];
     let ownershipWhere = `id IN (${placeholders})`;
@@ -746,6 +760,7 @@ router.post('/bulk-status', requireAuth, async (req, res) => {
       updated = await client.query(
         `UPDATE generated_pdfs
          SET status = $${updateParams.length - 2},
+             auto_closed = FALSE,
              status_note = $${updateParams.length - 1},
              reschedule_date = $${updateParams.length},
              updated_at = NOW()

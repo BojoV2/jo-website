@@ -296,3 +296,5 @@ CREATE INDEX IF NOT EXISTS idx_profiling_files_folder ON profiling_files(folder_
 ALTER TABLE profiling_folders ADD COLUMN IF NOT EXISTS template_id UUID REFERENCES pdf_templates(id) ON DELETE CASCADE;
 
 CREATE INDEX IF NOT EXISTS idx_profiling_folders_template ON profiling_folders(template_id);
+
+ALTER TABLE generated_pdfs ADD COLUMN IF NOT EXISTS auto_closed BOOLEAN DEFAULT FALSE;

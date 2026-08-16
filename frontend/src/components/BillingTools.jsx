@@ -4,6 +4,7 @@ import QRCode from 'qrcode';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import Ticketing from './Ticketing.jsx';
+import ClientLookup from './ClientLookup.jsx';
 
 // Fallback: read token directly from session storage in case the prop chain breaks
 function getSessionToken() {
@@ -23,6 +24,7 @@ const PLANS = [
 ];
 
 const TOOLS = [
+  { id: 'client-lookup',     label: 'Client Lookup'       },
   { id: 'adjustment',        label: 'Bill Adjustment'     },
   { id: 'calculator',        label: 'Bill Calculator'     },
   { id: 'contract',          label: 'Contract End Date'   },
@@ -34,6 +36,11 @@ const TOOLS = [
 ];
 
 const HOW_TO_USE = {
+  'client-lookup': [
+    'Type a client name, contact number, or order / account number.',
+    'Pick the client from the results.',
+    'Every document, attached file, and ticket filed under that name is listed together.',
+  ],
   adjustment: [
     'Select the customer\'s internet plan.',
     'Enter the total days and/or hours the service was unavailable.',
@@ -994,6 +1001,7 @@ function ImperialTracking({ token }) {
 
 // ── Root component ────────────────────────────────────────────────
 const TOOL_COMPONENTS = {
+  'client-lookup':     ClientLookup,
   adjustment:          BillAdjustment,
   calculator:          BillCalculator,
   contract:            ContractEndDate,
@@ -1005,7 +1013,7 @@ const TOOL_COMPONENTS = {
 };
 
 export default function BillingTools({ token }) {
-  const [activeTool, setActiveTool] = useState('adjustment');
+  const [activeTool, setActiveTool] = useState('client-lookup');
   const ActiveComponent = TOOL_COMPONENTS[activeTool];
   const effectiveToken = token || getSessionToken();
 

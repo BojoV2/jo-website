@@ -322,9 +322,15 @@ export default function AdminPanel({
       },
       {
         label: 'Done',
-        value: analytics.done_count ?? 0,
-        meta: 'Completed',
+        value: analytics.done_confirmed_count ?? analytics.done_count ?? 0,
+        meta: 'Closed by staff',
         tone: 'success'
+      },
+      {
+        label: 'Auto-closed',
+        value: analytics.auto_closed_count ?? 0,
+        meta: 'Aged out after 30 days',
+        tone: 'muted'
       },
       {
         label: 'Cancelled',
@@ -1226,8 +1232,12 @@ export default function AdminPanel({
     let rescheduleDate = null;
 
     if (status === 'rescheduled') {
-      const raw = window.prompt('Reschedule date/time (YYYY-MM-DDTHH:mm:ss), optional:', '');
-      rescheduleDate = raw || null;
+      const raw = window.prompt('Reschedule date/time (YYYY-MM-DDTHH:mm), required:', '');
+      if (!raw) {
+        setMessage('A reschedule date is required. Nothing was changed.');
+        return;
+      }
+      rescheduleDate = raw;
     }
 
     setBusy(true);
