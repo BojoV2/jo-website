@@ -1261,14 +1261,32 @@ export default function UserPanel({
               </>
             )}
           </div>
-          <button
-            type="button"
-            className="avatar-trigger user-main-settings"
-            onClick={() => setIsSidebarOpen(true)}
-            title="Open settings"
-          >
-            <img className="avatar avatar-md" src={resolveAvatar(user)} alt={user.name} />
-          </button>
+          <div className="user-topbar-actions">
+            {activeView === 'analytics' && (
+              <label className="user-topbar-template">
+                <span>Template</span>
+                <select
+                  id="user-analytics-template"
+                  name="analytics_template"
+                  value={selectedTemplateId}
+                  onChange={(e) => setSelectedTemplateId(e.target.value)}
+                >
+                  <option value="">Select template</option>
+                  {orderedTemplates.map((tpl) => (
+                    <option key={tpl.id} value={tpl.id}>{tpl.title}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <button
+              type="button"
+              className="avatar-trigger user-main-settings"
+              onClick={() => setIsSidebarOpen(true)}
+              title="Open settings"
+            >
+              <img className="avatar avatar-md" src={resolveAvatar(user)} alt={user.name} />
+            </button>
+          </div>
         </header>
 
       {message && (

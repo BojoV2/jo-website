@@ -5545,3 +5545,50 @@ tr.row-editing {
 .user-main #user-section-history .table-wrap {
   overflow-x: auto;
 }
+
+/* ---------- user portal: template picker in the Analytics header ----------
+   Same control the admin console carries, so switching what you are looking
+   at works the same way on both sides. */
+
+.user-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 0 0 auto;
+}
+
+.user-topbar-template {
+  display: grid;
+  gap: 2px;
+  width: auto;
+  margin: 0;
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 600;
+}
+
+.user-topbar-template > span {
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--shell-muted);
+}
+
+.user-topbar-template select {
+  width: auto;
+  min-width: 210px;
+  max-width: 320px;
+  margin: 0;
+  padding: 7px 10px;
+  border-radius: 10px;
+  font-size: 0.86rem;
+}
+
+@media (max-width: 1240px) {
+  .user-topbar-template select { min-width: 160px; }
+}
+
+@media (max-width: 900px) {
+  .user-main-topbar { flex-wrap: wrap; }
+  .user-topbar-template select { min-width: 0; width: 100%; }
+}
