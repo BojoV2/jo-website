@@ -22,8 +22,8 @@ services:
     environment:
       DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@db:5432/pdf_workflow
       STORAGE_ROOT: /app/storage
-    ports:
-      - "8080:8080"
+    expose:
+      - "8080"
     volumes:
       - ./backend:/app
       - /app/node_modules
@@ -37,8 +37,8 @@ services:
     restart: unless-stopped
     depends_on:
       - backend
-    ports:
-      - "3000:3000"
+    expose:
+      - "3000"
     volumes:
       - ./frontend:/app
       - /app/node_modules

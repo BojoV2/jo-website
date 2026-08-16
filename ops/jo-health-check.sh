@@ -34,13 +34,19 @@ info "peering-manager containers running: $pmup/7"
 
 echo
 echo "== JO website =="
-be=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://localhost:8080/health)
+be=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 https://localhost/health)
 [ "$be" = "200" ] && ok "backend /health 200" || bad "backend /health = $be"
-fe=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 http://localhost:3000/)
-[ "$fe" = "200" ] && ok "frontend / 200" || bad "frontend / = $fe (a fresh boot rebuilds it - can take ~2 min)"
-asset=$(curl -s --max-time 10 http://localhost:3000/ | grep -o 'assets/index-[^"]*\.js' | head -1)
+fe=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 20 https://localhost/)
+[ "$fe" = "200" ] && ok "frontend / 200 over https" || bad "frontend / = $fe (a fresh boot rebuilds it - can take ~2 min)"
+redir=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://localhost:3000/)
+[ "$redir" = "301" ] && ok "plaintext :3000 redirects to https" || bad "plaintext :3000 = $redir (expected a 301)"
+api_redir=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://localhost:8080/health)
+[ "$api_redir" = "308" ] && ok "plaintext :8080 redirects to https" || bad "plaintext :8080 = $api_redir (expected a 308)"
+cert_days=$(( ( $(date -d "$(echo | openssl s_client -connect localhost:443 2>/dev/null | openssl x509 -noout -enddate | cut -d= -f2)" +%s) - $(date +%s) ) / 86400 ))
+[ "$cert_days" -gt 30 ] && ok "TLS certificate valid for $cert_days more days" || bad "TLS certificate expires in $cert_days days"
+asset=$(curl -sk --max-time 10 https://localhost/ | grep -o 'assets/index-[^"]*\.js' | head -1)
 [ -n "$asset" ] && ok "index references $asset" || bad "no hashed asset in index.html"
-login=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 -X POST http://localhost:8080/api/auth/login \
+login=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 -X POST https://localhost/api/auth/login \
         -H 'Content-Type: application/json' -d '{"email":"__probe__","password":"__probe__"}')
 [ "$login" = "401" ] || [ "$login" = "400" ] && ok "auth endpoint answering ($login on bad creds)" || bad "auth endpoint = $login"
 
