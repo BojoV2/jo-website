@@ -65,7 +65,7 @@ if [ -f /home/jo-ssh/backups/last-run.txt ]; then
     OK*) if [ "$age_h" -lt 30 ]; then ok "last backup $status"; else bad "last backup is ${age_h}h old: $status"; fi ;;
     *)   bad "last backup reported a failure: $status" ;;
   esac
-  info "off-box copy: 10.86.0.186:/home/imperial999/jo-backups"
+  info "off-box copy: $(sed -n 's/.*host=//p' /home/jo-ssh/backups/last-run.txt):/home/zabbix/jo-backups (encrypted)"
 else
   bad "no backup has ever run (expected /home/jo-ssh/backups/last-run.txt)"
 fi
