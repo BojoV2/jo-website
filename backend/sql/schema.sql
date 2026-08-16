@@ -292,3 +292,7 @@ CREATE TABLE IF NOT EXISTS profiling_files (
 );
 
 CREATE INDEX IF NOT EXISTS idx_profiling_files_folder ON profiling_files(folder_id);
+
+ALTER TABLE profiling_folders ADD COLUMN IF NOT EXISTS template_id UUID REFERENCES pdf_templates(id) ON DELETE CASCADE;
+
+CREATE INDEX IF NOT EXISTS idx_profiling_folders_template ON profiling_folders(template_id);

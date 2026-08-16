@@ -103,61 +103,112 @@ async function isDescendant(folderId, targetId) {
   return result.rowCount > 0;
 }
 
-// Year and month folders are materialised on demand: every year/month that has
-// generated PDFs gets a row, plus the current year and month so the archive is
-// ready before the first PDF of a new period lands. Rows (not virtual folders)
-// because admins lock and hide them.
+// The archive is Template > Year > Month. Every template owns a root folder,
+// and a year/month row appears for each period that template has generated PDFs
+// in, plus the current period so a new month (and a new year) shows up on its
+// own. Rows rather than virtual folders because admins lock and hide them.
 async function ensureAutoFolders() {
-  const periods = await query(
-    `SELECT DISTINCT EXTRACT(YEAR FROM created_at)::int AS year,
-                     EXTRACT(MONTH FROM created_at)::int AS month
-     FROM generated_pdfs
-     WHERE created_at IS NOT NULL
-     UNION
-     SELECT EXTRACT(YEAR FROM CURRENT_DATE)::int, EXTRACT(MONTH FROM CURRENT_DATE)::int`
-  );
+  const [templates, periods, existing] = await Promise.all([
+    query('SELECT id, title FROM pdf_templates ORDER BY created_at ASC'),
+    query(
+      `SELECT DISTINCT template_id,
+              EXTRACT(YEAR FROM created_at)::int AS year,
+              EXTRACT(MONTH FROM created_at)::int AS month
+       FROM generated_pdfs
+       WHERE created_at IS NOT NULL AND template_id IS NOT NULL`
+    ),
+    query("SELECT id, parent_id, name, kind, template_id, year, month FROM profiling_folders WHERE kind IN ('template', 'auto')")
+  ]);
 
-  const years = [...new Set(periods.rows.map((row) => row.year))];
-  const yearIds = new Map();
+  const key = (templateId, year, month) => `${templateId}|${year === null || year === undefined ? '' : year}|${month === null || month === undefined ? '' : month}`;
+  const known = new Map();
+  for (const row of existing.rows) {
+    known.set(key(row.template_id, row.year, row.month), row);
+  }
 
-  for (const year of years) {
-    const existing = await query(
-      "SELECT id FROM profiling_folders WHERE kind = 'auto' AND year = $1 AND month IS NULL",
-      [year]
-    );
-    if (existing.rowCount > 0) {
-      yearIds.set(year, existing.rows[0].id);
-      continue;
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth() + 1;
+
+  async function ensureFolder({ templateId, parentId, name, kind, year = null, month = null }) {
+    const cached = known.get(key(templateId, year, month));
+    if (cached) {
+      if (cached.name !== name && kind === 'template') {
+        // the template was renamed - keep its folder label in step
+        await query('UPDATE profiling_folders SET name = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', [name, cached.id]);
+        cached.name = name;
+      }
+      return cached.id;
     }
     const id = uuidv4();
-    await query(
-      `INSERT INTO profiling_folders (id, parent_id, name, kind, year, month)
-       VALUES ($1, NULL, $2, 'auto', $3, NULL)
-       ON CONFLICT DO NOTHING`,
-      [id, String(year), year]
-    );
-    const created = await query(
-      "SELECT id FROM profiling_folders WHERE kind = 'auto' AND year = $1 AND month IS NULL",
-      [year]
-    );
-    yearIds.set(year, created.rows[0]?.id || id);
+    try {
+      await query(
+        `INSERT INTO profiling_folders (id, parent_id, name, kind, template_id, year, month)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [id, parentId, name, kind, templateId, year, month]
+      );
+      known.set(key(templateId, year, month), { id, parent_id: parentId, name, kind, template_id: templateId, year, month });
+      return id;
+    } catch (err) {
+      // two templates with the same title - suffix so both archives exist
+      const fallbackName = `${name} (${String(templateId).slice(0, 4)})`;
+      await query(
+        `INSERT INTO profiling_folders (id, parent_id, name, kind, template_id, year, month)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT DO NOTHING`,
+        [id, parentId, fallbackName, kind, templateId, year, month]
+      );
+      known.set(key(templateId, year, month), { id, parent_id: parentId, name: fallbackName, kind, template_id: templateId, year, month });
+      return id;
+    }
   }
 
-  for (const row of periods.rows) {
-    const parentId = yearIds.get(row.year);
-    if (!parentId) continue;
-    const existing = await query(
-      "SELECT id FROM profiling_folders WHERE kind = 'auto' AND year = $1 AND month = $2",
-      [row.year, row.month]
-    );
-    if (existing.rowCount > 0) continue;
-    await query(
-      `INSERT INTO profiling_folders (id, parent_id, name, kind, year, month)
-       VALUES ($1, $2, $3, 'auto', $4, $5)
-       ON CONFLICT DO NOTHING`,
-      [uuidv4(), parentId, MONTH_NAMES[row.month - 1], row.year, row.month]
-    );
+  for (const template of templates.rows) {
+    const rootId = await ensureFolder({
+      templateId: template.id,
+      parentId: null,
+      name: template.title,
+      kind: 'template'
+    });
+
+    const templatePeriods = periods.rows.filter((row) => row.template_id === template.id);
+    const wanted = [...templatePeriods, { template_id: template.id, year: currentYear, month: currentMonth }];
+    const years = [...new Set(wanted.map((row) => row.year))];
+
+    const yearIds = new Map();
+    for (const year of years) {
+      yearIds.set(
+        year,
+        await ensureFolder({
+          templateId: template.id,
+          parentId: rootId,
+          name: String(year),
+          kind: 'auto',
+          year
+        })
+      );
+    }
+
+    const seen = new Set();
+    for (const row of wanted) {
+      const monthKey = `${row.year}-${row.month}`;
+      if (seen.has(monthKey)) continue;
+      seen.add(monthKey);
+      await ensureFolder({
+        templateId: template.id,
+        parentId: yearIds.get(row.year),
+        name: MONTH_NAMES[row.month - 1],
+        kind: 'auto',
+        year: row.year,
+        month: row.month
+      });
+    }
   }
+}
+
+// Called right after a template is uploaded so its archive exists immediately.
+export async function ensureProfilingForTemplate() {
+  await ensureAutoFolders();
 }
 
 function mapFolder(row) {
@@ -173,8 +224,10 @@ function mapFolder(row) {
     created_at: row.created_at,
     created_by: row.created_by,
     created_by_name: row.created_by_name || null,
+    template_id: row.template_id,
     folder_count: Number(row.folder_count || 0),
-    file_count: Number(row.file_count || 0)
+    file_count: Number(row.file_count || 0),
+    generated_count: Number(row.generated_count || 0)
   };
 }
 
@@ -182,7 +235,22 @@ async function listChildFolders(parentId, includeHidden) {
   const result = await query(
     `SELECT f.*, u.name AS created_by_name,
             (SELECT COUNT(*) FROM profiling_folders c WHERE c.parent_id = f.id) AS folder_count,
-            (SELECT COUNT(*) FROM profiling_files fi WHERE fi.folder_id = f.id) AS file_count
+            (SELECT COUNT(*) FROM profiling_files fi WHERE fi.folder_id = f.id) AS file_count,
+            CASE
+              WHEN f.template_id IS NULL THEN 0
+              WHEN f.kind = 'auto' AND f.month IS NOT NULL THEN (
+                SELECT COUNT(*) FROM generated_pdfs g
+                WHERE g.template_id = f.template_id
+                  AND EXTRACT(YEAR FROM g.created_at) = f.year
+                  AND EXTRACT(MONTH FROM g.created_at) = f.month)
+              WHEN f.kind = 'auto' THEN (
+                SELECT COUNT(*) FROM generated_pdfs g
+                WHERE g.template_id = f.template_id
+                  AND EXTRACT(YEAR FROM g.created_at) = f.year)
+              WHEN f.kind = 'template' THEN (
+                SELECT COUNT(*) FROM generated_pdfs g WHERE g.template_id = f.template_id)
+              ELSE 0
+            END AS generated_count
      FROM profiling_folders f
      LEFT JOIN users u ON u.id = f.created_by
      WHERE ${parentId ? 'f.parent_id = $1' : 'f.parent_id IS NULL'}
@@ -220,23 +288,44 @@ async function listManualFiles(folderId) {
 // The generated PDFs of an auto month are listed, never copied - the archive is
 // a view over generated_pdfs, so nothing is duplicated on disk.
 async function listGeneratedFiles(folder) {
-  if (folder.kind !== 'auto' || !folder.year || !folder.month) return [];
+  if (folder.kind !== 'auto' || !folder.year || !folder.month || !folder.template_id) return [];
   const result = await query(
-    `SELECT g.id, g.file_path, g.created_at, g.status, g.submitted_data,
+    `SELECT g.id, g.file_path, g.created_at, g.status,
+            COALESCE(
+              NULLIF(TRIM(g.submitted_data->>'Name'), ''),
+              NULLIF(TRIM(g.submitted_data->>'name'), ''),
+              NULLIF(TRIM(g.submitted_data->>'Relocation name'), ''),
+              NULLIF(TRIM(g.submitted_data->>'Client Name'), ''),
+              NULLIF(TRIM(g.submitted_data->>'Customer Name'), ''),
+              NULLIF(TRIM(g.submitted_data->>'Subscriber'), '')
+            ) AS client_name,
+            COALESCE(
+              NULLIF(TRIM(g.submitted_data->>'Order Number'), ''),
+              NULLIF(TRIM(g.submitted_data->>'Order number'), ''),
+              NULLIF(TRIM(g.submitted_data->>'Application number'), ''),
+              NULLIF(TRIM(g.submitted_data->>'Account ID'), ''),
+              NULLIF(TRIM(g.submitted_data->>'Account number'), ''),
+              NULLIF(TRIM(g.submitted_data->>'Account No.'), '')
+            ) AS reference,
             t.title AS template_title, u.name AS owner_name
      FROM generated_pdfs g
      LEFT JOIN pdf_templates t ON t.id = g.template_id
      LEFT JOIN users u ON u.id = g.user_id
-     WHERE EXTRACT(YEAR FROM g.created_at) = $1 AND EXTRACT(MONTH FROM g.created_at) = $2
+     WHERE g.template_id = $1
+       AND EXTRACT(YEAR FROM g.created_at) = $2
+       AND EXTRACT(MONTH FROM g.created_at) = $3
      ORDER BY g.created_at DESC`,
-    [folder.year, folder.month]
+    [folder.template_id, folder.year, folder.month]
   );
   return result.rows.map((row) => ({
     id: row.id,
     source: 'generated',
-    title: row.template_title || 'Generated PDF',
-    date_installed: null,
-    original_name: path.basename(row.file_path || ''),
+    // Named for the person the document is about, not the stored file name.
+    title: row.client_name || row.template_title || 'Generated PDF',
+    reference: row.reference,
+    template_title: row.template_title,
+    date_installed: row.created_at,
+    original_name: null,
     mime_type: 'application/pdf',
     size_bytes: null,
     status: row.status,

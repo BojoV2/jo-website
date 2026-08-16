@@ -5424,3 +5424,67 @@ tr.row-editing {
   border-radius: 9px;
   font-size: 0.82rem;
 }
+
+/* ---------- profiling: template folders + in-app dialogs ---------- */
+
+.pf-folder-icon--template {
+  background: linear-gradient(135deg, #7c5cf0 0%, #5b3fd1 100%);
+}
+
+.pf-badge--template { background: rgba(124, 92, 240, 0.16); color: #6d4ade; }
+
+[data-theme='dark'] .pf-badge--template { color: #b4a1ff; }
+
+.pf-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(9, 18, 30, 0.55);
+  backdrop-filter: blur(3px);
+}
+
+.pf-modal {
+  width: min(460px, 100%);
+  display: grid;
+  gap: 14px;
+  padding: 20px 22px;
+  border-radius: 18px;
+  border: 1px solid var(--shell-border);
+  background: var(--shell-card-bg);
+  box-shadow: 0 30px 70px rgba(10, 25, 45, 0.35);
+}
+
+.pf-modal h4 {
+  margin: 0;
+  color: var(--shell-heading);
+  font-size: 1.05rem;
+}
+
+.pf-modal p { margin: 0; font-size: 0.9rem; }
+
+.pf-modal select,
+.pf-modal input {
+  width: 100%;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 0.92rem;
+}
+
+.pf-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.pf-modal-actions button {
+  width: auto;
+  margin: 0;
+  padding: 9px 16px;
+  border-radius: 10px;
+  font-size: 0.88rem;
+}

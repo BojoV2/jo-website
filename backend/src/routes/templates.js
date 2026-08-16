@@ -6,6 +6,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { query } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { ensureTemplateSpreadsheet, isGoogleSheetsEnabled } from '../services/googleSheetsService.js';
+import { ensureProfilingForTemplate } from './profiling.js';
 
 const router = express.Router();
 
@@ -150,6 +151,13 @@ router.post('/', requireAuth, requireRole('super_admin', 'admin'), upload.single
       [id, title, description || null, filePath, req.user.id]
     );
 
+    // give the new template its Profiling archive right away
+    try {
+      await ensureProfilingForTemplate();
+    } catch (profilingErr) {
+      console.error(`Profiling folder setup failed: ${profilingErr.message}`);
+    }
+
     let googleSpreadsheetId = null;
     let googleSpreadsheetUrl = null;
     try {
@@ -176,12 +184,10 @@ router.post('/', requireAuth, requireRole('super_admin', 'admin'), upload.single
         }
       }
     } catch (err) {
-      await query('DELETE FROM pdf_templates WHERE id = $1', [id]);
-      const absolutePath = path.join(storageRoot, filePath);
-      if (fs.existsSync(absolutePath)) {
-        fs.unlinkSync(absolutePath);
-      }
-      throw err;
+      // The Sheets mirror is a convenience, not part of the template. A bare
+      // service account cannot create Drive files, so this used to roll the
+      // upload back and fail every new template with a Google error.
+      console.error(`Template Sheets sync failed (template kept): ${err.message}`);
     }
 
     return res.status(201).json({

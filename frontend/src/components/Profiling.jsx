@@ -33,6 +33,21 @@ function formatDateTime(value) {
   return `${date.toLocaleDateString()} ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
 }
 
+const dialogTitles = {
+  'create-folder': 'New folder',
+  'rename-folder': 'Rename folder',
+  'move-folder': 'Move folder',
+  'edit-file': 'Edit document'
+};
+
+function folderMeta(folder) {
+  const parts = [];
+  if (folder.folder_count > 0) parts.push(`${folder.folder_count} folder${folder.folder_count === 1 ? '' : 's'}`);
+  if (folder.generated_count > 0) parts.push(`${folder.generated_count} PDF${folder.generated_count === 1 ? '' : 's'}`);
+  if (folder.file_count > 0) parts.push(`${folder.file_count} upload${folder.file_count === 1 ? '' : 's'}`);
+  return parts.length ? parts.join(' - ') : 'Empty';
+}
+
 function fileGlyph(file) {
   if (file.source === 'generated') return 'PDF';
   const mime = file.mime_type || '';
@@ -57,6 +72,9 @@ export default function Profiling({ token, user, mode = 'user' }) {
   const [uploadForm, setUploadForm] = useState({ title: '', date_installed: '', file: null });
   const [uploadKey, setUploadKey] = useState(0);
   const [visibleCount, setVisibleCount] = useState(100);
+  const [dialog, setDialog] = useState(null);
+  const [dialogForm, setDialogForm] = useState({});
+  const [confirmBox, setConfirmBox] = useState(null);
 
   const canWriteHere = useMemo(() => {
     if (!view.folder) return false;
@@ -111,27 +129,89 @@ export default function Profiling({ token, user, mode = 'user' }) {
     await refreshAdminPanels();
   }
 
-  async function createFolder() {
-    const name = window.prompt(
-      view.folder ? `New folder inside ${view.folder.name}:` : 'New year folder (for example 2021):',
-      ''
-    );
-    if (!name || !name.trim()) return;
-    setBusy(true);
-    setMessage('');
-    try {
-      await apiRequest('/profiling/folders', {
-        method: 'POST',
-        token,
-        body: { name: name.trim(), parent_id: folderId }
-      });
-      setMessage(`Created ${name.trim()}.`);
-      await reload();
-    } catch (err) {
-      setMessage(err.message);
-    } finally {
-      setBusy(false);
+  function openDialog(kind, target = null, form = {}) {
+    setDialog({ kind, target });
+    setDialogForm(form);
+  }
+
+  function closeDialog() {
+    setDialog(null);
+    setDialogForm({});
+  }
+
+  async function submitDialog(event) {
+    event.preventDefault();
+    if (!dialog) return;
+    const { kind, target } = dialog;
+
+    if (kind === 'create-folder') {
+      const name = String(dialogForm.name || '').trim();
+      if (!name) return;
+      setBusy(true);
+      setMessage('');
+      try {
+        await apiRequest('/profiling/folders', {
+          method: 'POST',
+          token,
+          body: { name, parent_id: folderId }
+        });
+        setMessage(`Created ${name}.`);
+        closeDialog();
+        await reload();
+      } catch (err) {
+        setMessage(err.message);
+      } finally {
+        setBusy(false);
+      }
+      return;
     }
+
+    if (kind === 'rename-folder') {
+      const name = String(dialogForm.name || '').trim();
+      if (!name || name === target.name) {
+        closeDialog();
+        return;
+      }
+      closeDialog();
+      await patchFolder(target.id, { name }, `Renamed to ${name}.`);
+      return;
+    }
+
+    if (kind === 'move-folder') {
+      const parentId = dialogForm.parent_id === 'ROOT' ? null : dialogForm.parent_id;
+      closeDialog();
+      await patchFolder(
+        target.id,
+        { parent_id: parentId },
+        parentId ? `Moved ${target.name}.` : `Moved ${target.name} to the top level.`
+      );
+      return;
+    }
+
+    if (kind === 'edit-file') {
+      const title = String(dialogForm.title || '').trim();
+      if (!title) return;
+      setBusy(true);
+      setMessage('');
+      try {
+        await apiRequest(`/profiling/files/${target.id}`, {
+          method: 'PATCH',
+          token,
+          body: { title, date_installed: dialogForm.date_installed || undefined }
+        });
+        setMessage('File updated.');
+        closeDialog();
+        await reload();
+      } catch (err) {
+        setMessage(err.message);
+      } finally {
+        setBusy(false);
+      }
+    }
+  }
+
+  function createFolder() {
+    openDialog('create-folder', null, { name: '' });
   }
 
   async function submitUpload(event) {
@@ -162,33 +242,12 @@ export default function Profiling({ token, user, mode = 'user' }) {
     }
   }
 
-  async function renameFolder(folder) {
-    const name = window.prompt('Rename folder to:', folder.name);
-    if (!name || name.trim() === folder.name) return;
-    await patchFolder(folder.id, { name: name.trim() }, `Renamed to ${name.trim()}.`);
+  function renameFolder(folder) {
+    openDialog('rename-folder', folder, { name: folder.name });
   }
 
-  async function moveFolder(folder) {
-    const target = window.prompt(
-      `Move "${folder.name}" into which folder? Type the full path exactly, or ROOT for the top level.\n\n${folderList
-        .filter((item) => item.id !== folder.id)
-        .map((item) => item.path)
-        .join('\n')}`,
-      'ROOT'
-    );
-    if (target === null) return;
-    const trimmed = target.trim();
-    if (!trimmed) return;
-    if (trimmed.toUpperCase() === 'ROOT') {
-      await patchFolder(folder.id, { parent_id: null }, `Moved ${folder.name} to the top level.`);
-      return;
-    }
-    const match = folderList.find((item) => item.path.toLowerCase() === trimmed.toLowerCase());
-    if (!match) {
-      setMessage(`No folder with the path "${trimmed}".`);
-      return;
-    }
-    await patchFolder(folder.id, { parent_id: match.id }, `Moved ${folder.name} into ${match.path}.`);
+  function moveFolder(folder) {
+    openDialog('move-folder', folder, { parent_id: folder.parent_id || 'ROOT' });
   }
 
   async function patchFolder(id, body, successMessage) {
@@ -205,12 +264,20 @@ export default function Profiling({ token, user, mode = 'user' }) {
     }
   }
 
-  async function deleteFolder(folder) {
+  function deleteFolder(folder) {
     const hasContent = folder.folder_count > 0 || folder.file_count > 0;
-    const warning = hasContent
-      ? `"${folder.name}" holds ${folder.folder_count} folder(s) and ${folder.file_count} upload(s). Deleting removes all of them.`
-      : `Delete the empty folder "${folder.name}"?`;
-    if (!window.confirm(warning)) return;
+    setConfirmBox({
+      title: `Delete "${folder.name}"?`,
+      body: hasContent
+        ? `It holds ${folder.folder_count} folder(s) and ${folder.file_count} upload(s). All of them go with it.`
+        : 'The folder is empty.',
+      confirmLabel: 'Delete folder',
+      onConfirm: () => runDeleteFolder(folder)
+    });
+  }
+
+  async function runDeleteFolder(folder) {
+    setConfirmBox(null);
     setBusy(true);
     setMessage('');
     try {
@@ -224,8 +291,17 @@ export default function Profiling({ token, user, mode = 'user' }) {
     }
   }
 
-  async function deleteFile(file) {
-    if (!window.confirm(`Delete "${file.title}"? The file is removed from storage.`)) return;
+  function deleteFile(file) {
+    setConfirmBox({
+      title: `Delete "${file.title}"?`,
+      body: 'The uploaded file is removed from storage as well.',
+      confirmLabel: 'Delete file',
+      onConfirm: () => runDeleteFile(file)
+    });
+  }
+
+  async function runDeleteFile(file) {
+    setConfirmBox(null);
     setBusy(true);
     setMessage('');
     try {
@@ -239,25 +315,11 @@ export default function Profiling({ token, user, mode = 'user' }) {
     }
   }
 
-  async function renameFile(file) {
-    const title = window.prompt('File name:', file.title);
-    if (title === null) return;
-    const date = window.prompt('Date installed (YYYY-MM-DD, blank to keep):', file.date_installed ? String(file.date_installed).slice(0, 10) : '');
-    setBusy(true);
-    setMessage('');
-    try {
-      await apiRequest(`/profiling/files/${file.id}`, {
-        method: 'PATCH',
-        token,
-        body: { title: title.trim(), date_installed: date ? date.trim() : undefined }
-      });
-      setMessage('File updated.');
-      await reload();
-    } catch (err) {
-      setMessage(err.message);
-    } finally {
-      setBusy(false);
-    }
+  function renameFile(file) {
+    openDialog('edit-file', file, {
+      title: file.title,
+      date_installed: file.date_installed ? String(file.date_installed).slice(0, 10) : ''
+    });
   }
 
   function openFile(file) {
@@ -421,14 +483,10 @@ export default function Profiling({ token, user, mode = 'user' }) {
                 <button type="button" className="pf-folder-open" onClick={() => loadFolder(folder.id)}>
                   <span className={`pf-folder-icon pf-folder-icon--${folder.kind}`} aria-hidden="true" />
                   <span className="pf-folder-name">{folder.name}</span>
-                  <span className="pf-folder-meta">
-                    {folder.folder_count > 0 && `${folder.folder_count} folder${folder.folder_count === 1 ? '' : 's'}`}
-                    {folder.folder_count > 0 && folder.file_count > 0 && ' - '}
-                    {folder.file_count > 0 && `${folder.file_count} upload${folder.file_count === 1 ? '' : 's'}`}
-                    {folder.folder_count === 0 && folder.file_count === 0 && 'Empty'}
-                  </span>
+                  <span className="pf-folder-meta">{folderMeta(folder)}</span>
                 </button>
                 <div className="pf-folder-badges">
+                  {folder.kind === 'template' && <span className="pf-badge pf-badge--template">Template</span>}
                   {folder.kind === 'auto' && <span className="pf-badge pf-badge--auto">Auto</span>}
                   {folder.locked && <span className="pf-badge pf-badge--locked">Locked</span>}
                   {folder.hidden && <span className="pf-badge pf-badge--hidden">Hidden</span>}
@@ -479,7 +537,7 @@ export default function Profiling({ token, user, mode = 'user' }) {
               <thead>
                 <tr>
                   <th>Name</th>
-                  <th>Date installed</th>
+                  <th>Date</th>
                   <th>Source</th>
                   <th>Added by</th>
                   <th>Added</th>
@@ -498,8 +556,10 @@ export default function Profiling({ token, user, mode = 'user' }) {
                           {file.source === 'manual' && file.original_name && (
                             <span className="pf-file-sub">{file.original_name}</span>
                           )}
-                          {file.source === 'generated' && file.status && (
-                            <span className="pf-file-sub">Status: {file.status}</span>
+                          {file.source === 'generated' && (
+                            <span className="pf-file-sub">
+                              {[file.reference, file.template_title, file.status].filter(Boolean).join(' - ')}
+                            </span>
                           )}
                         </div>
                       </div>
@@ -539,6 +599,103 @@ export default function Profiling({ token, user, mode = 'user' }) {
           </div>
         )}
       </section>
+
+      {dialog && (
+        <div className="pf-modal-backdrop" role="presentation" onClick={closeDialog}>
+          <form
+            className="pf-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label={dialogTitles[dialog.kind]}
+            onClick={(event) => event.stopPropagation()}
+            onSubmit={submitDialog}
+          >
+            <h4>{dialogTitles[dialog.kind]}</h4>
+
+            {(dialog.kind === 'create-folder' || dialog.kind === 'rename-folder') && (
+              <label className="pf-field">
+                <span>Folder name</span>
+                <input
+                  type="text"
+                  autoFocus
+                  value={dialogForm.name || ''}
+                  onChange={(event) => setDialogForm({ ...dialogForm, name: event.target.value })}
+                  placeholder={folderId ? 'January' : '2021'}
+                  required
+                />
+              </label>
+            )}
+
+            {dialog.kind === 'move-folder' && (
+              <label className="pf-field">
+                <span>Move into</span>
+                <select
+                  value={dialogForm.parent_id || 'ROOT'}
+                  onChange={(event) => setDialogForm({ ...dialogForm, parent_id: event.target.value })}
+                >
+                  <option value="ROOT">Top level</option>
+                  {folderList
+                    .filter((item) => item.id !== dialog.target.id)
+                    .map((item) => (
+                      <option key={item.id} value={item.id}>{item.path}</option>
+                    ))}
+                </select>
+              </label>
+            )}
+
+            {dialog.kind === 'edit-file' && (
+              <>
+                <label className="pf-field">
+                  <span>Name</span>
+                  <input
+                    type="text"
+                    autoFocus
+                    value={dialogForm.title || ''}
+                    onChange={(event) => setDialogForm({ ...dialogForm, title: event.target.value })}
+                    required
+                  />
+                </label>
+                <label className="pf-field">
+                  <span>Date installed</span>
+                  <input
+                    type="date"
+                    value={dialogForm.date_installed || ''}
+                    onChange={(event) => setDialogForm({ ...dialogForm, date_installed: event.target.value })}
+                  />
+                </label>
+              </>
+            )}
+
+            <div className="pf-modal-actions">
+              <button type="button" onClick={closeDialog}>Cancel</button>
+              <button type="submit" className="pf-primary" disabled={busy}>
+                {dialog.kind === 'create-folder' ? 'Create folder' : 'Save'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {confirmBox && (
+        <div className="pf-modal-backdrop" role="presentation" onClick={() => setConfirmBox(null)}>
+          <div
+            className="pf-modal"
+            role="alertdialog"
+            aria-modal="true"
+            aria-label={confirmBox.title}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h4>{confirmBox.title}</h4>
+            <p className="muted">{confirmBox.body}</p>
+            <div className="pf-modal-actions">
+              <button type="button" onClick={() => setConfirmBox(null)}>Cancel</button>
+              <button type="button" className="btn-danger" onClick={confirmBox.onConfirm} disabled={busy}>
+                {confirmBox.confirmLabel}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {isAdmin && (
         <section className="pf-section">

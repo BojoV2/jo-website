@@ -75,7 +75,7 @@ const adminTabs = [
     label: 'Profiling',
     chip: 'PF',
     title: 'Document archive',
-    description: 'Control the year/month archive: rename, move, lock, hide, and audit every upload.'
+    description: 'Control the per-template archive: rename, move, lock, hide, and audit every upload.'
   }
 ];
 const templateScopedTabs = ['home', 'templates', 'mapping', 'workflow'];

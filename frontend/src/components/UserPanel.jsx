@@ -39,7 +39,7 @@ const userViews = [
     label: 'Profiling',
     chip: 'PR',
     title: 'Document archive',
-    description: 'Every generated PDF filed by year and month, plus the older paperwork you upload yourself.'
+    description: 'Each template keeps its own archive by year and month, plus the older paperwork you upload yourself.'
   }
 ];
 const userSections = [
