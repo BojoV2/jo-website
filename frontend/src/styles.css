@@ -5488,3 +5488,40 @@ tr.row-editing {
   border-radius: 10px;
   font-size: 0.88rem;
 }
+
+/* ---------- profiling: archive-wide search ---------- */
+
+.pf-search { min-width: 260px; }
+
+.pf-search-note {
+  font-size: 0.8rem;
+  margin-right: auto;
+}
+
+.pf-clear-search {
+  width: auto;
+  margin: 0;
+  padding: 5px 12px;
+  border-radius: 9px;
+  font-size: 0.78rem;
+}
+
+.pf-path-link {
+  width: auto;
+  margin: 0;
+  padding: 3px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(44, 130, 237, 0.1);
+  color: var(--primary-strong);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pf-path-link:hover { background: rgba(44, 130, 237, 0.2); }
+
+@media (max-width: 900px) {
+  .pf-search-note { display: none; }
+}

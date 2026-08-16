@@ -336,6 +336,134 @@ async function listGeneratedFiles(folder) {
 
 router.use(requireAuth);
 
+// GET /api/profiling/search?q= - one search across the whole archive
+// Looks through every template, year and month at once: generated PDFs by the
+// client name and reference stamped on them, uploads by their name and file
+// name. Each hit carries the folder it lives in so it can be opened from here.
+router.get('/search', async (req, res) => {
+  try {
+    const term = String(req.query.q || '').trim();
+    if (term.length < 2) {
+      return res.json({ term, results: [], truncated: false });
+    }
+
+    await ensureAutoFolders();
+    const privileged = isPrivilegedRole(req.user.role);
+    const pattern = `%${term.replace(/[%_]/g, (match) => `\\${match}`)}%`;
+    const limit = Math.min(Number(req.query.limit) || 100, 300);
+
+    const treeCte = `WITH RECURSIVE tree AS (
+        SELECT id, parent_id, name, kind, template_id, year, month, hidden,
+               name::text AS path, hidden AS hidden_any
+        FROM profiling_folders WHERE parent_id IS NULL
+        UNION ALL
+        SELECT f.id, f.parent_id, f.name, f.kind, f.template_id, f.year, f.month, f.hidden,
+               t.path || ' / ' || f.name, t.hidden_any OR f.hidden
+        FROM profiling_folders f JOIN tree t ON f.parent_id = t.id
+      )`;
+
+    const uploads = await query(
+      `${treeCte}
+       SELECT fi.id, fi.title, fi.date_installed, fi.original_name, fi.mime_type,
+              fi.size_bytes, fi.created_at, fi.uploaded_by,
+              u.name AS uploaded_by_name, t.id AS folder_id, t.path
+       FROM profiling_files fi
+       JOIN tree t ON t.id = fi.folder_id
+       LEFT JOIN users u ON u.id = fi.uploaded_by
+       WHERE (fi.title ILIKE $1 ESCAPE '\\' OR fi.original_name ILIKE $1 ESCAPE '\\')
+         AND ($2 OR NOT t.hidden_any)
+       ORDER BY fi.created_at DESC
+       LIMIT $3`,
+      [pattern, privileged, limit]
+    );
+
+    const generated = await query(
+      `${treeCte},
+       named AS (
+         SELECT g.id, g.created_at, g.status, g.template_id,
+                COALESCE(
+                  NULLIF(TRIM(g.submitted_data->>'Name'), ''),
+                  NULLIF(TRIM(g.submitted_data->>'name'), ''),
+                  NULLIF(TRIM(g.submitted_data->>'Relocation name'), ''),
+                  NULLIF(TRIM(g.submitted_data->>'Client Name'), ''),
+                  NULLIF(TRIM(g.submitted_data->>'Customer Name'), ''),
+                  NULLIF(TRIM(g.submitted_data->>'Subscriber'), '')
+                ) AS client_name,
+                COALESCE(
+                  NULLIF(TRIM(g.submitted_data->>'Order Number'), ''),
+                  NULLIF(TRIM(g.submitted_data->>'Order number'), ''),
+                  NULLIF(TRIM(g.submitted_data->>'Application number'), ''),
+                  NULLIF(TRIM(g.submitted_data->>'Account ID'), ''),
+                  NULLIF(TRIM(g.submitted_data->>'Account number'), ''),
+                  NULLIF(TRIM(g.submitted_data->>'Account No.'), '')
+                ) AS reference,
+                g.user_id
+         FROM generated_pdfs g
+         WHERE g.template_id IS NOT NULL
+       )
+       SELECT n.id, n.client_name, n.reference, n.status, n.created_at,
+              tpl.title AS template_title, u.name AS owner_name,
+              t.id AS folder_id, t.path
+       FROM named n
+       JOIN tree t ON t.kind = 'auto'
+                  AND t.template_id = n.template_id
+                  AND t.year = EXTRACT(YEAR FROM n.created_at)
+                  AND t.month = EXTRACT(MONTH FROM n.created_at)
+       LEFT JOIN pdf_templates tpl ON tpl.id = n.template_id
+       LEFT JOIN users u ON u.id = n.user_id
+       WHERE (n.client_name ILIKE $1 ESCAPE '\\' OR n.reference ILIKE $1 ESCAPE '\\')
+         AND ($2 OR NOT t.hidden_any)
+       ORDER BY n.created_at DESC
+       LIMIT $3`,
+      [pattern, privileged, limit]
+    );
+
+    const results = [
+      ...generated.rows.map((row) => ({
+        id: row.id,
+        source: 'generated',
+        title: row.client_name || row.template_title || 'Generated PDF',
+        reference: row.reference,
+        template_title: row.template_title,
+        status: row.status,
+        date_installed: row.created_at,
+        created_at: row.created_at,
+        mime_type: 'application/pdf',
+        size_bytes: null,
+        original_name: null,
+        uploaded_by_name: row.owner_name,
+        folder_id: row.folder_id,
+        path: row.path
+      })),
+      ...uploads.rows.map((row) => ({
+        id: row.id,
+        source: 'manual',
+        title: row.title,
+        reference: null,
+        template_title: null,
+        status: null,
+        date_installed: row.date_installed,
+        created_at: row.created_at,
+        mime_type: row.mime_type,
+        size_bytes: row.size_bytes === null ? null : Number(row.size_bytes),
+        original_name: row.original_name,
+        uploaded_by: row.uploaded_by,
+        uploaded_by_name: row.uploaded_by_name,
+        folder_id: row.folder_id,
+        path: row.path
+      }))
+    ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+    return res.json({
+      term,
+      results: results.slice(0, limit),
+      truncated: results.length > limit || generated.rowCount === limit || uploads.rowCount === limit
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/profiling/folders?parent_id= - browse one level
 router.get('/folders', async (req, res) => {
   try {

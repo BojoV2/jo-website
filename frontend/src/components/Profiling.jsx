@@ -68,6 +68,8 @@ export default function Profiling({ token, user, mode = 'user' }) {
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const [search, setSearch] = useState('');
+  const [searchResults, setSearchResults] = useState(null);
+  const [searching, setSearching] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
   const [uploadForm, setUploadForm] = useState({ title: '', date_installed: '', file: null });
   const [uploadKey, setUploadKey] = useState(0);
@@ -123,6 +125,36 @@ export default function Profiling({ token, user, mode = 'user' }) {
   useEffect(() => {
     refreshAdminPanels();
   }, [refreshAdminPanels]);
+
+  // The box searches the whole archive, not the folder on screen: type once and
+  // every template, year and month is looked through.
+  useEffect(() => {
+    const term = search.trim();
+    if (term.length < 2) {
+      setSearchResults(null);
+      setSearching(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setSearching(true);
+    const timer = setTimeout(async () => {
+      try {
+        const data = await apiRequest(`/profiling/search?q=${encodeURIComponent(term)}`, { token });
+        if (!cancelled) setSearchResults(data);
+      } catch (err) {
+        if (!cancelled) {
+          setMessage(err.message);
+          setSearchResults({ term, results: [], truncated: false });
+        }
+      } finally {
+        if (!cancelled) setSearching(false);
+      }
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [search, token]);
 
   async function reload() {
     await loadFolder(folderId);
@@ -340,15 +372,8 @@ export default function Profiling({ token, user, mode = 'user' }) {
       .catch((err) => setMessage(err.message));
   }
 
-  const filteredFiles = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    if (!term) return view.files;
-    return view.files.filter((file) =>
-      [file.title, file.original_name, file.uploaded_by_name].filter(Boolean).some((value) =>
-        String(value).toLowerCase().includes(term)
-      )
-    );
-  }, [view.files, search]);
+  const filteredFiles = view.files;
+  const isSearching = search.trim().length >= 2;
 
   const shownFiles = useMemo(() => filteredFiles.slice(0, visibleCount), [filteredFiles, visibleCount]);
 
@@ -397,7 +422,8 @@ export default function Profiling({ token, user, mode = 'user' }) {
           <input
             className="pf-search"
             type="search"
-            placeholder="Search files in this folder"
+            placeholder="Search the whole archive"
+            aria-label="Search the whole archive"
             value={search}
             onChange={(event) => { setSearch(event.target.value); setVisibleCount(100); }}
           />
@@ -467,6 +493,80 @@ export default function Profiling({ token, user, mode = 'user' }) {
         </form>
       )}
 
+      {isSearching && (
+        <section className="pf-section">
+          <div className="pf-section-head">
+            <h4>Search results</h4>
+            <span className="pf-count">{searching ? '...' : (searchResults?.results.length || 0)}</span>
+            <span className="muted pf-search-note">
+              {searching
+                ? `Looking through the archive for "${search.trim()}"`
+                : `Everything matching "${search.trim()}", across every template`}
+            </span>
+            <button type="button" className="pf-clear-search" onClick={() => setSearch('')}>Clear</button>
+          </div>
+
+          {!searching && (searchResults?.results.length || 0) === 0 ? (
+            <p className="muted pf-empty">No document or upload matches that.</p>
+          ) : (
+            <div className="table-wrap">
+              <table className="pf-table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Folder</th>
+                    <th>Date</th>
+                    <th>Source</th>
+                    <th>Added by</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(searchResults?.results || []).map((file) => (
+                    <tr key={`${file.source}-${file.id}`}>
+                      <td>
+                        <div className="pf-file-name">
+                          <span className={`pf-file-glyph pf-file-glyph--${fileGlyph(file).toLowerCase()}`}>{fileGlyph(file)}</span>
+                          <div>
+                            <strong>{file.title}</strong>
+                            <span className="pf-file-sub">
+                              {file.source === 'generated'
+                                ? [file.reference, file.status].filter(Boolean).join(' - ')
+                                : file.original_name}
+                            </span>
+                          </div>
+                        </div>
+                      </td>
+                      <td>
+                        <button type="button" className="pf-path-link" onClick={() => { setSearch(''); loadFolder(file.folder_id); }}>
+                          {file.path}
+                        </button>
+                      </td>
+                      <td>{formatDate(file.date_installed || file.created_at)}</td>
+                      <td>
+                        <span className={`pf-badge pf-badge--${file.source === 'generated' ? 'auto' : 'manual'}`}>
+                          {file.source === 'generated' ? 'Generated' : 'Upload'}
+                        </span>
+                      </td>
+                      <td>{file.uploaded_by_name || '-'}</td>
+                      <td className="actions">
+                        <button type="button" onClick={() => openFile(file)}>Open</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {searchResults?.truncated && (
+                <div className="pf-more">
+                  <span className="muted">Showing the first {searchResults.results.length} matches - narrow the search to see fewer.</span>
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+      )}
+
+      {!isSearching && (<>
       <section className="pf-section">
         <div className="pf-section-head">
           <h4>Folders</h4>
@@ -530,7 +630,7 @@ export default function Profiling({ token, user, mode = 'user' }) {
         {!view.folder ? (
           <p className="muted pf-empty">Open a year to see its documents.</p>
         ) : filteredFiles.length === 0 ? (
-          <p className="muted pf-empty">{search ? 'Nothing matches that search.' : 'No documents in this folder yet.'}</p>
+          <p className="muted pf-empty">No documents in this folder yet.</p>
         ) : (
           <div className="table-wrap">
             <table className="pf-table">
@@ -599,6 +699,8 @@ export default function Profiling({ token, user, mode = 'user' }) {
           </div>
         )}
       </section>
+      </>)}
+
 
       {dialog && (
         <div className="pf-modal-backdrop" role="presentation" onClick={closeDialog}>
