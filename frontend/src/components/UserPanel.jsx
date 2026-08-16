@@ -18,7 +18,7 @@ const userViews = [
     label: 'PDF Creation',
     chip: 'PC',
     title: 'Generate a new document',
-    description: 'Pick a template, fill the mapped fields, and track everything you generated.'
+    description: 'Pick a template and fill the mapped fields. Everything you generate is listed under Analytics.'
   },
   {
     id: 'tools',
@@ -32,7 +32,7 @@ const userViews = [
     label: 'Analytics',
     chip: 'AN',
     title: 'Template analytics',
-    description: 'Month-to-date metrics, monthly outcomes, and the field position mapper.'
+    description: 'Month-to-date metrics, monthly outcomes, everything you generated, and the field position mapper.'
   },
   {
     id: 'profiling',
@@ -844,7 +844,7 @@ export default function UserPanel({
           ? (autoDownloadFailed
             ? 'PDF generated. It could not be opened automatically, use Open PDF in Pending.'
             : 'PDF generated, opened in a new tab, and queued as pending.')
-          : 'PDF added to My Generated PDFs. Download it anytime from the list.'
+          : 'PDF added to My Generated PDFs. Open it any time from the list under Analytics.'
       )
     );
 
@@ -1375,7 +1375,7 @@ export default function UserPanel({
         </div>
       </details>
 
-      <div className="user-work-grid">
+      <div className="user-work-grid user-work-grid--single">
         <form className="card user-form-card" onSubmit={submitGeneration}>
           <div className="section-heading">
             <div>
@@ -1495,6 +1495,46 @@ export default function UserPanel({
             </label>
           </div>
         </form>
+
+      </div>
+      </>)}
+
+      {activeView === 'analytics' && (<>
+      <section id="user-section-analytics" className="card">
+        <h3>Template Analytics</h3>
+        <p className="muted">Current month metrics for the selected template.</p>
+        {analytics ? (
+          <>
+            <div className="analytics-strip">
+              {analyticsItems.map((item, index) => (
+                <div
+                  key={item.label}
+                  className={`analytics-strip-item analytics-tone-${item.tone || 'primary'}${index === 0 ? ' analytics-strip-item-featured' : ''}`}
+                >
+                  <span className="analytics-strip-kicker">{selectedTemplate?.title || 'Template'}</span>
+                  <span className="analytics-strip-label">{item.label}</span>
+                  <strong className="analytics-strip-value">{item.value}</strong>
+                  <span className="analytics-strip-meta">{item.meta}</span>
+                </div>
+              ))}
+            </div>
+            <div className="analytics-chart-block">
+              <div className="chart-combo">
+                <StatusStackedBarChart
+                  monthlyData={monthlyByStatus}
+                  timeRange={monthlyReportRange}
+                  onTimeRangeChange={setMonthlyReportRange}
+                  description="Monthly PDF outcomes by status for the selected template."
+                  emptyText="No monthly data available for this template yet."
+                />
+                <StatusDonutChart analytics={analytics} />
+              </div>
+            </div>
+          </>
+        ) : (
+          <p className="muted">Select a template to view analytics.</p>
+        )}
+      </section>
 
       <section id="user-section-history" className="card">
         <div className="actions" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1731,45 +1771,6 @@ export default function UserPanel({
           </table>
         </div>
 
-      </section>
-      </div>
-      </>)}
-
-      {activeView === 'analytics' && (<>
-      <section id="user-section-analytics" className="card">
-        <h3>Template Analytics</h3>
-        <p className="muted">Current month metrics for the selected template.</p>
-        {analytics ? (
-          <>
-            <div className="analytics-strip">
-              {analyticsItems.map((item, index) => (
-                <div
-                  key={item.label}
-                  className={`analytics-strip-item analytics-tone-${item.tone || 'primary'}${index === 0 ? ' analytics-strip-item-featured' : ''}`}
-                >
-                  <span className="analytics-strip-kicker">{selectedTemplate?.title || 'Template'}</span>
-                  <span className="analytics-strip-label">{item.label}</span>
-                  <strong className="analytics-strip-value">{item.value}</strong>
-                  <span className="analytics-strip-meta">{item.meta}</span>
-                </div>
-              ))}
-            </div>
-            <div className="analytics-chart-block">
-              <div className="chart-combo">
-                <StatusStackedBarChart
-                  monthlyData={monthlyByStatus}
-                  timeRange={monthlyReportRange}
-                  onTimeRangeChange={setMonthlyReportRange}
-                  description="Monthly PDF outcomes by status for the selected template."
-                  emptyText="No monthly data available for this template yet."
-                />
-                <StatusDonutChart analytics={analytics} />
-              </div>
-            </div>
-          </>
-        ) : (
-          <p className="muted">Select a template to view analytics.</p>
-        )}
       </section>
 
       <section id="user-section-preview" className="card">

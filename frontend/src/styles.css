@@ -5525,3 +5525,23 @@ tr.row-editing {
 @media (max-width: 900px) {
   .pf-search-note { display: none; }
 }
+
+/* ---------- My Generated PDFs moved out of PDF Creation ----------
+   The list now lives in Analytics with the full column width, so the
+   form on PDF Creation is alone in its grid and the list is no longer
+   sticky or height-capped. */
+
+.user-work-grid--single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.user-main #user-section-history {
+  position: static;
+  max-height: none;
+  overflow: visible;
+  min-width: 0;
+}
+
+.user-main #user-section-history .table-wrap {
+  overflow-x: auto;
+}
