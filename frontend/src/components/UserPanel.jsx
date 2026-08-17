@@ -246,7 +246,16 @@ function isMissingRequiredValue(field, value) {
 function messageTone(message) {
   const text = String(message || '').toLowerCase();
   if (!text) return 'is-info';
-  if (text.includes('error') || text.includes('failed') || text.includes('invalid') || text.includes('not found') || text.includes('required') || text.includes('forbidden')) {
+  // The password rules answer with plain sentences ("Password must be at least
+  // 10 characters"), which used to fall through to the success tone and show a
+  // green "Update" box - a refusal that looked like a confirmation.
+  if (
+    text.includes('error') || text.includes('failed') || text.includes('invalid') ||
+    text.includes('not found') || text.includes('required') || text.includes('forbidden') ||
+    text.includes('must ') || text.includes('too easy') || text.includes('cannot') ||
+    text.includes('not allowed') || text.includes('already') || text.includes('denied') ||
+    text.includes('did not match') || text.includes('too many')
+  ) {
     return 'is-error';
   }
   if (text.includes('cancel') || text.includes('reschedule')) {

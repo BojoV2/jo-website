@@ -91,7 +91,16 @@ function clampRect(rect) {
 function messageTone(message) {
   const text = String(message || '').toLowerCase();
   if (!text) return 'is-info';
-  if (text.includes('error') || text.includes('failed') || text.includes('invalid') || text.includes('not found') || text.includes('required') || text.includes('forbidden')) {
+  // The password rules answer with plain sentences ("Password must be at least
+  // 10 characters"), which used to fall through to the success tone and show a
+  // green "Update" box - a refusal that looked like a confirmation.
+  if (
+    text.includes('error') || text.includes('failed') || text.includes('invalid') ||
+    text.includes('not found') || text.includes('required') || text.includes('forbidden') ||
+    text.includes('must ') || text.includes('too easy') || text.includes('cannot') ||
+    text.includes('not allowed') || text.includes('already') || text.includes('denied') ||
+    text.includes('did not match') || text.includes('too many')
+  ) {
     return 'is-error';
   }
   if (text.includes('deleted') || text.includes('cancel')) {
@@ -1656,6 +1665,10 @@ export default function AdminPanel({
             required
           />
           <label htmlFor="admin-user-password">Password</label>
+          <p className="field-hint">
+            At least 10 characters, with both letters and numbers. Obvious ones
+            (starting with "password", "imperial", "admin", "welcome", "qwerty") are refused.
+          </p>
           <input
             id="admin-user-password"
             name="password"
@@ -1663,6 +1676,7 @@ export default function AdminPanel({
             value={userForm.password}
             onChange={(e) => setUserForm({ ...userForm, password: e.target.value })}
             autoComplete="new-password"
+            minLength={10}
             required
           />
           <label className="checkbox-line" htmlFor="admin-show-create-password">

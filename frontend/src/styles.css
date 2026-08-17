@@ -5796,3 +5796,14 @@ tr.row-editing {
     grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   }
 }
+
+/* ---------- inline field hints (password rules on the create-user form) ---------- */
+
+.field-hint {
+  margin: 2px 0 6px;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--shell-muted);
+  text-transform: none;
+  letter-spacing: normal;
+}
