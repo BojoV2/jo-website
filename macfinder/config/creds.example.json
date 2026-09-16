@@ -1,0 +1,9 @@
+{
+  "default": {"user": "admin", "pass": "CHANGE_ME"},
+  "overrides": {
+    "192.168.200.109": {"user": "admin", "pass": "CHANGE_ME"}
+  },
+  "known_dead": {
+    "192.168.200.105": "powered off"
+  }
+}

@@ -44,5 +44,16 @@ services:
       - /app/node_modules
     command: sh -c "npm install && npm run dev"
 
+  macfinder:
+    build:
+      context: ./macfinder
+    container_name: jo_macfinder
+    restart: unless-stopped
+    expose:
+      - "5000"
+    volumes:
+      - ./macfinder/config:/app/config
+      - ./macfinder/data:/app/data
+
 volumes:
   pgdata:

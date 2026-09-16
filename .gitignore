@@ -19,3 +19,8 @@ storage/*
 *.bak-*
 *.orig
 .attic/
+
+# MAC-Finder — live data/config, never commit (real creds + a large sqlite db)
+macfinder/data/*
+macfinder/config/*.json
+!macfinder/config/*.example.json

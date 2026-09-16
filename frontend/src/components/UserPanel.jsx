@@ -40,6 +40,13 @@ const userViews = [
     chip: 'PR',
     title: 'Document archive',
     description: 'Each template keeps its own archive by year and month, plus the older paperwork you upload yourself.'
+  },
+  {
+    id: 'macfinder',
+    label: 'MAC-Finder',
+    chip: 'MF',
+    title: 'OLT MAC / serial finder',
+    description: 'Scan the OLT fleet for a client MAC address or ONU serial number.'
   }
 ];
 const userSections = [
@@ -1324,6 +1331,16 @@ export default function UserPanel({
       {activeView === 'profiling' && (
         <section className="tools-page">
           <Profiling token={token} user={user} mode="user" />
+        </section>
+      )}
+
+      {activeView === 'macfinder' && (
+        <section className="tools-page">
+          <iframe
+            src="/mac-finder/"
+            title="MAC-Finder"
+            style={{ width: '100%', height: '80vh', border: 'none', borderRadius: '8px' }}
+          />
         </section>
       )}
 
