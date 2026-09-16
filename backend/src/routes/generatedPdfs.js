@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { query, pool } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { buildMergedPdf } from '../services/pdfMerge.js';
+import { restoreFileToTemp } from '../services/archiveCrypto.js';
 import { generatePdfFromTemplate } from '../services/pdfService.js';
 import { syncGeneratedPdfToGoogleSheets, isGoogleSheetsEnabled } from '../services/googleSheetsService.js';
 import { PDF_STATUSES } from '../constants.js';
@@ -814,14 +815,30 @@ router.get('/:generatedPdfId/history', requireAuth, async (req, res) => {
 });
 
 router.get('/:generatedPdfId/download', requireAuth, async (req, res) => {
+  let cleanupTemp = null;
   try {
-    const record = await query('SELECT id, user_id, file_path FROM generated_pdfs WHERE id = $1', [req.params.generatedPdfId]);
+    const record = await query('SELECT id, user_id, file_path, archived FROM generated_pdfs WHERE id = $1', [req.params.generatedPdfId]);
     if (record.rowCount === 0) {
       return res.status(404).json({ error: 'Generated PDF not found' });
     }
 
-    const absolutePath = path.join(storageRoot, record.rows[0].file_path);
-    if (!fs.existsSync(absolutePath)) {
+    let absolutePath = path.join(storageRoot, record.rows[0].file_path);
+    // Archived means the plaintext was gzip+encrypted at rest to save space
+    // (see scripts/archive-old-pdfs.mjs) - decrypt to a short-lived temp
+    // file so everything below (raw download, or the attachment-merge
+    // path, which needs a real path via fs.readFileSync) works exactly as
+    // it always has. The temp file is deleted the moment this response
+    // ends, on every exit path below, success or failure.
+    if (record.rows[0].archived) {
+      const encPath = absolutePath + '.gz.enc';
+      if (!fs.existsSync(encPath)) {
+        return res.status(404).json({ error: 'Archived file not found in storage' });
+      }
+      const restored = restoreFileToTemp(encPath, '.pdf');
+      absolutePath = restored.path;
+      cleanupTemp = restored.cleanup;
+      res.on('close', cleanupTemp);
+    } else if (!fs.existsSync(absolutePath)) {
       return res.status(404).json({ error: 'File not found in storage' });
     }
 

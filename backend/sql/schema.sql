@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS generated_pdfs (
 );
 
 ALTER TABLE generated_pdfs ADD COLUMN IF NOT EXISTS template_version INT DEFAULT 1;
+ALTER TABLE generated_pdfs ADD COLUMN IF NOT EXISTS archived BOOLEAN NOT NULL DEFAULT false;
 
 CREATE TABLE IF NOT EXISTS status_history (
     id UUID PRIMARY KEY,
