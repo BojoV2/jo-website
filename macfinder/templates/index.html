@@ -171,7 +171,7 @@ async function loadHistory(chartId, mac) {
   if (!mac) { noteEl.textContent = 'No client MAC known for this ONU — nothing to track yet.'; return; }
   let rows;
   try {
-    const res = await fetch(`/api/history/${encodeURIComponent(mac)}`);
+    const res = await fetch(`/mac-finder-api/history/${encodeURIComponent(mac)}`);
     rows = await res.json();
   } catch (e) {
     noteEl.textContent = 'History unavailable: ' + e;
@@ -259,7 +259,7 @@ async function runSearch() {
   metaEl.textContent = '';
 
   try {
-    const res = await fetch('/api/search', {
+    const res = await fetch('/mac-finder-api/search', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({mac})
@@ -379,7 +379,7 @@ document.getElementById('refreshFleet').addEventListener('click', async () => {
   btn.disabled = true;
   btn.textContent = 'Refreshing…';
   try {
-    const res = await fetch('/api/refresh-fleet', {method: 'POST'});
+    const res = await fetch('/mac-finder-api/refresh-fleet', {method: 'POST'});
     const data = await res.json();
     btn.textContent = res.ok ? `Refreshed (${data.refreshed} OLTs)` : 'Refresh failed';
     if (!res.ok) errEl.textContent = data.error;
