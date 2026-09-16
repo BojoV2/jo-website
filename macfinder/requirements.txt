@@ -1,0 +1,6 @@
+flask==3.0.3
+requests==2.32.3
+urllib3==2.2.3
+librouteros==4.2.1
+pysnmp==7.1.29
+pyasn1==0.6.4

@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>OLT MAC Finder</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.5.1/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1420; --panel: #171e2e; --border: #2a3346; --text: #e6ebf5;
+    --muted: #8a96ab; --accent: #4f8cff; --ok: #2ecc71; --bad: #e74c3c;
+    --warn: #f1c40f; --skip: #566275;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+    min-height: 100vh; padding: 32px 20px;
+  }
+  .wrap { max-width: 900px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+  .search-row { display: flex; gap: 10px; }
+  input[type=text] {
+    flex: 1; background: var(--panel); border: 1px solid var(--border);
+    color: var(--text); border-radius: 8px; padding: 12px 14px;
+    font-size: 15px; font-family: ui-monospace, Consolas, monospace;
+  }
+  input[type=text]:focus { outline: 2px solid var(--accent); border-color: transparent; }
+  button {
+    background: var(--accent); color: white; border: none; border-radius: 8px;
+    padding: 12px 20px; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button.ghost {
+    background: transparent; border: 1px solid var(--border); color: var(--muted);
+  }
+  .meta { margin-top: 14px; color: var(--muted); font-size: 13px; min-height: 18px; }
+  .hit-card {
+    background: var(--panel); border: 1px solid var(--border); border-left: 4px solid var(--ok);
+    border-radius: 10px; padding: 18px 20px; margin-top: 16px;
+  }
+  .hit-card .olt-name { font-size: 17px; font-weight: 700; }
+  .hit-card .olt-ip { color: var(--muted); font-size: 13px; margin-bottom: 10px; }
+  .fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px,1fr)); gap: 10px; margin-top: 10px; }
+  .field { background: #10182a; border-radius: 6px; padding: 8px 10px; }
+  .field .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+  .field .v { font-size: 16px; font-weight: 600; margin-top: 2px; }
+  .section { margin-top: 18px; }
+  .section-title {
+    color: var(--accent); font-size: 12px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .06em; border-bottom: 1px solid var(--border); padding-bottom: 6px; margin-bottom: 10px;
+  }
+  .mini-table { width: 100%; border-collapse: collapse; margin-top: 0; font-size: 12px; }
+  .mini-table th, .mini-table td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--border); }
+  .mini-table th { color: var(--muted); font-weight: 500; text-transform: uppercase; font-size: 10px; }
+  .pill-online { color: var(--ok); font-weight: 600; }
+  .pill-offline { color: var(--bad); font-weight: 600; }
+  .config-block {
+    background: #0b1220; border: 1px solid var(--border); border-radius: 6px;
+    padding: 12px 14px; font-family: ui-monospace, Consolas, monospace; font-size: 12.5px;
+    line-height: 1.6; white-space: pre-wrap; overflow-x: auto; color: #c9d6ee;
+  }
+  table { width: 100%; border-collapse: collapse; margin-top: 24px; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; }
+  .badge { padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; display: inline-block; }
+  .b-found { background: rgba(46,204,113,.15); color: var(--ok); }
+  .b-not_found { color: var(--muted); }
+  .b-login_failed, .b-error { background: rgba(231,76,60,.15); color: var(--bad); }
+  .b-unreachable, .b-timeout { background: rgba(241,196,15,.15); color: var(--warn); }
+  .b-skipped { color: var(--skip); }
+  .empty-msg { margin-top: 30px; color: var(--muted); font-size: 14px; }
+  #err { color: var(--bad); margin-top: 12px; font-size: 13px; }
+  .toolbar { display:flex; justify-content: space-between; align-items:center; margin-bottom: 10px; }
+  .chart-row { display: flex; gap: 14px; flex-wrap: wrap; }
+  .chart-panel {
+    flex: 1 1 300px; background: #10182a; border: 1px solid var(--border);
+    border-radius: 6px; padding: 10px 14px 8px;
+  }
+  .chart-panel .panel-title {
+    text-align: center; font-size: 13px; font-weight: 700; color: var(--text);
+    margin-bottom: 4px;
+  }
+  .chart-panel canvas { height: 170px !important; }
+  .panel-footer {
+    display: flex; justify-content: space-between; align-items: flex-end;
+    margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border);
+  }
+  .legend-list { display: flex; flex-direction: column; gap: 3px; }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text); }
+  .legend-swatch { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+  .legend-name { min-width: 62px; }
+  .legend-stat { color: var(--muted); }
+  .panel-icons { display: flex; gap: 6px; align-self: flex-end; }
+  .icon-btn {
+    background: transparent; border: none; color: var(--muted); font-size: 15px;
+    cursor: pointer; padding: 2px 5px; border-radius: 4px; line-height: 1;
+  }
+  .icon-btn:hover { background: var(--border); color: var(--text); }
+  .chart-note { color: var(--muted); font-size: 12px; padding: 6px 2px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>OLT MAC Finder</h1>
+  <div class="sub">Search a CALLER-ID / client MAC or an ONU serial number across the whole OLT fleet. Needs the LAN VPN up.</div>
+
+  <div class="search-row">
+    <input id="mac" type="text" placeholder="MAC (4C:D7:C8:A9:36:74) or ONU serial (VSOL00260fde)" autofocus>
+    <button id="go">Search</button>
+  </div>
+  <div id="err"></div>
+  <div class="meta" id="meta"></div>
+
+  <div id="hits"></div>
+
+  <div class="toolbar" style="margin-top:34px;">
+    <span class="sub" style="margin:0;">Full scan detail</span>
+    <button class="ghost" id="refreshFleet">Refresh fleet list</button>
+  </div>
+  <table id="resultsTable" style="display:none;">
+    <thead><tr><th>OLT</th><th>IP</th><th>Location</th><th>Status</th><th>Detail</th></tr></thead>
+    <tbody id="resultsBody"></tbody>
+  </table>
+</div>
+
+<script>
+const macInput = document.getElementById('mac');
+const goBtn = document.getElementById('go');
+const errEl = document.getElementById('err');
+const metaEl = document.getElementById('meta');
+const hitsEl = document.getElementById('hits');
+const table = document.getElementById('resultsTable');
+const tbody = document.getElementById('resultsBody');
+
+function statusLabel(s) {
+  return {
+    found: 'FOUND', found_unparsed: 'FOUND (unparsed)', not_found: 'not found',
+    login_failed: 'login failed', unreachable: 'unreachable', timeout: 'timeout',
+    error: 'error', skipped: 'skipped'
+  }[s] || s;
+}
+
+const chartInstances = {};
+
+function destroyChart(canvasId) {
+  if (chartInstances[canvasId]) {
+    chartInstances[canvasId].destroy();
+    delete chartInstances[canvasId];
+  }
+}
+
+function bpsLabel(bps) {
+  if (bps == null || isNaN(bps)) return '—';
+  const abs = Math.abs(bps);
+  if (abs >= 1e6) return (bps / 1e6).toFixed(1) + 'M';
+  if (abs >= 1e3) return (bps / 1e3).toFixed(1) + 'k';
+  return bps.toFixed(0);
+}
+
+function stats(values, unit, fmt) {
+  const nums = values.filter(v => v != null && !isNaN(v));
+  if (!nums.length) return `Current: — ${unit}  Maximum: — ${unit}`;
+  const current = nums[nums.length - 1];
+  const max = Math.max(...nums);
+  return `Current: ${fmt(current)} ${unit}  Maximum: ${fmt(max)} ${unit}`;
+}
+
+async function loadHistory(chartId, mac) {
+  const noteEl = document.getElementById(`${chartId}-note`);
+  if (!mac) { noteEl.textContent = 'No client MAC known for this ONU — nothing to track yet.'; return; }
+  let rows;
+  try {
+    const res = await fetch(`/mac-finder-api/history/${encodeURIComponent(mac)}`);
+    rows = await res.json();
+  } catch (e) {
+    noteEl.textContent = 'History unavailable: ' + e;
+    return;
+  }
+  if (!rows.length) {
+    noteEl.textContent = 'Now tracking this client — history builds up every 5 min from here on. Check back shortly.';
+    return;
+  }
+  noteEl.textContent = `${rows.length} samples over the last ${((Date.now()/1000 - rows[0].ts) / 3600).toFixed(1)}h`;
+
+  const labels = rows.map(r => new Date(r.ts * 1000).toLocaleString(undefined, {month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'}));
+  const downBps = rows.map(r => r.down_kbps != null ? r.down_kbps * 1000 : null);
+  const upBps = rows.map(r => r.up_kbps != null ? r.up_kbps * 1000 : null);
+  const rxDbm = rows.map(r => r.rx_dbm);
+
+  const gridOpts = {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: {mode: 'index', intersect: false},
+    plugins: {legend: {display: false}, title: {display: false}},
+  };
+
+  destroyChart(`${chartId}-traffic`);
+  chartInstances[`${chartId}-traffic`] = new Chart(document.getElementById(`${chartId}-traffic`), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {label: 'Download', data: downBps, borderColor: '#4f8cff', backgroundColor: 'transparent', spanGaps: true, pointRadius: 2, pointHoverRadius: 4, borderWidth: 1.5, tension: 0.15},
+        {label: 'Upload', data: upBps, borderColor: '#e67e22', backgroundColor: 'transparent', spanGaps: true, pointRadius: 2, pointHoverRadius: 4, borderWidth: 1.5, tension: 0.15},
+      ],
+    },
+    options: {
+      ...gridOpts,
+      scales: {
+        x: {ticks: {color: '#8a96ab', maxTicksLimit: 5, font: {size: 10}}, grid: {color: '#232c40'}},
+        y: {
+          beginAtZero: true,
+          title: {display: true, text: 'bits per second', color: '#8a96ab', font: {size: 10}},
+          ticks: {color: '#8a96ab', font: {size: 10}, callback: v => bpsLabel(v)},
+          grid: {color: '#232c40'},
+        },
+      },
+    },
+  });
+  document.getElementById(`${chartId}-traffic-legend`).innerHTML = `
+    <div class="legend-item"><span class="legend-swatch" style="background:#e67e22"></span><span class="legend-name">Upload</span><span class="legend-stat">${stats(upBps, 'Mbps', v => (v/1e6).toFixed(2))}</span></div>
+    <div class="legend-item"><span class="legend-swatch" style="background:#4f8cff"></span><span class="legend-name">Download</span><span class="legend-stat">${stats(downBps, 'Mbps', v => (v/1e6).toFixed(2))}</span></div>`;
+
+  destroyChart(`${chartId}-signal`);
+  chartInstances[`${chartId}-signal`] = new Chart(document.getElementById(`${chartId}-signal`), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {label: '1310nm OLT Rx for ONU', data: rxDbm, borderColor: '#e67e22', backgroundColor: 'transparent', spanGaps: true, pointRadius: 2, pointHoverRadius: 4, borderWidth: 1.5, tension: 0.15},
+      ],
+    },
+    options: {
+      ...gridOpts,
+      scales: {
+        x: {ticks: {color: '#8a96ab', maxTicksLimit: 5, font: {size: 10}}, grid: {color: '#232c40'}},
+        y: {
+          title: {display: true, text: 'dBm', color: '#8a96ab', font: {size: 10}},
+          ticks: {color: '#8a96ab', font: {size: 10}},
+          grid: {color: '#232c40'},
+        },
+      },
+    },
+  });
+  document.getElementById(`${chartId}-signal-legend`).innerHTML = `
+    <div class="legend-item"><span class="legend-swatch" style="background:#e67e22"></span><span class="legend-name">1310nm OLT Rx for ONU</span><span class="legend-stat">${stats(rxDbm, 'dBm', v => v.toFixed(2))}</span></div>`;
+}
+
+async function runSearch() {
+  const mac = macInput.value.trim();
+  if (!mac) return;
+  errEl.textContent = '';
+  hitsEl.innerHTML = '';
+  table.style.display = 'none';
+  tbody.innerHTML = '';
+  goBtn.disabled = true;
+  goBtn.textContent = 'Scanning fleet…';
+  metaEl.textContent = '';
+
+  try {
+    const res = await fetch('/mac-finder-api/search', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({mac})
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      errEl.textContent = data.error || 'search failed';
+      return;
+    }
+
+    const queryLabel = data.query_type === 'sn' ? 'serial' : 'MAC';
+    metaEl.textContent = `Scanned ${data.scanned} OLTs in ${data.elapsed_s}s — ${queryLabel} ${data.mac}`;
+
+    if (data.hits.length === 0) {
+      hitsEl.innerHTML = '<div class="empty-msg">Not found on any OLT in the fleet.</div>';
+    } else {
+      for (const h of data.hits) {
+        const div = document.createElement('div');
+        div.className = 'hit-card';
+        const online = h.online_status || '';
+        const statusClass = online.toLowerCase() === 'online' ? 'pill-online' : (online ? 'pill-offline' : '');
+        const macRows = (h.onu_macs || []).map(m => `
+              <tr><td>${m.mac}</td><td>${m.vlan}</td><td>${m.mac_type}</td></tr>`).join('');
+        const historyMac = data.query_type === 'mac' ? data.mac : (h.onu_macs && h.onu_macs[0] && h.onu_macs[0].mac);
+        const chartId = 'c' + Math.random().toString(36).slice(2);
+
+        div.innerHTML = `
+          <div class="olt-name">${h.label || h.location || h.ip} <span class="${statusClass}">${online ? '· ' + online : ''}</span></div>
+          <div class="olt-ip">${h.ip}${h.location ? ' · ' + h.location : ''} — PON ${h.pon ?? '—'} / ONU ${h.onu ?? '—'} / VLAN ${h.vlan ?? '—'}</div>
+
+          <div class="section">
+            <div class="section-title">Optical Status</div>
+            <table class="mini-table">
+              <thead><tr><th>Rx (ONU)</th><th>Tx (ONU)</th><th>Distance</th><th>Temp</th><th>Voltage</th><th>Bias</th></tr></thead>
+              <tbody><tr>
+                <td>${h.rx_power_dbm ?? '—'} dBm</td>
+                <td>${h.tx_power_dbm ?? '—'} dBm</td>
+                <td>${h.distance ?? '—'}</td>
+                <td>${h.temperature ?? '—'}</td>
+                <td>${h.voltage ?? '—'}</td>
+                <td>${h.bias_current ?? '—'}</td>
+              </tr></tbody>
+            </table>
+          </div>
+
+          <div class="section">
+            <div class="section-title">Traffic / Signal</div>
+            <div class="chart-row">
+              <div class="chart-panel">
+                <div class="panel-title">gpon-onu_${h.pon ?? '?'}:${h.onu ?? '?'} traffic</div>
+                <canvas id="${chartId}-traffic"></canvas>
+                <div class="panel-footer">
+                  <div class="legend-list" id="${chartId}-traffic-legend"></div>
+                  <div class="panel-icons">
+                    <button class="icon-btn" title="Refresh" onclick="loadHistory('${chartId}','${historyMac || ''}')">⟳</button>
+                    <button class="icon-btn" title="More">⋯</button>
+                  </div>
+                </div>
+              </div>
+              <div class="chart-panel">
+                <div class="panel-title">gpon-onu_${h.pon ?? '?'}:${h.onu ?? '?'} signal</div>
+                <canvas id="${chartId}-signal"></canvas>
+                <div class="panel-footer">
+                  <div class="legend-list" id="${chartId}-signal-legend"></div>
+                  <div class="panel-icons">
+                    <button class="icon-btn" title="Refresh" onclick="loadHistory('${chartId}','${historyMac || ''}')">⟳</button>
+                    <button class="icon-btn" title="More">⋯</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="chart-note" id="${chartId}-note">Loading history…</div>
+          </div>
+
+          <div class="section">
+            <div class="section-title">Running Config</div>
+            <div class="config-block">${(h.running_config || '—').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}</div>
+          </div>
+
+          <div class="section">
+            <div class="section-title">MACs on OLT from this ONU</div>
+            <table class="mini-table">
+              <thead><tr><th>MAC address</th><th>VLAN</th><th>Type</th></tr></thead>
+              <tbody>${macRows || '<tr><td colspan="3">—</td></tr>'}</tbody>
+            </table>
+          </div>`;
+        hitsEl.appendChild(div);
+        if (historyMac) loadHistory(chartId, historyMac);
+        else document.getElementById(`${chartId}-note`).textContent = 'No client MAC known for this ONU — nothing to track yet.';
+      }
+    }
+
+    table.style.display = '';
+    for (const r of data.results) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${r.label || '—'}</td>
+        <td>${r.ip}</td>
+        <td>${r.location || '—'}</td>
+        <td><span class="badge b-${r.status}">${statusLabel(r.status)}</span></td>
+        <td>${r.detail || ''}</td>`;
+      tbody.appendChild(tr);
+    }
+  } catch (e) {
+    errEl.textContent = 'Request failed: ' + e;
+  } finally {
+    goBtn.disabled = false;
+    goBtn.textContent = 'Search';
+  }
+}
+
+goBtn.addEventListener('click', runSearch);
+macInput.addEventListener('keydown', e => { if (e.key === 'Enter') runSearch(); });
+
+document.getElementById('refreshFleet').addEventListener('click', async () => {
+  const btn = document.getElementById('refreshFleet');
+  btn.disabled = true;
+  btn.textContent = 'Refreshing…';
+  try {
+    const res = await fetch('/mac-finder-api/refresh-fleet', {method: 'POST'});
+    const data = await res.json();
+    btn.textContent = res.ok ? `Refreshed (${data.refreshed} OLTs)` : 'Refresh failed';
+    if (!res.ok) errEl.textContent = data.error;
+  } catch (e) {
+    btn.textContent = 'Refresh failed';
+  } finally {
+    setTimeout(() => { btn.disabled = false; btn.textContent = 'Refresh fleet list'; }, 2000);
+  }
+});
+</script>
+</body>
+</html>

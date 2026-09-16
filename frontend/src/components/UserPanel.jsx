@@ -12,6 +12,46 @@ import { resolveAvatar } from '../utils/avatar.js';
 GlobalWorkerOptions.workerSrc = workerSrc;
 
 const statusTabs = ['pending', 'done', 'cancelled', 'rescheduled'];
+// Same-origin iframe (both served from this site's own nginx), so we can
+// read its real content height directly and grow the iframe to match -
+// removes the fixed-height inner scrollbar the user found cramped, letting
+// MAC-Finder's page flow into the normal page scroll instead.
+function MacFinderFrame() {
+  const ref = React.useRef(null);
+  React.useEffect(() => {
+    const frame = ref.current;
+    if (!frame) return undefined;
+    let observer;
+    function resize() {
+      try {
+        const doc = frame.contentDocument;
+        if (!doc || !doc.documentElement) return;
+        frame.style.height = doc.documentElement.scrollHeight + 'px';
+      } catch (e) { /* cross-origin during a brief navigation - ignore */ }
+    }
+    function onLoad() {
+      resize();
+      try {
+        observer = new ResizeObserver(resize);
+        observer.observe(frame.contentDocument.documentElement);
+      } catch (e) { /* ResizeObserver unavailable - the onLoad resize still ran once */ }
+    }
+    frame.addEventListener('load', onLoad);
+    return () => {
+      frame.removeEventListener('load', onLoad);
+      if (observer) observer.disconnect();
+    };
+  }, []);
+  return (
+    <iframe
+      ref={ref}
+      src="/mac-finder/"
+      title="MAC-Finder"
+      style={{ width: '100%', minHeight: '600px', border: 'none', borderRadius: '8px', display: 'block' }}
+    />
+  );
+}
+
 const userViews = [
   {
     id: 'create',
@@ -40,6 +80,13 @@ const userViews = [
     chip: 'PR',
     title: 'Document archive',
     description: 'Each template keeps its own archive by year and month, plus the older paperwork you upload yourself.'
+  },
+  {
+    id: 'macfinder',
+    label: 'MAC-Finder',
+    chip: 'MF',
+    title: 'OLT MAC / serial finder',
+    description: 'Scan the OLT fleet for a client MAC address or ONU serial number.'
   }
 ];
 const userSections = [
@@ -1324,6 +1371,12 @@ export default function UserPanel({
       {activeView === 'profiling' && (
         <section className="tools-page">
           <Profiling token={token} user={user} mode="user" />
+        </section>
+      )}
+
+      {activeView === 'macfinder' && (
+        <section className="tools-page">
+          <MacFinderFrame />
         </section>
       )}
 
