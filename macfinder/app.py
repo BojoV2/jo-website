@@ -374,32 +374,11 @@ def fetch_radius_session(mac):
     session log keys on calling-station-id (the ONU's own MAC), so this finds
     live username/IP/status even when the OLT's own tables are empty.
     Read-only: a 'select' query, no writes. Returns None on any failure."""
-    try:
-        mk = load_json(MIKROTIK_PATH)
-    except (OSError, json.JSONDecodeError):
-        return None
-    try:
-        api = librouteros.connect(
-            host=mk["host"], username=mk["user"], password=mk["password"],
-            port=mk.get("port", 8728), timeout=6,
-        )
-        path = api.path("user-manager", "session")
-        calling = Key("calling-station-id")
-        rows = list(path.select().where(calling == mac.upper()))
-    except Exception:  # noqa: BLE001 — any RADIUS-side hiccup just means no fallback data
-        return None
-    if not rows:
-        return None
-    row = max(rows, key=lambda r: r.get("started", ""))
-    return {
-        "wan_ip": row.get("user-address"),
-        "wan_username": row.get("user"),
-        "wan_status": "Connected" if row.get("active") else "Disconnected",
-        "wan_started": row.get("started"),
-        "wan_uptime": row.get("uptime"),
-        "wan_nas_port": row.get("nas-port-id"),
-        "wan_source": "radius",
-    }
+    # Disabled 2026-09-17: the MikroTik read-only account this used
+    # (config/mikrotik.json) was disabled fleet-wide for security after a
+    # past outage traced to standing MikroTik API credentials. Never
+    # re-enable without a fresh, scoped account and the user's OK.
+    return None
 
 
 # Aggregate PON-port octet counter, read via the OLT's vendor SNMP MIB
