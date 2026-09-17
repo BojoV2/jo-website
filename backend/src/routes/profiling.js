@@ -823,6 +823,8 @@ router.get('/files/:fileId/download', async (req, res) => {
       'Content-Disposition',
       `inline; filename="${(file.original_name || 'document').replace(/"/g, '')}"`
     );
+    // short private cache - auth still gated by the route above, just avoids re-fetching the same file within one viewing session
+    res.setHeader('Cache-Control', 'private, max-age=300');
     return fs.createReadStream(file.file_path).pipe(res);
   } catch (err) {
     return res.status(500).json({ error: err.message });

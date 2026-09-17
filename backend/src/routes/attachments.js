@@ -168,6 +168,8 @@ router.get('/attachments/:attachmentId/file', requireAuth, async (req, res) => {
     }
     if (mime_type) res.setHeader('Content-Type', mime_type);
     res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(original_name)}"`);
+    // short private cache - auth still gated by the route above, just avoids re-fetching the same file within one viewing session
+    res.setHeader('Cache-Control', 'private, max-age=300');
     return res.sendFile(absolutePath);
   } catch (err) {
     return res.status(500).json({ error: err.message });

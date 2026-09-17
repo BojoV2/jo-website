@@ -274,6 +274,8 @@ router.get('/messages/:messageId/image', requireAuthOrQueryToken, async (req, re
     if (!fs.existsSync(abs)) return res.status(404).json({ error: 'Image file missing' });
     if (row.rows[0].mime_type) res.setHeader('Content-Type', row.rows[0].mime_type);
     res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(row.rows[0].image_name || 'image')}"`);
+    // short private cache - auth still gated by the route above, just avoids re-fetching the same file within one viewing session
+    res.setHeader('Cache-Control', 'private, max-age=300');
     return res.sendFile(abs);
   } catch (err) {
     return res.status(500).json({ error: err.message });

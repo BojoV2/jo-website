@@ -84,6 +84,8 @@ router.get('/images/:imageId', requireAuthOrQueryToken, async (req, res) => {
       return res.status(404).json({ error: 'Image file missing' });
     }
 
+    // short private cache - auth still gated by the route above, just avoids re-fetching the same file within one viewing session
+    res.setHeader('Cache-Control', 'private, max-age=300');
     res.sendFile(filePath);
   } catch (err) {
     res.status(500).json({ error: err.message });

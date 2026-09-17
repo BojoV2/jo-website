@@ -386,6 +386,8 @@ router.get('/predefined-pdfs/:predefinedPdfId/file', requireAuth, async (req, re
     }
 
     res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(`${result.rows[0].name}.pdf`)}"`);
+    // short private cache - auth still gated by the route above, just avoids re-fetching the same file within one viewing session
+    res.setHeader('Cache-Control', 'private, max-age=300');
     return res.sendFile(absolutePath);
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -596,6 +598,8 @@ router.get('/:templateId/file', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'Template file missing' });
     }
 
+    // short private cache - auth still gated by the route above, just avoids re-fetching the same file within one viewing session
+    res.setHeader('Cache-Control', 'private, max-age=300');
     return res.sendFile(absolutePath);
   } catch (err) {
     return res.status(500).json({ error: err.message });

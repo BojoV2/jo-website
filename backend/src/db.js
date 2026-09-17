@@ -10,7 +10,13 @@ if (!process.env.DATABASE_URL) {
 }
 
 export const pool = new Pool({
-  connectionString: process.env.DATABASE_URL
+  connectionString: process.env.DATABASE_URL,
+  // Bounded explicitly: the pg default of 0 (wait forever) for
+  // connectionTimeoutMillis means a request queues silently instead of
+  // failing fast if the pool is ever exhausted or Postgres is unreachable.
+  max: 10,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000
 });
 
 pool.on('error', (err) => {
