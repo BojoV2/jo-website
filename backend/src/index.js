@@ -16,6 +16,16 @@ if (!process.env.DATABASE_URL) {
 
 const port = process.env.PORT || 8080;
 
+// This integration has never actually succeeded in production (checked
+// 2026-09-17: 0 of 6 templates have a linked spreadsheet). The failure is
+// on Google's side, not this code - a service account has no Drive
+// storage of its own, so spreadsheets.create needs either a Shared Drive
+// or domain-wide delegation granted in Google Cloud Console, which is
+// outside what this app can fix. Log the real cause once per distinct
+// error instead of repeating the same line every sync interval forever,
+// so a genuinely new problem doesn't get lost in old noise.
+let lastGoogleSheetsSyncError = null;
+
 async function syncGoogleSheetsTemplateState() {
   if (!isGoogleSheetsEnabled()) {
     return;
@@ -25,9 +35,18 @@ async function syncGoogleSheetsTemplateState() {
     const result = await syncAllTemplateSpreadsheets();
     // eslint-disable-next-line no-console
     console.log(`Google Sheets sync complete for ${result.synced} template(s).`);
+    lastGoogleSheetsSyncError = null;
   } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error(`Google Sheets sync failed: ${err.message}`);
+    if (err.message !== lastGoogleSheetsSyncError) {
+      lastGoogleSheetsSyncError = err.message;
+      // eslint-disable-next-line no-console
+      console.error(
+        `Google Sheets sync failed: ${err.message} ` +
+        '(service account likely lacks Drive storage/permission - needs a ' +
+        'fix in Google Cloud Console, not this app; will keep retrying ' +
+        'quietly and only log again if the error changes)'
+      );
+    }
   }
 }
 
