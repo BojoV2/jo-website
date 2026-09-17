@@ -1,20 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import {
-  buildMonthSheetTitle,
-  buildSpreadsheetTitle,
+  buildTemplateTabTitle,
   isGoogleSheetsEnabled
 } from '../src/services/googleSheetsService.js';
 
 describe('googleSheetsService helpers', () => {
-  it('buildMonthSheetTitle returns YYYY-MM using UTC month', () => {
-    const value = buildMonthSheetTitle(new Date('2026-03-16T10:30:00.000Z'));
-    expect(value).toBe('2026-03');
+  it('buildTemplateTabTitle strips characters Sheets forbids in tab names and trims long titles', () => {
+    const value = buildTemplateTabTitle('A'.repeat(150) + '[weird]/name');
+    expect(value).not.toMatch(/[[\]/]/);
+    expect(value.length).toBeLessThanOrEqual(100);
   });
 
-  it('buildSpreadsheetTitle prefixes and trims long template names', () => {
-    const value = buildSpreadsheetTitle('A'.repeat(150));
-    expect(value.startsWith('JOBorder - ')).toBe(true);
-    expect(value.length).toBeLessThanOrEqual(100);
+  it('buildTemplateTabTitle falls back to Untitled for empty input', () => {
+    expect(buildTemplateTabTitle('   ')).toBe('Untitled');
   });
 
   it('isGoogleSheetsEnabled returns false when credentials are absent', () => {

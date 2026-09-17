@@ -5,7 +5,6 @@ import multer from 'multer';
 import { v4 as uuidv4 } from 'uuid';
 import { query } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
-import { ensureTemplateSpreadsheet, isGoogleSheetsEnabled } from '../services/googleSheetsService.js';
 import { ensureProfilingForTemplate } from './profiling.js';
 
 const router = express.Router();
@@ -113,7 +112,6 @@ router.get('/', requireAuth, async (_req, res) => {
   try {
     const result = await query(
       `SELECT t.id, t.title, t.description, t.file_path, t.created_by, t.created_at,
-        t.google_spreadsheet_id, t.google_spreadsheet_url,
         t.version,
         u.name AS created_by_name
        FROM pdf_templates t
@@ -158,46 +156,12 @@ router.post('/', requireAuth, requireRole('super_admin', 'admin'), upload.single
       console.error(`Profiling folder setup failed: ${profilingErr.message}`);
     }
 
-    let googleSpreadsheetId = null;
-    let googleSpreadsheetUrl = null;
-    try {
-      if (isGoogleSheetsEnabled()) {
-        const sync = await ensureTemplateSpreadsheet({
-          id,
-          title,
-          description: description || null,
-          version: 1,
-          google_spreadsheet_id: null,
-          google_spreadsheet_url: null
-        });
-
-        if (sync?.spreadsheetId) {
-          googleSpreadsheetId = sync.spreadsheetId;
-          googleSpreadsheetUrl = sync.spreadsheetUrl || null;
-          await query(
-            `UPDATE pdf_templates
-             SET google_spreadsheet_id = $1,
-                 google_spreadsheet_url = $2
-             WHERE id = $3`,
-            [googleSpreadsheetId, googleSpreadsheetUrl, id]
-          );
-        }
-      }
-    } catch (err) {
-      // The Sheets mirror is a convenience, not part of the template. A bare
-      // service account cannot create Drive files, so this used to roll the
-      // upload back and fail every new template with a Google error.
-      console.error(`Template Sheets sync failed (template kept): ${err.message}`);
-    }
-
     return res.status(201).json({
       id,
       title,
       description: description || null,
       file_path: filePath,
-      version: 1,
-      google_spreadsheet_id: googleSpreadsheetId,
-      google_spreadsheet_url: googleSpreadsheetUrl
+      version: 1
     });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -216,7 +180,7 @@ router.put('/:templateId', requireAuth, requireRole('super_admin', 'admin'), asy
        SET title = $1,
            description = $2
        WHERE id = $3
-       RETURNING id, title, description, file_path, google_spreadsheet_id, google_spreadsheet_url, version, created_by, created_at`,
+       RETURNING id, title, description, file_path, version, created_by, created_at`,
       [title, description || null, req.params.templateId]
     );
 
@@ -634,7 +598,7 @@ router.put('/:templateId/file', requireAuth, requireRole('super_admin', 'admin')
        SET file_path = $1,
            version = COALESCE(version, 1) + 1
        WHERE id = $2
-       RETURNING id, title, description, file_path, google_spreadsheet_id, google_spreadsheet_url, version, created_by, created_at`,
+       RETURNING id, title, description, file_path, version, created_by, created_at`,
       [nextFilePath, req.params.templateId]
     );
 

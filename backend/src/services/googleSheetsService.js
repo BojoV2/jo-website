@@ -1,10 +1,22 @@
-import { google } from 'googleapis';
+/**
+ * Mirrors generated PDFs to a Google Sheet, one tab per template. Same
+ * working pattern as ticketSheetService.js: a bare service account cannot
+ * create its own Drive files (no personal storage quota), so this only
+ * ever opens and appends to a spreadsheet a human already created and
+ * shared with the service account - it never tries to create one itself.
+ * That's the fix for the 2026-09 bug where every template creation and
+ * every PDF export logged a Google permission error and never actually
+ * synced anything (0 of 6 templates ever got linked).
+ *
+ * Setup (one-time, human): create a Google Sheet, share it (Editor) with
+ * the service account's client_email, put its id in
+ * GOOGLE_TEMPLATES_SPREADSHEET_ID.
+ */
 import { query } from '../db.js';
+import { getSheetsDrive, isServiceAccountConfigured } from './ticketGoogle.js';
 
-const SPREADSHEET_SCOPES = [
-  'https://www.googleapis.com/auth/spreadsheets',
-  'https://www.googleapis.com/auth/drive'
-];
+const SETTING_ID = 'templates_spreadsheet_id';
+const SETTING_URL = 'templates_spreadsheet_url';
 
 const FIXED_HEADERS = [
   'record_id',
@@ -21,94 +33,16 @@ const FIXED_HEADERS = [
   'pdf_file_path'
 ];
 
-let googleClientsPromise = null;
+export function isGoogleSheetsEnabled() {
+  return isServiceAccountConfigured();
+}
 
 function sanitizeWhitespace(value) {
   return String(value || '').trim();
 }
 
-function normalizePrivateKey(value) {
-  return sanitizeWhitespace(value).replace(/\\n/g, '\n');
-}
-
-function parseServiceAccountCredentials() {
-  const rawJson = sanitizeWhitespace(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
-  if (rawJson) {
-    return JSON.parse(rawJson);
-  }
-
-  const rawBase64 = sanitizeWhitespace(process.env.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64);
-  if (rawBase64) {
-    return JSON.parse(Buffer.from(rawBase64, 'base64').toString('utf8'));
-  }
-
-  const clientEmail = sanitizeWhitespace(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL);
-  const privateKey = normalizePrivateKey(process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY);
-  const projectId = sanitizeWhitespace(process.env.GOOGLE_PROJECT_ID);
-
-  if (clientEmail && privateKey) {
-    return {
-      type: 'service_account',
-      project_id: projectId || undefined,
-      private_key: privateKey,
-      client_email: clientEmail
-    };
-  }
-
-  return null;
-}
-
-export function isGoogleSheetsEnabled() {
-  try {
-    return Boolean(parseServiceAccountCredentials());
-  } catch (_err) {
-    return false;
-  }
-}
-
-async function getGoogleClients() {
-  if (!googleClientsPromise) {
-    googleClientsPromise = (async () => {
-      const credentials = parseServiceAccountCredentials();
-      if (!credentials) {
-        throw new Error('Google Sheets credentials are not configured');
-      }
-
-      const auth = new google.auth.GoogleAuth({
-        credentials,
-        scopes: SPREADSHEET_SCOPES
-      });
-
-      return {
-        sheets: google.sheets({ version: 'v4', auth }),
-        drive: google.drive({ version: 'v3', auth })
-      };
-    })().catch((err) => {
-      googleClientsPromise = null;
-      throw err;
-    });
-  }
-
-  return googleClientsPromise;
-}
-
-function truncateTitle(value, limit = 100) {
-  const text = sanitizeWhitespace(value) || 'Untitled';
-  return text.length <= limit ? text : text.slice(0, limit).trim();
-}
-
-export function buildMonthSheetTitle(date = new Date()) {
-  const year = date.getUTCFullYear();
-  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-  return `${year}-${month}`;
-}
-
-export function buildSpreadsheetTitle(templateTitle) {
-  return truncateTitle(`JOBorder - ${sanitizeWhitespace(templateTitle) || 'Template'}`);
-}
-
-function escapeSheetTitle(sheetTitle) {
-  return String(sheetTitle).replace(/'/g, "''");
+function escapeTab(title) {
+  return String(title).replace(/'/g, "''");
 }
 
 function normalizeCellValue(value) {
@@ -118,138 +52,77 @@ function normalizeCellValue(value) {
   return JSON.stringify(value);
 }
 
-async function shareSpreadsheetIfConfigured(drive, spreadsheetId) {
-  const shareEmail = sanitizeWhitespace(process.env.GOOGLE_SHEETS_SHARE_EMAIL);
-  if (!shareEmail) return;
-
-  try {
-    await drive.permissions.create({
-      fileId: spreadsheetId,
-      sendNotificationEmail: false,
-      requestBody: {
-        type: 'user',
-        role: 'writer',
-        emailAddress: shareEmail
-      }
-    });
-  } catch (err) {
-    const message = String(err?.message || '');
-    if (!message.includes('already') && !message.includes('duplicate')) {
-      throw err;
-    }
-  }
+// Sheet tab names cannot contain []*?/\: and are capped at 100 chars.
+export function buildTemplateTabTitle(templateTitle) {
+  const cleaned = sanitizeWhitespace(templateTitle).replace(/[[\]*?/\\:]/g, ' ').trim();
+  const text = cleaned || 'Untitled';
+  return text.length <= 100 ? text : text.slice(0, 100).trim();
 }
 
-async function createSpreadsheetForTemplate({ title, description }) {
-  const { sheets, drive } = await getGoogleClients();
-  const monthSheetTitle = buildMonthSheetTitle();
-  const response = await sheets.spreadsheets.create({
-    requestBody: {
-      properties: {
-        title: buildSpreadsheetTitle(title)
-      },
-      sheets: [
-        {
-          properties: {
-            title: monthSheetTitle,
-            gridProperties: {
-              frozenRowCount: 1
-            }
-          }
-        }
-      ]
-    },
+async function getSetting(key) {
+  const r = await query('SELECT value FROM app_settings WHERE key = $1', [key]);
+  return r.rowCount > 0 ? r.rows[0].value : null;
+}
+
+async function setSetting(key, value) {
+  await query(
+    `INSERT INTO app_settings (key, value) VALUES ($1, $2)
+     ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
+    [key, value]
+  );
+}
+
+async function ensureSpreadsheet() {
+  const configured = sanitizeWhitespace(process.env.GOOGLE_TEMPLATES_SPREADSHEET_ID);
+  const existing = configured || await getSetting(SETTING_ID);
+  if (!existing) {
+    throw new Error(
+      'GOOGLE_TEMPLATES_SPREADSHEET_ID is not configured - create a Google ' +
+      'Sheet, share it (Editor) with the service account, and set that env var'
+    );
+  }
+
+  const { sheets } = await getSheetsDrive();
+  const meta = await sheets.spreadsheets.get({
+    spreadsheetId: existing,
     fields: 'spreadsheetId,spreadsheetUrl'
   });
-
-  const spreadsheetId = response.data.spreadsheetId;
-  if (!spreadsheetId) {
-    throw new Error('Google Sheets did not return a spreadsheetId');
-  }
-
-  await shareSpreadsheetIfConfigured(drive, spreadsheetId);
-
-  return {
-    spreadsheetId,
-    spreadsheetUrl: response.data.spreadsheetUrl || `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`,
-    monthSheetTitle,
-    description
-  };
+  const spreadsheetUrl = meta.data.spreadsheetUrl ||
+    `https://docs.google.com/spreadsheets/d/${existing}/edit`;
+  await setSetting(SETTING_ID, existing);
+  await setSetting(SETTING_URL, spreadsheetUrl);
+  return { spreadsheetId: existing, spreadsheetUrl };
 }
 
-async function getSpreadsheetMetadata(spreadsheetId) {
-  const { sheets } = await getGoogleClients();
-  const response = await sheets.spreadsheets.get({
-    spreadsheetId,
-    fields: 'spreadsheetId,spreadsheetUrl,sheets.properties'
-  });
-  return response.data;
-}
-
-async function ensureMonthlyWorksheet(spreadsheetId, monthSheetTitle) {
-  const { sheets } = await getGoogleClients();
-  const metadata = await getSpreadsheetMetadata(spreadsheetId);
-  const exists = (metadata.sheets || []).some((sheet) => sheet.properties?.title === monthSheetTitle);
-
+async function ensureTab(spreadsheetId, tab) {
+  const { sheets } = await getSheetsDrive();
+  const meta = await sheets.spreadsheets.get({ spreadsheetId, fields: 'sheets.properties' });
+  const exists = (meta.data.sheets || []).some((s) => s.properties?.title === tab);
   if (!exists) {
     await sheets.spreadsheets.batchUpdate({
       spreadsheetId,
       requestBody: {
-        requests: [
-          {
-            addSheet: {
-              properties: {
-                title: monthSheetTitle,
-                gridProperties: {
-                  frozenRowCount: 1
-                }
-              }
-            }
-          }
-        ]
+        requests: [{
+          addSheet: { properties: { title: tab, gridProperties: { frozenRowCount: 1 } } }
+        }]
       }
     });
   }
-
-  return metadata.spreadsheetUrl || `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`;
+  return sheets;
 }
 
-async function getExistingHeaders(spreadsheetId, monthSheetTitle) {
-  const { sheets } = await getGoogleClients();
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `'${escapeSheetTitle(monthSheetTitle)}'!1:1`
-  });
+async function ensureHeaders(sheets, spreadsheetId, tab, submittedData) {
+  const headerRange = `'${escapeTab(tab)}'!1:1`;
+  const current = await sheets.spreadsheets.values.get({ spreadsheetId, range: headerRange });
+  const existingHeaders = Array.isArray(current.data.values?.[0]) ? current.data.values[0] : [];
 
-  return Array.isArray(response.data.values?.[0]) ? response.data.values[0] : [];
-}
-
-async function ensureHeaders(spreadsheetId, monthSheetTitle, submittedData) {
-  const { sheets } = await getGoogleClients();
-  const existingHeaders = await getExistingHeaders(spreadsheetId, monthSheetTitle);
   const dynamicHeaders = Object.keys(submittedData || {})
     .filter((key) => !FIXED_HEADERS.includes(key))
     .sort((a, b) => a.localeCompare(b));
 
   const mergedHeaders = existingHeaders.length > 0 ? [...existingHeaders] : [...FIXED_HEADERS];
-
-  if (existingHeaders.length === 0) {
-    for (const header of dynamicHeaders) {
-      if (!mergedHeaders.includes(header)) {
-        mergedHeaders.push(header);
-      }
-    }
-  } else {
-    for (const header of FIXED_HEADERS) {
-      if (!mergedHeaders.includes(header)) {
-        mergedHeaders.push(header);
-      }
-    }
-    for (const header of dynamicHeaders) {
-      if (!mergedHeaders.includes(header)) {
-        mergedHeaders.push(header);
-      }
-    }
+  for (const header of existingHeaders.length > 0 ? FIXED_HEADERS.concat(dynamicHeaders) : dynamicHeaders) {
+    if (!mergedHeaders.includes(header)) mergedHeaders.push(header);
   }
 
   const shouldWriteHeaders =
@@ -260,62 +133,22 @@ async function ensureHeaders(spreadsheetId, monthSheetTitle, submittedData) {
   if (shouldWriteHeaders) {
     await sheets.spreadsheets.values.update({
       spreadsheetId,
-      range: `'${escapeSheetTitle(monthSheetTitle)}'!1:1`,
+      range: headerRange,
       valueInputOption: 'RAW',
-      requestBody: {
-        values: [mergedHeaders]
-      }
+      requestBody: { values: [mergedHeaders] }
     });
   }
 
   return mergedHeaders;
 }
 
-export async function ensureTemplateSpreadsheet(template) {
-  if (!isGoogleSheetsEnabled()) {
-    return null;
-  }
+export async function syncGeneratedPdfToGoogleSheets({ template, generatedPdf, submittedData, user }) {
+  if (!isGoogleSheetsEnabled()) return null;
 
-  if (template.google_spreadsheet_id) {
-    try {
-      const spreadsheetUrl = await ensureMonthlyWorksheet(template.google_spreadsheet_id, buildMonthSheetTitle());
-      return {
-        spreadsheetId: template.google_spreadsheet_id,
-        spreadsheetUrl
-      };
-    } catch (err) {
-      const message = String(err?.message || '');
-      if (!message.includes('Requested entity was not found') && !message.includes('not found')) {
-        throw err;
-      }
-    }
-  }
-
-  return createSpreadsheetForTemplate({
-    title: template.title,
-    description: template.description
-  });
-}
-
-export async function syncGeneratedPdfToGoogleSheets({
-  template,
-  generatedPdf,
-  submittedData,
-  user
-}) {
-  if (!isGoogleSheetsEnabled()) {
-    return null;
-  }
-
-  const syncTarget = await ensureTemplateSpreadsheet(template);
-  const spreadsheetId = syncTarget?.spreadsheetId;
-  if (!spreadsheetId) {
-    throw new Error('Google Spreadsheet is not available for template sync');
-  }
-
-  const monthSheetTitle = buildMonthSheetTitle(generatedPdf.created_at ? new Date(generatedPdf.created_at) : new Date());
-  await ensureMonthlyWorksheet(spreadsheetId, monthSheetTitle);
-  const headers = await ensureHeaders(spreadsheetId, monthSheetTitle, submittedData);
+  const { spreadsheetId, spreadsheetUrl } = await ensureSpreadsheet();
+  const tab = buildTemplateTabTitle(template.title);
+  const sheets = await ensureTab(spreadsheetId, tab);
+  const headers = await ensureHeaders(sheets, spreadsheetId, tab, submittedData);
 
   const rowMap = {
     record_id: generatedPdf.id,
@@ -334,55 +167,13 @@ export async function syncGeneratedPdfToGoogleSheets({
   };
 
   const values = headers.map((header) => normalizeCellValue(rowMap[header]));
-  const { sheets } = await getGoogleClients();
   await sheets.spreadsheets.values.append({
     spreadsheetId,
-    range: `'${escapeSheetTitle(monthSheetTitle)}'!A:A`,
+    range: `'${escapeTab(tab)}'!A:A`,
     valueInputOption: 'RAW',
     insertDataOption: 'INSERT_ROWS',
-    requestBody: {
-      values: [values]
-    }
+    requestBody: { values: [values] }
   });
 
-  return {
-    spreadsheetId,
-    spreadsheetUrl: syncTarget.spreadsheetUrl || `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`,
-    monthSheetTitle
-  };
-}
-
-export async function syncAllTemplateSpreadsheets() {
-  if (!isGoogleSheetsEnabled()) {
-    return { synced: 0, skipped: true };
-  }
-
-  const templates = await query(
-    `SELECT id, title, description, version, google_spreadsheet_id, google_spreadsheet_url
-     FROM pdf_templates
-     ORDER BY created_at ASC`
-  );
-
-  let synced = 0;
-  for (const template of templates.rows) {
-    const result = await ensureTemplateSpreadsheet(template);
-    if (
-      result?.spreadsheetId &&
-      (
-        result.spreadsheetId !== template.google_spreadsheet_id ||
-        (result.spreadsheetUrl || null) !== (template.google_spreadsheet_url || null)
-      )
-    ) {
-      await query(
-        `UPDATE pdf_templates
-         SET google_spreadsheet_id = $1,
-             google_spreadsheet_url = $2
-         WHERE id = $3`,
-        [result.spreadsheetId, result.spreadsheetUrl || null, template.id]
-      );
-    }
-    synced += 1;
-  }
-
-  return { synced, skipped: false };
+  return { spreadsheetId, spreadsheetUrl, tab };
 }

@@ -197,7 +197,7 @@ router.post('/generate', requireAuth, async (req, res) => {
     }
 
     const templateResult = await query(
-      `SELECT id, title, description, file_path, version, google_spreadsheet_id, google_spreadsheet_url
+      `SELECT id, title, description, file_path, version
        FROM pdf_templates
        WHERE id = $1`,
       [template_id]
@@ -265,11 +265,12 @@ router.post('/generate', requireAuth, async (req, res) => {
     );
 
     try {
-      // Only sync to Sheets for templates that ALREADY have a linked spreadsheet.
-      // Do not auto-create during generate: a service account cannot create a
-      // Drive file, so an unconditional create would 403 on every generation.
-      if (isGoogleSheetsEnabled() && templateResult.rows[0].google_spreadsheet_id) {
-        const syncResult = await syncGeneratedPdfToGoogleSheets({
+      // Mirrors to a tab (one per template) on a spreadsheet a human
+      // already created and shared with the service account - see
+      // googleSheetsService.js for why it never tries to create its own
+      // spreadsheet. Best-effort: sync failure must never fail generation.
+      if (isGoogleSheetsEnabled()) {
+        await syncGeneratedPdfToGoogleSheets({
           template: templateResult.rows[0],
           generatedPdf: {
             id: generatedId,
@@ -283,22 +284,8 @@ router.post('/generate', requireAuth, async (req, res) => {
           submittedData: submitted_data,
           user: req.user
         });
-
-        if (syncResult?.spreadsheetId && syncResult.spreadsheetId !== templateResult.rows[0].google_spreadsheet_id) {
-          await query(
-            `UPDATE pdf_templates
-             SET google_spreadsheet_id = $1,
-                 google_spreadsheet_url = $2
-             WHERE id = $3`,
-            [syncResult.spreadsheetId, syncResult.spreadsheetUrl || null, template_id]
-          );
-        }
       }
     } catch (err) {
-      // Google Sheets sync is best-effort and MUST NOT fail PDF generation.
-      // A plain service account cannot create a template spreadsheet (403
-      // "caller does not have permission"), so this would otherwise 500 every
-      // generate. Keep the PDF + row; just log the sync failure.
       console.error(`PDF ${generatedId} Google Sheets sync failed (non-fatal): ${err.message}`);
     }
 
