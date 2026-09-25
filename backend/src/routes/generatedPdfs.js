@@ -9,6 +9,7 @@ import { restoreFileToTemp } from '../services/archiveCrypto.js';
 import { generatePdfFromTemplate } from '../services/pdfService.js';
 import { syncGeneratedPdfToGoogleSheets, isGoogleSheetsEnabled } from '../services/googleSheetsService.js';
 import { PDF_STATUSES } from '../constants.js';
+import { createJobForGenerated } from '../services/feJobs.js';
 
 const router = express.Router();
 
@@ -19,9 +20,20 @@ fs.mkdirSync(generatedDir, { recursive: true });
 const allowedStatus = PDF_STATUSES;
 const autoDoneNote = 'Auto-moved to done after 30 days in pending';
 
+// The container runs in UTC, so plain getDate() stamped anything generated
+// before 08:00 Manila with the previous day's date.
+function manilaDateParts(date = new Date()) {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' })
+      .formatToParts(date)
+      .map((part) => [part.type, part.value])
+  );
+  return { year: parts.year, month: parts.month, day: parts.day };
+}
+
 function currentMonthKey(date = new Date()) {
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}${pad(date.getMonth() + 1)}`;
+  const { year, month } = manilaDateParts(date);
+  return `${year}${month}`;
 }
 
 // Allocate the next order number for the current month. The counter row for a new
@@ -40,9 +52,8 @@ async function allocateMonthlyOrderNumber(date = new Date()) {
     [monthKey]
   );
   const seq = result.rows[0].current_value;
-  const pad = (n) => String(n).padStart(2, '0');
-  const datePart = `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}`;
-  return `${datePart}-${seq}`;
+  const { year, month, day } = manilaDateParts(date);
+  return `${year}${month}${day}-${seq}`;
 }
 
 function normalizeSubmittedData(raw) {
@@ -253,9 +264,9 @@ router.post('/generate', requireAuth, async (req, res) => {
 
     await query(
       `INSERT INTO generated_pdfs
-      (id, template_id, template_version, user_id, file_path, submitted_data, status)
-      VALUES ($1, $2, $3, $4, $5, $6, 'pending')`,
-      [generatedId, template_id, Number(templateResult.rows[0].version || 1), req.user.id, outputRelativePath, JSON.stringify(submitted_data)]
+      (id, template_id, template_version, user_id, file_path, submitted_data, status, order_number)
+      VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7)`,
+      [generatedId, template_id, Number(templateResult.rows[0].version || 1), req.user.id, outputRelativePath, JSON.stringify(submitted_data), orderNumber]
     );
 
     await query(
@@ -263,6 +274,20 @@ router.post('/generate', requireAuth, async (req, res) => {
        VALUES ($1, $2, $3, $4, $5, $6)`,
       [uuidv4(), generatedId, null, 'pending', req.user.id, 'PDF generated']
     );
+
+    try {
+      // Application Forms and Job Orders become Field Eng jobs. Best-effort:
+      // the FE board's periodic sync picks up anything missed here.
+      await createJobForGenerated({
+        generatedPdfId: generatedId,
+        templateTitle: templateResult.rows[0].title,
+        submittedData: submitted_data,
+        orderNumber,
+        createdAt: new Date()
+      });
+    } catch (err) {
+      console.error(`PDF ${generatedId} Field Eng job creation failed (non-fatal): ${err.message}`);
+    }
 
     try {
       // Mirrors to a tab (one per template) on a spreadsheet a human

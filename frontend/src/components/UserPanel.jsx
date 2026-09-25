@@ -7,6 +7,7 @@ import StatusStackedBarChart from './StatusStackedBarChart.jsx';
 import StatusDonutChart from './StatusDonutChart.jsx';
 import BillingTools from './BillingTools.jsx';
 import Profiling from './Profiling.jsx';
+import FieldEngineering from './FieldEngineering.jsx';
 import { resolveAvatar } from '../utils/avatar.js';
 
 GlobalWorkerOptions.workerSrc = workerSrc;
@@ -80,6 +81,13 @@ const userViews = [
     chip: 'PR',
     title: 'Document archive',
     description: 'Each template keeps its own archive by year and month, plus the older paperwork you upload yourself.'
+  },
+  {
+    id: 'fieldeng',
+    label: 'Field Eng',
+    chip: 'FE',
+    title: 'Field Engineering',
+    description: 'Every Application Form and Job Order lands here. Assign a team and record the visit result.'
   },
   {
     id: 'macfinder',
@@ -1313,7 +1321,7 @@ export default function UserPanel({
               <span>User portal</span>
               <span>/</span>
               <strong>{activeViewMeta.label}</strong>
-              {!['tools', 'profiling'].includes(activeView) && selectedTemplate && (
+              {!['tools', 'profiling', 'fieldeng'].includes(activeView) && selectedTemplate && (
                 <>
                   <span>/</span>
                   <span>{selectedTemplate.title}</span>
@@ -1371,6 +1379,12 @@ export default function UserPanel({
       {activeView === 'profiling' && (
         <section className="tools-page">
           <Profiling token={token} user={user} mode="user" />
+        </section>
+      )}
+
+      {activeView === 'fieldeng' && (
+        <section className="tools-page">
+          <FieldEngineering token={token} />
         </section>
       )}
 

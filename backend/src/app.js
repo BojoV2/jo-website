@@ -14,6 +14,7 @@ import trackingRoutes from './routes/tracking.js';
 import ticketRoutes from './routes/tickets.js';
 import profilingRoutes from './routes/profiling.js';
 import clientRoutes from './routes/clients.js';
+import fieldEngRoutes from './routes/fieldEng.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -81,6 +82,7 @@ app.use('/api/tracking', trackingRoutes);
 app.use('/api/tickets', ticketRoutes);
 app.use('/api/profiling', profilingRoutes);
 app.use('/api/clients', clientRoutes);
+app.use('/api/field-eng', fieldEngRoutes);
 
 app.use((err, _req, res, _next) => {
   return res.status(500).json({ error: err.message || 'Internal server error' });

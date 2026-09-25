@@ -303,3 +303,145 @@ CREATE INDEX IF NOT EXISTS idx_profiling_folders_template ON profiling_folders(t
 ALTER TABLE generated_pdfs ADD COLUMN IF NOT EXISTS auto_closed BOOLEAN DEFAULT FALSE;
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER DEFAULT 0;
+
+-- Field Engineering (FE) job monitor. Additive only: nothing here alters or
+-- drops existing data. Seeds run once, only while their table is empty, so
+-- names the FE team renames or retires are never re-added on reboot.
+
+ALTER TABLE generated_pdfs ADD COLUMN IF NOT EXISTS order_number VARCHAR(40);
+
+CREATE TABLE IF NOT EXISTS fe_teams (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(120) NOT NULL,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    legacy BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_fe_teams_name ON fe_teams (lower(name));
+
+CREATE TABLE IF NOT EXISTS fe_team_members (
+    id SERIAL PRIMARY KEY,
+    team_id INT NOT NULL REFERENCES fe_teams(id),
+    name VARCHAR(120) NOT NULL,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_fe_team_members_team ON fe_team_members(team_id);
+
+INSERT INTO fe_teams (name)
+SELECT t.name FROM (VALUES ('Team Main'), ('Team Julugan'), ('Team Kawit'), ('Team Trece')) AS t(name)
+WHERE NOT EXISTS (SELECT 1 FROM fe_teams);
+
+CREATE TABLE IF NOT EXISTS fe_options (
+    id SERIAL PRIMARY KEY,
+    kind VARCHAR(30) NOT NULL,
+    value VARCHAR(120) NOT NULL,
+    sort INT NOT NULL DEFAULT 0,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    UNIQUE (kind, value)
+);
+
+INSERT INTO fe_options (kind, value, sort)
+SELECT v.kind, v.value, v.sort FROM (VALUES
+    ('area', 'TANZA', 1), ('area', 'KAWIT', 2), ('area', 'TRECE', 3), ('area', 'NAIC', 4),
+    ('install_status', 'Pending', 1), ('install_status', 'Installed', 2), ('install_status', 'Reschedule', 3),
+    ('install_status', 'Not Installed', 4), ('install_status', 'Cancelled', 5), ('install_status', 'Reassigned', 6),
+    ('repair_status', 'Pending', 1), ('repair_status', 'Repaired', 2), ('repair_status', 'Reschedule', 3),
+    ('repair_status', 'Unresolved', 4), ('repair_status', 'Escalated', 5), ('repair_status', 'Reassigned', 6),
+    ('pullout_status', 'Pending', 1), ('pullout_status', 'Nakuha ang Modem', 2), ('pullout_status', 'Hindi Nakuha ang Modem', 3),
+    ('install_reason', 'Customer Not Around', 1), ('install_reason', 'Customer Cancelled', 2), ('install_reason', 'No Available Port', 3),
+    ('install_reason', 'No Facility', 4), ('install_reason', 'No Signal', 5), ('install_reason', 'No Access', 6),
+    ('install_reason', 'Wrong Address', 7), ('install_reason', 'Weather', 8), ('install_reason', 'Emergency Splicing', 9),
+    ('install_reason', 'Called to Repair', 10), ('install_reason', 'Called to OSP', 11), ('install_reason', 'PMO Project', 12),
+    ('install_reason', 'Relocate to Partners', 13), ('install_reason', 'Customer Request Reschedule', 14), ('install_reason', 'Others', 15),
+    ('repair_reason', 'Customer Not Around', 1), ('repair_reason', 'No Access', 2), ('repair_reason', 'Waiting for OSP', 3),
+    ('repair_reason', 'Waiting for Splicing', 4), ('repair_reason', 'Waiting for Materials', 5), ('repair_reason', 'No Power', 6),
+    ('repair_reason', 'Emergency Assignment', 7), ('repair_reason', 'Others', 8),
+    ('pullout_reason', 'Walang tao', 1), ('pullout_reason', 'Customer not around', 2), ('pullout_reason', 'Nagbayad na', 3),
+    ('pullout_reason', 'Walang nakatira', 4), ('pullout_reason', 'Others', 5),
+    ('problem', 'LOS Red', 1), ('problem', 'LOS Blinking', 2), ('problem', 'No Internet', 3), ('problem', 'Busted Modem', 4),
+    ('problem', 'Busted Adaptor', 5), ('problem', 'High Reading', 6), ('problem', 'Fiber Cut', 7), ('problem', 'Broken Drop Core', 8),
+    ('problem', 'Damaged ONU', 9), ('problem', 'Loose SC Connector', 10), ('problem', 'No Power', 11), ('problem', 'Slow Connection', 12),
+    ('problem', 'Packet Loss', 13), ('problem', 'ONU Reconfiguration', 14), ('problem', 'WiFi Issue', 15), ('problem', 'No 2.4G & 5G WIFI', 16),
+    ('problem', 'Router Issue', 17), ('problem', 'Relocation Modem', 18), ('problem', 'Relocation House', 19), ('problem', 'Fiber Relocation', 20),
+    ('problem', 'Open Nap Box', 21), ('problem', 'Activation', 22), ('problem', 'No Access', 23), ('problem', 'Customer Cancelled', 24),
+    ('problem', 'Others', 25)
+) AS v(kind, value, sort)
+WHERE NOT EXISTS (SELECT 1 FROM fe_options);
+
+CREATE TABLE IF NOT EXISTS fe_jobs (
+    id UUID PRIMARY KEY,
+    generated_pdf_id UUID UNIQUE REFERENCES generated_pdfs(id) ON DELETE SET NULL,
+    job_type VARCHAR(10) NOT NULL CHECK (job_type IN ('INSTALL', 'REPAIR', 'PULLOUT', 'RELOC')),
+    reloc_kind VARCHAR(10) CHECK (reloc_kind IN ('install', 'repair')),
+    history_only BOOLEAN NOT NULL DEFAULT FALSE,
+    template_title TEXT,
+    order_number VARCHAR(60),
+    customer_name TEXT,
+    customer_address TEXT,
+    customer_contact TEXT,
+    account_number TEXT,
+    plan TEXT,
+    jo_reason TEXT,
+    jo_date DATE,
+    team_id INT REFERENCES fe_teams(id),
+    area VARCHAR(60),
+    status VARCHAR(40) NOT NULL DEFAULT 'Pending',
+    reason VARCHAR(120),
+    closed_at TIMESTAMP,
+    source VARCHAR(10) NOT NULL DEFAULT 'app',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_by UUID REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_fe_jobs_status ON fe_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_fe_jobs_team ON fe_jobs(team_id);
+CREATE INDEX IF NOT EXISTS idx_fe_jobs_jo_date ON fe_jobs(jo_date);
+
+CREATE TABLE IF NOT EXISTS fe_visits (
+    id UUID PRIMARY KEY,
+    job_id UUID NOT NULL REFERENCES fe_jobs(id),
+    visit_date DATE,
+    team_id INT REFERENCES fe_teams(id),
+    status VARCHAR(40) NOT NULL,
+    reason VARCHAR(120),
+    problem VARCHAR(120),
+    difficulty VARCHAR(10),
+    start_time TIME,
+    end_time TIME,
+    drop_core_m NUMERIC(8, 2),
+    f_clamp INT,
+    house_clamp INT,
+    sc_connector INT,
+    onu INT,
+    modem_serial VARCHAR(80),
+    remarks TEXT,
+    source VARCHAR(10) NOT NULL DEFAULT 'app',
+    source_ref VARCHAR(40),
+    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_fe_visits_job ON fe_visits(job_id);
+CREATE INDEX IF NOT EXISTS idx_fe_visits_date ON fe_visits(visit_date);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_fe_visits_source_ref ON fe_visits(source_ref) WHERE source_ref IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS fe_audit (
+    id BIGSERIAL PRIMARY KEY,
+    entity VARCHAR(10) NOT NULL,
+    entity_id VARCHAR(64) NOT NULL,
+    job_id UUID,
+    action VARCHAR(40) NOT NULL,
+    detail JSONB DEFAULT '{}'::jsonb,
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    user_name VARCHAR(150),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_fe_audit_job ON fe_audit(job_id);

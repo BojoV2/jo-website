@@ -1,0 +1,680 @@
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { apiRequest, downloadWithToken, openWithTokenInNewTab } from '../api.js';
+
+// Field Eng: every Application Form / Job Order becomes a job the FE office
+// assigns to a team and records visit results against. Visible to everyone.
+
+const TYPE_LABEL = { INSTALL: 'Install', REPAIR: 'Repair', PULLOUT: 'Pull out', RELOC: 'Relocation' };
+const CLOSED = ['Installed', 'Repaired', 'Nakuha ang Modem', 'Cancelled', 'Not Installed', 'Unresolved', 'Unverified'];
+const GOOD = ['Installed', 'Repaired', 'Nakuha ang Modem'];
+const BAD = ['Cancelled', 'Not Installed', 'Unresolved', 'Hindi Nakuha ang Modem'];
+const MATERIALS = [['drop_core_m', 'Drop core (m)'], ['f_clamp', 'F-clamp'], ['house_clamp', 'House clamp'], ['sc_connector', 'SC connector'], ['onu', 'ONU']];
+const EMPTY_FILTERS = { view: 'open', type: '', area: '', team: '', q: '' };
+
+const effType = (job) => (job.job_type === 'RELOC' ? (job.reloc_kind === 'install' ? 'INSTALL' : 'REPAIR') : job.job_type);
+const statusKind = (type) => (type === 'INSTALL' ? 'install' : type === 'PULLOUT' ? 'pullout' : 'repair');
+const statusClass = (s) => (GOOD.includes(s) ? 'fe-pill fe-ok' : BAD.includes(s) ? 'fe-pill fe-bad' : s === 'Pending' || s === 'Unverified' ? 'fe-pill fe-muted' : 'fe-pill fe-warn');
+const ageClass = (d) => (d >= 3 ? 'fe-pill fe-bad' : d >= 1 ? 'fe-pill fe-warn' : 'fe-pill fe-ok');
+const manilaToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date());
+const minutes = (a, b) => {
+  if (!a || !b) return null;
+  const [h1, m1] = a.split(':').map(Number);
+  const [h2, m2] = b.split(':').map(Number);
+  let d = h2 * 60 + m2 - (h1 * 60 + m1);
+  if (d < 0) d += 1440;
+  return d;
+};
+const fmtDuration = (m) => (m == null ? '—' : `${Math.floor(m / 60)}h ${m % 60}m`);
+function slaFor(form, hours) {
+  if (form.status !== 'Installed') return 'EXEMPTED';
+  const m = minutes(form.start_time, form.end_time);
+  if (m == null || !form.difficulty) return 'PENDING TIME';
+  return m <= (hours[form.difficulty] || 999) * 60 ? 'PASS' : 'DELAY';
+}
+const pct = (a, b) => (b ? Math.round((a / b) * 100) : null);
+
+function blankVisit(job) {
+  return {
+    id: null, visit_date: manilaToday(), team_id: job?.team_id ?? '', status: '', reason: '', problem: '',
+    difficulty: '', start_time: '', end_time: '', drop_core_m: '', f_clamp: '', house_clamp: '', sc_connector: '', onu: '',
+    modem_serial: '', remarks: ''
+  };
+}
+
+function TeamSelect({ teams, value, onChange, id, className, includeBlank = true }) {
+  const active = teams.filter((t) => t.active);
+  const current = teams.find((t) => t.id === value);
+  const list = current && !current.active ? [...active, current] : active;
+  return (
+    <select id={id} className={className} value={value ?? ''} onChange={(e) => onChange(e.target.value === '' ? null : Number(e.target.value))}>
+      {includeBlank && <option value="">Unassigned</option>}
+      {list.map((t) => <option key={t.id} value={t.id}>{t.name}{t.active ? '' : ' (retired)'}</option>)}
+    </select>
+  );
+}
+
+export default function FieldEngineering({ token }) {
+  const [tab, setTab] = useState('board');
+  const [meta, setMeta] = useState({ teams: [], lists: {}, targets: {}, slaHours: {} });
+  const [filters, setFilters] = useState(EMPTY_FILTERS);
+  const [board, setBoard] = useState({ jobs: [], counts: {} });
+  const [loading, setLoading] = useState(false);
+  const [notice, setNotice] = useState(null);
+  const [openJobId, setOpenJobId] = useState(null);
+  const [today, setToday] = useState(null);
+  const [period, setPeriod] = useState({ period: 'week', from: '', to: '' });
+  const [reports, setReports] = useState(null);
+  const noticeTimer = useRef(null);
+
+  const say = useCallback((text, tone = 'ok') => {
+    setNotice({ text, tone });
+    window.clearTimeout(noticeTimer.current);
+    noticeTimer.current = window.setTimeout(() => setNotice(null), 4000);
+  }, []);
+
+  const loadMeta = useCallback(async () => {
+    try { setMeta(await apiRequest('/field-eng/meta', { token })); } catch (err) { say(err.message, 'error'); }
+  }, [token, say]);
+
+  const loadBoard = useCallback(async ({ quiet } = {}) => {
+    if (!quiet) setLoading(true);
+    try {
+      const p = new URLSearchParams();
+      Object.entries(filters).forEach(([k, v]) => { if (v) p.set(k, v); });
+      setBoard(await apiRequest(`/field-eng/jobs?${p.toString()}`, { token }));
+    } catch (err) {
+      say(err.message, 'error');
+    } finally {
+      if (!quiet) setLoading(false);
+    }
+  }, [filters, token, say]);
+
+  const loadToday = useCallback(async () => {
+    try { setToday(await apiRequest('/field-eng/today', { token })); } catch (err) { say(err.message, 'error'); }
+  }, [token, say]);
+
+  const reportQuery = useMemo(() => {
+    const p = new URLSearchParams({ period: period.period });
+    if (period.period === 'range') { p.set('from', period.from); p.set('to', period.to); }
+    return p.toString();
+  }, [period]);
+
+  const loadReports = useCallback(async () => {
+    if (period.period === 'range' && (!period.from || !period.to)) return;
+    try { setReports(await apiRequest(`/field-eng/reports?${reportQuery}`, { token })); } catch (err) { say(err.message, 'error'); }
+  }, [period, reportQuery, token, say]);
+
+  useEffect(() => { loadMeta(); }, [loadMeta]);
+  useEffect(() => {
+    const t = window.setTimeout(() => loadBoard(), filters.q ? 300 : 0);
+    return () => window.clearTimeout(t);
+  }, [loadBoard, filters.q]);
+  useEffect(() => { if (tab === 'today') loadToday(); }, [tab, loadToday]);
+  useEffect(() => { if (tab === 'reports') loadReports(); }, [tab, loadReports]);
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (document.hidden || openJobId) return;
+      if (tab === 'board') loadBoard({ quiet: true });
+      if (tab === 'today') loadToday();
+    }, 30000);
+    return () => window.clearInterval(timer);
+  }, [tab, openJobId, loadBoard, loadToday]);
+
+  const assign = async (job, teamId) => {
+    try {
+      await apiRequest(`/field-eng/jobs/${job.id}`, { method: 'PATCH', token, body: { team_id: teamId } });
+      const name = meta.teams.find((t) => t.id === teamId)?.name;
+      say(name ? `${job.customer_name || 'Job'} assigned to ${name}` : `${job.customer_name || 'Job'} unassigned`);
+      loadBoard({ quiet: true });
+    } catch (err) {
+      say(err.message, 'error');
+    }
+  };
+
+  const setFilter = (key, value) => setFilters((f) => ({ ...f, [key]: value }));
+  const kpis = [
+    { label: 'Open jobs', value: board.counts.open, apply: { ...EMPTY_FILTERS } },
+    { label: 'Unassigned', value: board.counts.unassigned, tone: 'bad', apply: { ...EMPTY_FILTERS, team: 'none' } },
+    { label: '3+ days old', value: board.counts.overdue, tone: 'warn', apply: { ...EMPTY_FILTERS, minAge: '3' } },
+    { label: 'Closed today', value: board.counts.closed_today, tone: 'ok', apply: { ...EMPTY_FILTERS, view: 'closed_today' } }
+  ];
+
+  return (
+    <div className="fe">
+      <div className="fe-tabs" role="tablist" aria-label="Field Eng sections">
+        {[['board', 'Board'], ['today', 'Today'], ['reports', 'Reports'], ['teams', 'Teams']].map(([id, label]) => (
+          <button key={id} type="button" role="tab" aria-selected={tab === id} className={tab === id ? 'fe-tab is-on' : 'fe-tab'} onClick={() => setTab(id)}>{label}</button>
+        ))}
+      </div>
+
+      {notice && <div className={`fe-notice ${notice.tone === 'error' ? 'is-error' : ''}`} role="status">{notice.text}</div>}
+
+      {tab === 'board' && (
+        <section className="fe-section">
+          <div className="fe-kpis">
+            {kpis.map((k) => (
+              <button key={k.label} type="button" className={`fe-card fe-kpi ${k.tone ? `fe-kpi--${k.tone}` : ''}`} onClick={() => setFilters(k.apply)}>
+                <span className="fe-kpi-n">{k.value ?? '—'}</span>
+                <span className="fe-kpi-l">{k.label}</span>
+              </button>
+            ))}
+          </div>
+
+          <div className="fe-card">
+            <div className="fe-filters">
+              <select aria-label="Which jobs" value={filters.view} onChange={(e) => setFilter('view', e.target.value)}>
+                <option value="open">Open jobs</option>
+                <option value="closed_today">Closed today</option>
+                <option value="closed">Closed / unverified</option>
+                <option value="all">Everything</option>
+              </select>
+              <select aria-label="Type" value={filters.type} onChange={(e) => setFilter('type', e.target.value)}>
+                <option value="">All types</option>
+                {Object.entries(TYPE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </select>
+              <select aria-label="Area" value={filters.area} onChange={(e) => setFilter('area', e.target.value)}>
+                <option value="">All areas</option>
+                {(meta.lists.area || []).map((a) => <option key={a}>{a}</option>)}
+              </select>
+              <select aria-label="Team" value={filters.team} onChange={(e) => setFilter('team', e.target.value)}>
+                <option value="">All teams</option>
+                <option value="none">Unassigned</option>
+                {meta.teams.filter((t) => t.active).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+              <input className="fe-search" type="search" placeholder="Search name, account #, order #, address" value={filters.q} onChange={(e) => setFilter('q', e.target.value)} aria-label="Search" />
+              {filters.minAge && <button type="button" className="fe-chipbtn" onClick={() => setFilter('minAge', '')}>3+ days old ×</button>}
+            </div>
+            <div className="fe-table-wrap">
+              <table className="fe-table">
+                <thead>
+                  <tr><th>Age</th><th>Type</th><th>Order #</th><th>Customer</th><th>Area</th><th>Team</th><th>Status</th></tr>
+                </thead>
+                <tbody>
+                  {board.jobs.map((job) => (
+                    <tr key={job.id} className="fe-row" onClick={() => setOpenJobId(job.id)}>
+                      <td><span className={ageClass(job.age_days)}>{job.age_days}d</span></td>
+                      <td>
+                        <span className={`fe-pill fe-type-${job.job_type}`}>{TYPE_LABEL[job.job_type]}{job.job_type === 'RELOC' && job.reloc_kind ? ` · ${job.reloc_kind}` : ''}</span>
+                      </td>
+                      <td className="fe-mono">{job.order_number || '—'}</td>
+                      <td>
+                        <div className="fe-name">{job.customer_name || '—'}</div>
+                        <div className="fe-sub">{[job.account_number && `Acct ${job.account_number}`, job.jo_reason || job.plan, job.template_title].filter(Boolean).join(' · ')}</div>
+                      </td>
+                      <td>{job.area || '—'}</td>
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <TeamSelect teams={meta.teams} value={job.team_id} className={job.team_id ? 'fe-inline' : 'fe-inline is-empty'} onChange={(id) => assign(job, id)} />
+                      </td>
+                      <td>
+                        <span className={statusClass(job.status)}>{job.status}</span>
+                        {job.visit_count > 0 && <div className="fe-sub">{job.visit_count} visit{job.visit_count > 1 ? 's' : ''} · last {job.last_visit_date}</div>}
+                      </td>
+                    </tr>
+                  ))}
+                  {!board.jobs.length && (
+                    <tr><td colSpan={7} className="fe-empty">{loading ? 'Loading…' : 'No jobs match these filters.'}</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {tab === 'today' && <TodayView data={today} />}
+
+      {tab === 'reports' && (
+        <ReportsView
+          data={reports} period={period} setPeriod={setPeriod}
+          onExport={async () => {
+            try { await downloadWithToken(`/field-eng/export?${reportQuery}`, token); } catch (err) { say(err.message, 'error'); }
+          }}
+        />
+      )}
+
+      {tab === 'teams' && <TeamsView token={token} meta={meta} setMeta={setMeta} say={say} onChanged={() => loadBoard({ quiet: true })} />}
+
+      {openJobId && (
+        <JobPanel
+          jobId={openJobId} token={token} meta={meta} say={say}
+          onClose={() => { setOpenJobId(null); loadBoard({ quiet: true }); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function JobPanel({ jobId, token, meta, say, onClose }) {
+  const [detail, setDetail] = useState(null);
+  const [form, setForm] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const closeRef = useRef(null);
+
+  const load = useCallback(async () => {
+    try {
+      const d = await apiRequest(`/field-eng/jobs/${jobId}`, { token });
+      setDetail(d);
+      setForm(blankVisit(d.job));
+    } catch (err) {
+      setError(err.message);
+    }
+  }, [jobId, token]);
+
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    closeRef.current?.focus();
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const job = detail?.job;
+  const type = job ? effType(job) : null;
+  const kind = type ? statusKind(type) : 'repair';
+  const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+
+  const setRelocKind = async (value) => {
+    try {
+      const d = await apiRequest(`/field-eng/jobs/${job.id}`, { method: 'PATCH', token, body: { reloc_kind: value } });
+      setDetail(d);
+      setForm((f) => ({ ...f, status: '', reason: '' }));
+    } catch (err) { setError(err.message); }
+  };
+  const setArea = async (value) => {
+    try {
+      setDetail(await apiRequest(`/field-eng/jobs/${job.id}`, { method: 'PATCH', token, body: { area: value } }));
+    } catch (err) { setError(err.message); }
+  };
+
+  const editVisit = (v) => {
+    setError('');
+    setForm({
+      ...blankVisit(job), ...Object.fromEntries(Object.entries(v).map(([k, val]) => [k, val ?? ''])),
+      team_id: v.team_id ?? ''
+    });
+  };
+
+  const save = async (e) => {
+    e.preventDefault();
+    setError('');
+    if (job.job_type === 'RELOC' && !job.reloc_kind) { setError('Choose whether this relocation is install-type or repair-type first.'); return; }
+    if (!form.status) { setError('Pick a status.'); return; }
+    setSaving(true);
+    const body = { ...form, team_id: form.team_id === '' ? null : Number(form.team_id) };
+    delete body.id; delete body.team_name; delete body.sla; delete body.source;
+    try {
+      const d = form.id
+        ? await apiRequest(`/field-eng/visits/${form.id}`, { method: 'PATCH', token, body })
+        : await apiRequest(`/field-eng/jobs/${job.id}/visits`, { method: 'POST', token, body });
+      setDetail(d);
+      setForm(blankVisit(d.job));
+      say(form.id ? 'Visit updated' : `Saved: ${d.job.customer_name || 'job'} is now ${d.job.status}`);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const rows = job ? [
+    ['Template', job.template_title],
+    [job.job_type === 'INSTALL' ? 'Application #' : 'Order #', job.order_number],
+    ['Account', job.account_number],
+    ['Name', job.customer_name],
+    ['Address', job.customer_address],
+    ['Contact', job.customer_contact],
+    ['Plan', job.plan],
+    ['JO reason', job.jo_reason],
+    ['JO date', job.jo_date]
+  ].filter(([, v]) => v) : [];
+  const duration = form ? minutes(form.start_time, form.end_time) : null;
+
+  return (
+    <div className="fe-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="fe-drawer" role="dialog" aria-modal="true" aria-label="Field job">
+        <div className="fe-drawer-head">
+          {job && <span className={`fe-pill fe-type-${job.job_type}`}>{TYPE_LABEL[job.job_type]}</span>}
+          <h3>{job?.customer_name || 'Loading…'} {job?.order_number && <span className="fe-mono fe-sub">{job.order_number}</span>}</h3>
+          {job && <span className={statusClass(job.status)}>{job.status}</span>}
+          <button ref={closeRef} type="button" className="fe-btn fe-btn--ghost" onClick={onClose}>Close</button>
+        </div>
+        {!detail && <div className="fe-drawer-body"><p className="fe-sub">{error || 'Loading…'}</p></div>}
+        {detail && form && (
+          <div className="fe-drawer-body">
+            <div className="fe-col">
+              <div className="fe-card fe-pad">
+                <span className="fe-label">From the form, filled by CSR</span>
+                <dl className="fe-dl">{rows.map(([k, v]) => (<React.Fragment key={k}><dt>{k}</dt><dd>{v}</dd></React.Fragment>))}</dl>
+                {job.generated_pdf_id && (
+                  <button type="button" className="fe-btn fe-btn--ghost" onClick={() => openWithTokenInNewTab(`/generated-pdfs/${job.generated_pdf_id}/download`, token).catch((err) => setError(err.message))}>Open PDF</button>
+                )}
+              </div>
+              <div className="fe-card fe-pad">
+                <span className="fe-label">Visits</span>
+                {!detail.visits.length && <p className="fe-sub">No visits recorded yet.</p>}
+                <ul className="fe-visits">
+                  {detail.visits.map((v) => (
+                    <li key={v.id}>
+                      <button type="button" className={form.id === v.id ? 'fe-visit is-on' : 'fe-visit'} onClick={() => editVisit(v)}>
+                        <span className="fe-mono">{v.visit_date || 'no date'}</span>
+                        <span className={statusClass(v.status)}>{v.status}</span>
+                        <span className="fe-sub">{[v.team_name, v.reason, v.sla && v.sla !== 'EXEMPTED' ? `SLA ${v.sla}` : null, v.source === 'excel' ? 'from Excel' : null].filter(Boolean).join(' · ')}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div className="fe-card fe-pad">
+                <span className="fe-label">History</span>
+                <ul className="fe-log">
+                  {detail.log.map((l, i) => <li key={i}><b>{l.action.replace(/_/g, ' ')}</b> · {l.user_name || 'system'} · {l.at}</li>)}
+                  {!detail.log.length && <li>No changes yet.</li>}
+                </ul>
+              </div>
+            </div>
+
+            <form className="fe-card fe-pad fe-form" onSubmit={save}>
+              <span className="fe-label">{form.id ? `Editing visit of ${form.visit_date}` : 'Record a visit result'}</span>
+              {job.job_type === 'RELOC' && (
+                <div className="fe-field">
+                  <label htmlFor="fe-reloc">Relocation kind</label>
+                  <select id="fe-reloc" value={job.reloc_kind || ''} onChange={(e) => setRelocKind(e.target.value)}>
+                    <option value="" disabled>Choose…</option>
+                    <option value="repair">Repair-type · move modem or fiber</option>
+                    <option value="install">Install-type · new drop to a new house</option>
+                  </select>
+                </div>
+              )}
+              <div className="fe-grid2">
+                <div className="fe-field"><label htmlFor="fe-date">Visit date</label><input id="fe-date" type="date" value={form.visit_date} onChange={set('visit_date')} required /></div>
+                <div className="fe-field">
+                  <label htmlFor="fe-team">Team</label>
+                  <TeamSelect id="fe-team" teams={meta.teams} value={form.team_id === '' ? null : Number(form.team_id)} onChange={(id) => setForm((f) => ({ ...f, team_id: id ?? '' }))} />
+                </div>
+                <div className="fe-field">
+                  <label htmlFor="fe-area">Area</label>
+                  <select id="fe-area" value={job.area || ''} onChange={(e) => setArea(e.target.value)}>
+                    <option value="">—</option>
+                    {(meta.lists.area || []).map((a) => <option key={a}>{a}</option>)}
+                  </select>
+                </div>
+                <div className="fe-field">
+                  <label htmlFor="fe-status">{type === 'PULLOUT' ? 'Modem result' : 'Status'}</label>
+                  <select id="fe-status" value={form.status} onChange={set('status')} required>
+                    <option value="">Choose…</option>
+                    {(meta.lists[`${kind}_status`] || []).map((s) => <option key={s}>{s}</option>)}
+                  </select>
+                </div>
+                <div className="fe-field">
+                  <label htmlFor="fe-reason">Reason</label>
+                  <select id="fe-reason" value={form.reason} onChange={set('reason')}>
+                    <option value="">—</option>
+                    {(meta.lists[`${kind}_reason`] || []).map((s) => <option key={s}>{s}</option>)}
+                  </select>
+                </div>
+                {type === 'INSTALL' && (
+                  <div className="fe-field">
+                    <label htmlFor="fe-diff">Difficulty</label>
+                    <select id="fe-diff" value={form.difficulty} onChange={set('difficulty')}>
+                      <option value="">—</option>
+                      {['Easy', 'Medium', 'Hard'].map((d) => <option key={d} value={d}>{d} (≤{meta.slaHours?.[d] ?? '?'}h)</option>)}
+                    </select>
+                  </div>
+                )}
+                {type === 'REPAIR' && (
+                  <div className="fe-field">
+                    <label htmlFor="fe-problem">Problem found</label>
+                    <select id="fe-problem" value={form.problem} onChange={set('problem')}>
+                      <option value="">—</option>
+                      {(meta.lists.problem || []).map((s) => <option key={s}>{s}</option>)}
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              {type !== 'PULLOUT' && (
+                <>
+                  <div className="fe-grid3">
+                    <div className="fe-field"><label htmlFor="fe-start">Start</label><input id="fe-start" type="time" value={form.start_time} onChange={set('start_time')} /></div>
+                    <div className="fe-field"><label htmlFor="fe-end">End</label><input id="fe-end" type="time" value={form.end_time} onChange={set('end_time')} /></div>
+                    <div className="fe-calc">
+                      <span>Duration <b>{fmtDuration(duration)}</b></span>
+                      {type === 'INSTALL' && <span>SLA <b>{slaFor(form, meta.slaHours || {})}</b></span>}
+                    </div>
+                  </div>
+                  <div className="fe-grid5">
+                    {MATERIALS.map(([k, l]) => (
+                      <div className="fe-field" key={k}>
+                        <label htmlFor={`fe-${k}`}>{l}</label>
+                        <input id={`fe-${k}`} type="number" min="0" step={k === 'drop_core_m' ? '0.1' : '1'} inputMode="decimal" value={form[k]} onChange={set(k)} />
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+              {type === 'PULLOUT' && (
+                <div className="fe-field"><label htmlFor="fe-serial">Modem serial no.</label><input id="fe-serial" value={form.modem_serial} onChange={set('modem_serial')} placeholder="e.g. GPON00A1B2C3" /></div>
+              )}
+              <div className="fe-field"><label htmlFor="fe-remarks">Remarks</label><textarea id="fe-remarks" rows={3} value={form.remarks} onChange={set('remarks')} /></div>
+
+              {error && <div className="fe-notice is-error" role="alert">{error}</div>}
+              <p className="fe-sub">Saved to Field Eng only. The JO record and its status are not changed.</p>
+              <div className="fe-actions">
+                {form.id && <button type="button" className="fe-btn fe-btn--ghost" onClick={() => setForm(blankVisit(job))}>New visit instead</button>}
+                <button type="submit" className="fe-btn fe-btn--primary" disabled={saving}>{saving ? 'Saving…' : form.id ? 'Save changes' : 'Save visit'}</button>
+              </div>
+            </form>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TodayView({ data }) {
+  if (!data) return <p className="fe-sub">Loading…</p>;
+  const { teams, materials, sla, pullout, counts, targets } = data;
+  const po = pullout?.retrieved || 0;
+  const goal = targets?.pulloutPerWeek || 70;
+  return (
+    <section className="fe-section">
+      <div className="fe-kpis">
+        <div className="fe-card fe-kpi"><span className="fe-kpi-n">{counts.visits}</span><span className="fe-kpi-l">Visits recorded today</span></div>
+        <div className="fe-card fe-kpi fe-kpi--ok"><span className="fe-kpi-n">{counts.done}</span><span className="fe-kpi-l">Completed today</span></div>
+        <div className="fe-card fe-kpi"><span className="fe-kpi-n">{sla.pass} / {sla.pass + sla.delay}</span><span className="fe-kpi-l">Install SLA pass</span></div>
+        <div className="fe-card fe-kpi"><span className="fe-kpi-n">{po} / {goal}</span><span className="fe-kpi-l">Modems retrieved this week</span></div>
+      </div>
+      <div className="fe-split">
+        <div className="fe-card">
+          <h4 className="fe-h">Teams today</h4>
+          <div className="fe-table-wrap">
+            <table className="fe-table">
+              <thead><tr><th>Team</th><th>Open jobs</th><th>Visits today</th><th>Done today</th><th>Install SLA</th></tr></thead>
+              <tbody>
+                {teams.map((t) => (
+                  <tr key={t.id}><td className="fe-name">{t.name}</td><td>{t.open}</td><td>{t.visits}</td><td>{t.done}</td><td>{t.pass + t.delay ? `${t.pass} pass · ${t.delay} delay` : '—'}</td></tr>
+                ))}
+                {!teams.length && <tr><td colSpan={5} className="fe-empty">No team has work today yet.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div className="fe-card fe-pad">
+          <h4 className="fe-h fe-h--flush">Materials used today</h4>
+          <table className="fe-table fe-table--kv"><tbody>
+            {MATERIALS.map(([k, l]) => <tr key={k}><td>{l}</td><td className="fe-num">{materials[k]}</td></tr>)}
+          </tbody></table>
+          <span className="fe-label">Pull out this week · target {goal}</span>
+          <div className="fe-bar"><i style={{ width: `${Math.min(100, (po / goal) * 100)}%` }} /></div>
+          <p className="fe-sub">{po} retrieved of {pullout?.visited || 0} visits · {Math.max(0, goal - po)} to go</p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function HitPill({ done, closed, ratio }) {
+  const p = pct(done, closed);
+  if (p === null) return <span className="fe-pill fe-muted">no closed job</span>;
+  return <span className={p / 100 >= ratio ? 'fe-pill fe-ok' : 'fe-pill fe-bad'}>{p}% {p / 100 >= ratio ? 'HIT' : 'BELOW'}</span>;
+}
+
+function ReportsView({ data, period, setPeriod, onExport }) {
+  const ratio = data?.targets?.hitRatio ?? 0.8;
+  return (
+    <section className="fe-section">
+      <div className="fe-card fe-filters">
+        <select aria-label="Period" value={period.period} onChange={(e) => setPeriod((p) => ({ ...p, period: e.target.value }))}>
+          <option value="week">This week</option>
+          <option value="month">This month</option>
+          <option value="range">Date range</option>
+        </select>
+        {period.period === 'range' && (
+          <>
+            <input type="date" aria-label="From" value={period.from} onChange={(e) => setPeriod((p) => ({ ...p, from: e.target.value }))} />
+            <input type="date" aria-label="To" value={period.to} onChange={(e) => setPeriod((p) => ({ ...p, to: e.target.value }))} />
+          </>
+        )}
+        {data?.range && <span className="fe-sub">{data.range.from} to {data.range.to}</span>}
+        <button type="button" className="fe-btn fe-btn--ghost fe-push" onClick={onExport}>Export CSV (FEOMS columns)</button>
+      </div>
+      {!data && <p className="fe-sub">Loading…</p>}
+      {data && (
+        <>
+          <div className="fe-card">
+            <h4 className="fe-h">Team performance</h4>
+            <div className="fe-table-wrap">
+              <table className="fe-table">
+                <thead><tr><th>Team</th><th>Installed</th><th>Install %</th><th>Repaired</th><th>Repair %</th><th>Modems retrieved</th><th>Install SLA</th></tr></thead>
+                <tbody>
+                  {data.teams.map((t) => (
+                    <tr key={t.team}>
+                      <td className="fe-name">{t.team}{t.legacy && <span className="fe-sub"> · old Excel name</span>}</td>
+                      <td>{t.installed}</td><td><HitPill done={t.installed} closed={t.install_closed} ratio={ratio} /></td>
+                      <td>{t.repaired}</td><td><HitPill done={t.repaired} closed={t.repair_closed} ratio={ratio} /></td>
+                      <td>{t.retrieved}{t.pullout_visits ? ` / ${t.pullout_visits}` : ''}</td>
+                      <td>{t.sla_pass + t.sla_delay ? `${t.sla_pass} pass · ${t.sla_delay} delay` : '—'}</td>
+                    </tr>
+                  ))}
+                  {!data.teams.length && <tr><td colSpan={7} className="fe-empty">No visits in this period.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+            <p className="fe-sub fe-pad-x">HIT means at least {Math.round(ratio * 100)}% of closed jobs were completed. Targets: install {data.targets.installPerDay}/day, repair {data.targets.repairPerDay}/day.</p>
+          </div>
+          <div className="fe-split fe-split--even">
+            <div className="fe-card">
+              <h4 className="fe-h">Areas</h4>
+              <div className="fe-table-wrap">
+                <table className="fe-table">
+                  <thead><tr><th>Area</th><th>Installed</th><th>Repaired</th><th>Retrieved</th><th>Drop core (m)</th></tr></thead>
+                  <tbody>{data.areas.map((a) => <tr key={a.area}><td className="fe-name">{a.area}</td><td>{a.installed}</td><td>{a.repaired}</td><td>{a.retrieved}</td><td>{Math.round(a.drop_core_m).toLocaleString()}</td></tr>)}</tbody>
+                </table>
+              </div>
+            </div>
+            <div className="fe-card">
+              <h4 className="fe-h">Materials by team</h4>
+              <div className="fe-table-wrap">
+                <table className="fe-table">
+                  <thead><tr><th>Team</th>{MATERIALS.map(([k, l]) => <th key={k}>{l}</th>)}</tr></thead>
+                  <tbody>{data.materials.map((m) => <tr key={m.team}><td className="fe-name">{m.team}</td>{MATERIALS.map(([k]) => <td key={k}>{k === 'drop_core_m' ? Math.round(m[k]).toLocaleString() : m[k]}</td>)}</tr>)}</tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function TeamsView({ token, meta, setMeta, say, onChanged }) {
+  const [newTeam, setNewTeam] = useState('');
+  const [memberDraft, setMemberDraft] = useState({});
+  const [showLegacy, setShowLegacy] = useState(false);
+  const call = async (path, method, body, message) => {
+    try {
+      setMeta(await apiRequest(path, { method, token, body }));
+      say(message);
+      onChanged();
+      return true;
+    } catch (err) {
+      say(err.message, 'error');
+      return false;
+    }
+  };
+  const current = meta.teams.filter((t) => !t.legacy);
+  const legacy = meta.teams.filter((t) => t.legacy);
+
+  const addMember = async (team) => {
+    const name = (memberDraft[team.id] || '').trim();
+    if (!name) return;
+    if (await call(`/field-eng/teams/${team.id}/members`, 'POST', { name }, `${name} added to ${team.name}`)) {
+      setMemberDraft((d) => ({ ...d, [team.id]: '' }));
+    }
+  };
+  const rename = (team, value) => {
+    const name = value.trim();
+    if (!name || name === team.name) return;
+    call(`/field-eng/teams/${team.id}`, 'PATCH', { name }, `Renamed ${team.name} to ${name}. Its jobs moved with it.`);
+  };
+
+  const card = (team) => (
+    <div key={team.id} className={`fe-card fe-team ${team.active ? '' : 'is-off'}`}>
+      <div className="fe-team-head">
+        <input
+          key={team.name} defaultValue={team.name} aria-label="Team name" className="fe-team-name"
+          onBlur={(e) => rename(team, e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+        />
+        <span className={team.active ? 'fe-pill fe-ok' : 'fe-pill fe-muted'}>{team.active ? 'Active' : 'Retired'}</span>
+      </div>
+      <span className="fe-label">Members · {team.members.length}</span>
+      <div className="fe-chips">
+        {team.members.map((m) => (
+          <span key={m.id} className="fe-member">{m.name}
+            <button type="button" aria-label={`Remove ${m.name}`} onClick={() => call(`/field-eng/teams/${team.id}/members/${m.id}`, 'DELETE', undefined, `${m.name} removed from ${team.name}`)}>×</button>
+          </span>
+        ))}
+        {!team.members.length && <span className="fe-sub">No members yet</span>}
+      </div>
+      <div className="fe-inline-form">
+        <input
+          placeholder="Add a member" aria-label={`New member for ${team.name}`} value={memberDraft[team.id] || ''}
+          onChange={(e) => setMemberDraft((d) => ({ ...d, [team.id]: e.target.value }))}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addMember(team); } }}
+        />
+        <button type="button" className="fe-btn fe-btn--ghost" onClick={() => addMember(team)}>Add</button>
+      </div>
+      <div className="fe-team-foot">
+        <button type="button" className="fe-link" onClick={() => call(`/field-eng/teams/${team.id}`, 'PATCH', { active: !team.active }, `${team.name} ${team.active ? 'retired' : 'reactivated'}`)}>
+          {team.active ? 'Retire team' : 'Reactivate'}
+        </button>
+      </div>
+    </div>
+  );
+
+  return (
+    <section className="fe-section">
+      <form className="fe-card fe-pad fe-inline-form fe-addteam" onSubmit={async (e) => {
+        e.preventDefault();
+        const name = newTeam.trim();
+        if (name && await call('/field-eng/teams', 'POST', { name }, `${name} added. Add its members below.`)) setNewTeam('');
+      }}>
+        <div className="fe-field fe-grow"><label htmlFor="fe-newteam">New team name</label><input id="fe-newteam" value={newTeam} onChange={(e) => setNewTeam(e.target.value)} placeholder="e.g. Team Naic" /></div>
+        <button type="submit" className="fe-btn fe-btn--primary">Add team</button>
+        <p className="fe-sub fe-full">Anyone can add or rename a team and add or remove members. Retired teams keep their past jobs and reports but leave the assign lists.</p>
+      </form>
+      <div className="fe-teams">{current.map(card)}</div>
+      {legacy.length > 0 && (
+        <div className="fe-card fe-pad">
+          <button type="button" className="fe-link" onClick={() => setShowLegacy((s) => !s)}>
+            {showLegacy ? 'Hide' : 'Show'} {legacy.length} old team names from the Excel (history only)
+          </button>
+          {showLegacy && <div className="fe-teams fe-teams--legacy">{legacy.map(card)}</div>}
+        </div>
+      )}
+    </section>
+  );
+}

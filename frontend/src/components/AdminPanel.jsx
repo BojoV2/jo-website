@@ -9,6 +9,7 @@ import StatusStackedBarChart from './StatusStackedBarChart.jsx';
 import StatusDonutChart from './StatusDonutChart.jsx';
 import VehicleMap from './VehicleMap.jsx';
 import Profiling from './Profiling.jsx';
+import FieldEngineering from './FieldEngineering.jsx';
 
 GlobalWorkerOptions.workerSrc = workerSrc;
 
@@ -76,6 +77,13 @@ const adminTabs = [
     chip: 'PF',
     title: 'Document archive',
     description: 'Control the per-template archive: rename, move, lock, hide, and audit every upload.'
+  },
+  {
+    id: 'fieldeng',
+    label: 'Field Eng',
+    chip: 'FE',
+    title: 'Field Engineering',
+    description: 'Every Application Form and Job Order lands here. Assign a team and record the visit result.'
   }
 ];
 const templateScopedTabs = ['home', 'templates', 'mapping', 'workflow'];
@@ -1481,6 +1489,10 @@ export default function AdminPanel({
         </section>
       )}
 
+
+      {activeAdminTab === 'fieldeng' && (
+        <FieldEngineering token={token} />
+      )}
 
       {activeAdminTab === 'profiling' && (
         <Profiling token={token} user={user} mode="admin" />
