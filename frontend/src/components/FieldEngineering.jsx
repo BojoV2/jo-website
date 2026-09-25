@@ -5,6 +5,7 @@ import { apiRequest, downloadWithToken, openWithTokenInNewTab } from '../api.js'
 // assigns to a team and records visit results against. Visible to everyone.
 
 const TYPE_LABEL = { INSTALL: 'Install', REPAIR: 'Repair', PULLOUT: 'Pull out', RELOC: 'Relocation' };
+const DONE_LABEL = { INSTALL: 'Installed', REPAIR: 'Repaired', PULLOUT: 'Nakuha ang Modem' };
 const CLOSED = ['Installed', 'Repaired', 'Nakuha ang Modem', 'Cancelled', 'Not Installed', 'Unresolved', 'Unverified'];
 const GOOD = ['Installed', 'Repaired', 'Nakuha ang Modem'];
 const BAD = ['Cancelled', 'Not Installed', 'Unresolved', 'Hindi Nakuha ang Modem'];
@@ -72,10 +73,10 @@ export default function FieldEngineering({ token }) {
   const [reports, setReports] = useState(null);
   const noticeTimer = useRef(null);
 
-  const say = useCallback((text, tone = 'ok') => {
-    setNotice({ text, tone });
+  const say = useCallback((text, tone = 'ok', action = null) => {
+    setNotice({ text, tone, action });
     window.clearTimeout(noticeTimer.current);
-    noticeTimer.current = window.setTimeout(() => setNotice(null), 4000);
+    noticeTimer.current = window.setTimeout(() => setNotice(null), action ? 10000 : 4000);
   }, []);
 
   const loadMeta = useCallback(async () => {
@@ -137,6 +138,28 @@ export default function FieldEngineering({ token }) {
     }
   };
 
+  const markDone = async (job) => {
+    try {
+      const r = await apiRequest(`/field-eng/jobs/${job.id}/done`, { method: 'POST', token, body: {} });
+      loadBoard({ quiet: true });
+      say(`${job.customer_name || 'Job'} marked ${r.status}`, 'ok', {
+        label: 'Undo',
+        run: async () => {
+          try {
+            await apiRequest(`/field-eng/visits/${r.visitId}`, { method: 'DELETE', token });
+            say(`${job.customer_name || 'Job'} is open again`);
+            loadBoard({ quiet: true });
+          } catch (err) {
+            say(err.message, 'error');
+          }
+        }
+      });
+    } catch (err) {
+      if (err.message.includes('relocation')) setOpenJobId(job.id);
+      say(err.message, 'error');
+    }
+  };
+
   const setFilter = (key, value) => setFilters((f) => ({ ...f, [key]: value }));
   const kpis = [
     { label: 'Generated today', value: board.counts.generated_today, apply: { ...EMPTY_FILTERS } },
@@ -154,7 +177,12 @@ export default function FieldEngineering({ token }) {
         ))}
       </div>
 
-      {notice && <div className={`fe-notice ${notice.tone === 'error' ? 'is-error' : ''}`} role="status">{notice.text}</div>}
+      {notice && (
+        <div className={`fe-notice ${notice.tone === 'error' ? 'is-error' : ''}`} role="status">
+          {notice.text}
+          {notice.action && <button type="button" className="fe-link fe-notice-action" onClick={() => { setNotice(null); notice.action.run(); }}>{notice.action.label}</button>}
+        </div>
+      )}
 
       {tab === 'board' && (
         <section className="fe-section">
@@ -226,6 +254,9 @@ export default function FieldEngineering({ token }) {
                       </td>
                       <td>
                         <span className={statusClass(job.status)}>{job.status}</span>
+                        {!CLOSED.includes(job.status) && !job.history_only && (
+                          <button type="button" className="fe-done-btn" aria-label={`Mark ${job.customer_name || 'job'} done`} title={`Record a visit today as ${DONE_LABEL[effType(job)] || 'done'}`} onClick={(e) => { e.stopPropagation(); markDone(job); }}>✓ Done</button>
+                        )}
                         {job.visit_count > 0 && <div className="fe-sub">{job.visit_count} visit{job.visit_count > 1 ? 's' : ''} · last {job.last_visit_date}</div>}
                         {joNote(job) && <div className={job.jo_status === 'cancelled' ? 'fe-sub fe-jo-note is-bad' : 'fe-sub fe-jo-note'}>{joNote(job)}</div>}
                       </td>
@@ -270,6 +301,7 @@ function JobPanel({ jobId, token, meta, say, onClose }) {
   const [form, setForm] = useState(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [confirmRemove, setConfirmRemove] = useState(null);
   const closeRef = useRef(null);
 
   const load = useCallback(async () => {
@@ -294,6 +326,31 @@ function JobPanel({ jobId, token, meta, say, onClose }) {
   const type = job ? effType(job) : null;
   const kind = type ? statusKind(type) : 'repair';
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+
+  const markDone = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      const r = await apiRequest(`/field-eng/jobs/${job.id}/done`, { method: 'POST', token, body: {} });
+      setDetail(r);
+      setForm(blankVisit(r.job));
+      say(`${job.customer_name || 'Job'} marked ${r.status}`);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+  const removeVisit = async (visit) => {
+    setError('');
+    try {
+      const d = await apiRequest(`/field-eng/visits/${visit.id}`, { method: 'DELETE', token });
+      setDetail(d);
+      say(`Visit on ${visit.visit_date} removed`);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
 
   const setRelocKind = async (value) => {
     try {
@@ -359,6 +416,9 @@ function JobPanel({ jobId, token, meta, say, onClose }) {
           {job && <span className={`fe-pill fe-type-${job.job_type}`}>{TYPE_LABEL[job.job_type]}</span>}
           <h3>{job?.customer_name || 'Loading…'} {job?.order_number && <span className="fe-mono fe-sub">{job.order_number}</span>}</h3>
           {job && <span className={statusClass(job.status)}>{job.status}</span>}
+          {job && !CLOSED.includes(job.status) && !job.history_only && (job.job_type !== 'RELOC' || job.reloc_kind) && (
+            <button type="button" className="fe-btn fe-btn--primary" disabled={saving} onClick={markDone}>Mark done · {DONE_LABEL[type]}</button>
+          )}
           <button ref={closeRef} type="button" className="fe-btn fe-btn--ghost" onClick={onClose}>Close</button>
         </div>
         {!detail && <div className="fe-drawer-body"><p className="fe-sub">{error || 'Loading…'}</p></div>}
@@ -383,6 +443,15 @@ function JobPanel({ jobId, token, meta, say, onClose }) {
                         <span className={statusClass(v.status)}>{v.status}</span>
                         <span className="fe-sub">{[v.team_name, v.reason, v.sla && v.sla !== 'EXEMPTED' ? `SLA ${v.sla}` : null, v.source === 'excel' ? 'from Excel' : null].filter(Boolean).join(' · ')}</span>
                       </button>
+                      {v.source === 'app' && (
+                        <button
+                          type="button" className={confirmRemove === v.id ? 'fe-link fe-visit-remove is-armed' : 'fe-link fe-visit-remove'}
+                          onClick={() => { if (confirmRemove === v.id) { setConfirmRemove(null); removeVisit(v); } else setConfirmRemove(v.id); }}
+                          onBlur={() => setConfirmRemove((c) => (c === v.id ? null : c))}
+                        >
+                          {confirmRemove === v.id ? 'Click again to remove' : 'Remove'}
+                        </button>
+                      )}
                     </li>
                   ))}
                 </ul>

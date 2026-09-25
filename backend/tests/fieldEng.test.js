@@ -396,4 +396,44 @@ describe('Field Eng API', { timeout: 30000 }, () => {
       await query(`UPDATE users SET role = 'user' WHERE id = $1`, [userId]);
     }
   });
+  it('marks a job done with one click and undoes it', async () => {
+    const pick = await query(
+      `SELECT j.* FROM fe_jobs j
+        WHERE NOT j.history_only AND j.status = 'Pending' AND j.job_type IN ('INSTALL', 'REPAIR') AND NOT j.jo_cancelled
+        ORDER BY j.created_at DESC LIMIT 1`
+    );
+    const job = pick.rows[0];
+    const expected = job.job_type === 'INSTALL' ? 'Installed' : 'Repaired';
+    let visitId;
+    try {
+      let res = await api('post', `/jobs/${job.id}/done`).send({});
+      expect(res.status).toBe(201);
+      expect(res.body.status).toBe(expected);
+      expect(res.body.job.status).toBe(expected);
+      visitId = res.body.visitId;
+      const v = (await query('SELECT * FROM fe_visits WHERE id = $1', [visitId])).rows[0];
+      expect(v).toMatchObject({ status: expected, source: 'app', remarks: 'Marked done from the board' });
+      const closed = (await query('SELECT closed_at FROM fe_jobs WHERE id = $1', [job.id])).rows[0];
+      expect(closed.closed_at).not.toBeNull();
+
+      res = await api('post', `/jobs/${job.id}/done`).send({});
+      expect(res.status).toBe(409);
+
+      res = await api('delete', `/visits/${visitId}`);
+      expect(res.status).toBe(200);
+      visitId = null;
+      const back = (await query('SELECT status, closed_at FROM fe_jobs WHERE id = $1', [job.id])).rows[0];
+      expect(back.status).toBe(job.status);
+
+      const excel = await query(`SELECT id FROM fe_visits WHERE source = 'excel' LIMIT 1`);
+      res = await api('delete', `/visits/${excel.rows[0].id}`);
+      expect(res.status).toBe(409);
+
+      const log = await query(`SELECT action FROM fe_audit WHERE job_id = $1 AND user_id = $2 ORDER BY id`, [job.id, userId]);
+      expect(log.rows.map((r) => r.action)).toEqual(['marked_done', 'visit_removed']);
+    } finally {
+      if (visitId) await query('DELETE FROM fe_visits WHERE id = $1', [visitId]);
+      await query(`UPDATE fe_jobs SET status = $2, reason = $3, closed_at = $4, team_id = $5 WHERE id = $1`, [job.id, job.status, job.reason, job.closed_at, job.team_id]);
+    }
+  });
 });

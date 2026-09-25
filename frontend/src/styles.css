@@ -5959,6 +5959,14 @@ div.fe-kpi { cursor: default; }
 .fe-field-tag--wait { color: var(--heading); }
 .fe-jo-note { font-weight: 600; }
 .fe-jo-note.is-bad { color: var(--danger); }
+/* mark done + undo */
+.fe-done-btn { display: inline-block; margin-left: 6px; border: 1px solid var(--line); background: transparent; color: var(--fe-ok); font-weight: 700; font-size: 12px; border-radius: 99px; padding: 2px 9px; cursor: pointer; vertical-align: middle; }
+.fe-done-btn:hover { background: var(--fe-ok-soft); border-color: var(--fe-ok); }
+.fe-notice-action { margin-left: 10px; text-decoration: underline; }
+.fe-visits li { display: flex; align-items: center; gap: 6px; }
+.fe-visits li > .fe-visit { flex: 1; min-width: 0; }
+.fe-visit-remove { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.fe-visit-remove.is-armed { color: var(--danger); }
 /* lists */
 .fe-lists { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 14px; align-items: start; }
 .fe-list-kinds { display: flex; flex-direction: column; gap: 2px; }

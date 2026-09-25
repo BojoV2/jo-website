@@ -258,6 +258,77 @@ async function validateVisit(body, job) {
 const VISIT_FIELDS = ['visit_date', 'team_id', 'status', 'reason', 'problem', 'difficulty', 'start_time', 'end_time',
   'drop_core_m', 'f_clamp', 'house_clamp', 'sc_connector', 'onu', 'modem_serial', 'remarks'];
 
+// The finished result for each kind of job, used by "Mark done".
+const DONE_STATUS = { INSTALL: 'Installed', REPAIR: 'Repaired', PULLOUT: 'Nakuha ang Modem' };
+
+// Mark done = record a visit today with the finished result, so reports,
+// SLA and team performance count it like any other visit.
+router.post('/jobs/:id/done', async (req, res) => {
+  try {
+    if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) return res.status(400).json({ error: 'Invalid job id' });
+    const found = await query('SELECT * FROM fe_jobs WHERE id = $1', [req.params.id]);
+    if (!found.rowCount) return res.status(404).json({ error: 'Job not found' });
+    const job = found.rows[0];
+    if (job.history_only) return res.status(409).json({ error: 'Imported history cannot be edited from the board' });
+    if (CLOSED_STATUSES.includes(job.status)) return res.status(409).json({ error: `This job is already closed (${job.status})` });
+    if (job.job_type === 'RELOC' && !job.reloc_kind) {
+      return res.status(400).json({ error: 'Open the job and choose whether this relocation is install-type or repair-type first', needsRelocKind: true });
+    }
+    const status = DONE_STATUS[effectiveType(job.job_type, job.reloc_kind)];
+    const body = {
+      status,
+      team_id: req.body.team_id === undefined ? job.team_id : req.body.team_id,
+      visit_date: req.body.visit_date || null,
+      remarks: clean(req.body.remarks, 2000) || 'Marked done from the board'
+    };
+    const checked = await validateVisit(body, job);
+    if (checked.error) return res.status(400).json({ error: checked.error });
+    const id = uuidv4();
+    const v = checked.value;
+    await query(
+      `INSERT INTO fe_visits (id, job_id, ${VISIT_FIELDS.join(', ')}, source, created_by, updated_by)
+       VALUES ($1, $2, COALESCE($3::date, ${MANILA_TODAY}), ${VISIT_FIELDS.slice(1).map((_, i) => `$${i + 4}`).join(', ')}, 'app', $18, $18)`,
+      [id, job.id, ...VISIT_FIELDS.map((f) => v[f]), req.user.id]
+    );
+    await refreshJobFromVisits(job.id, req.user.id);
+    await audit({ entity: 'visit', entityId: id, jobId: job.id, action: 'marked_done', detail: v, user: req.user });
+    return res.status(201).json({ visitId: id, status, ...(await jobDetail(job.id)) });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Removes a visit typed in the app (undo / mistakes). Imported Excel visits
+// are history and stay. With no visit left the job goes back to Pending.
+router.delete('/visits/:id', async (req, res) => {
+  try {
+    if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) return res.status(400).json({ error: 'Invalid visit id' });
+    const found = await query('SELECT * FROM fe_visits WHERE id = $1', [req.params.id]);
+    if (!found.rowCount) return res.status(404).json({ error: 'Visit not found' });
+    const visit = found.rows[0];
+    if (visit.source !== 'app') return res.status(409).json({ error: 'Imported visits are history and cannot be removed' });
+    await query('DELETE FROM fe_visits WHERE id = $1', [visit.id]);
+    const left = await query('SELECT 1 FROM fe_visits WHERE job_id = $1 LIMIT 1', [visit.job_id]);
+    if (left.rowCount) {
+      await refreshJobFromVisits(visit.job_id, req.user.id);
+    } else {
+      await query(
+        `UPDATE fe_jobs SET status = CASE WHEN jo_cancelled THEN 'Cancelled' ELSE 'Pending' END,
+                reason = CASE WHEN jo_cancelled THEN reason ELSE NULL END,
+                closed_at = CASE WHEN jo_cancelled THEN closed_at ELSE NULL END,
+                updated_at = NOW(), updated_by = $2
+          WHERE id = $1`,
+        [visit.job_id, req.user.id]
+      );
+    }
+    const { id: _id, job_id: _job, ...kept } = visit;
+    await audit({ entity: 'visit', entityId: visit.id, jobId: visit.job_id, action: 'visit_removed', detail: kept, user: req.user });
+    return res.json(await jobDetail(visit.job_id));
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/jobs/:id/visits', async (req, res) => {
   const client = await pool.connect();
   try {
