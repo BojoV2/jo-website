@@ -17,6 +17,9 @@ export const TARGETS = { installPerDay: 5, repairPerDay: 10, pulloutPerWeek: 70,
 export const SLA_HOURS = { Easy: 1, Medium: 2, Hard: 3 };
 
 const TYPES = ['INSTALL', 'REPAIR', 'PULLOUT', 'RELOC'];
+// Jobs generated before the board's fresh start are the old backlog: they are
+// left out of the open counts and the Open view (fe_settings.board_start).
+const BOARD_START = `COALESCE((SELECT value::timestamp FROM fe_settings WHERE key = 'board_start'), '-infinity'::timestamp)`;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
 
@@ -45,7 +48,7 @@ export const SLA_SQL = `CASE
 
 async function loadMeta() {
   const [teams, members, options] = await Promise.all([
-    query('SELECT id, name, active, legacy FROM fe_teams ORDER BY legacy, active DESC, lower(name)'),
+    query('SELECT id, name, area, active, legacy FROM fe_teams ORDER BY legacy, active DESC, lower(name)'),
     query('SELECT id, team_id, name FROM fe_team_members WHERE active ORDER BY created_at, id'),
     query('SELECT kind, value FROM fe_options WHERE active ORDER BY kind, sort, value')
   ]);
@@ -86,7 +89,8 @@ router.get('/jobs', async (req, res) => {
 
     params.push(CLOSED_STATUSES);
     if (view === 'today') where.push(`$1::text[] IS NOT NULL AND j.jo_date = ${MANILA_TODAY}`);
-    else if (view === 'open') where.push(`NOT (j.status = ANY($1::text[]))`);
+    else if (view === 'open') where.push(`NOT (j.status = ANY($1::text[])) AND j.created_at >= ${BOARD_START}`);
+    else if (view === 'backlog') where.push(`NOT (j.status = ANY($1::text[])) AND j.created_at < ${BOARD_START}`);
     else if (view === 'closed_today') where.push(`j.status = ANY($1::text[]) AND ${MANILA_DATE('j.closed_at')} = ${MANILA_TODAY}`);
     else if (view === 'closed') where.push(`j.status = ANY($1::text[])`);
     else where.push('$1::text[] IS NOT NULL');
@@ -112,12 +116,14 @@ router.get('/jobs', async (req, res) => {
         params
       ),
       query(
-        `SELECT COUNT(*) FILTER (WHERE NOT (status = ANY($1::text[])))::int AS open,
-                COUNT(*) FILTER (WHERE NOT (status = ANY($1::text[])) AND team_id IS NULL)::int AS unassigned,
-                COUNT(*) FILTER (WHERE NOT (status = ANY($1::text[])) AND (${MANILA_TODAY} - jo_date) >= 3)::int AS overdue,
+        `SELECT COUNT(*) FILTER (WHERE fresh AND NOT (status = ANY($1::text[])))::int AS open,
+                COUNT(*) FILTER (WHERE fresh AND NOT (status = ANY($1::text[])) AND team_id IS NULL)::int AS unassigned,
+                COUNT(*) FILTER (WHERE fresh AND NOT (status = ANY($1::text[])) AND (${MANILA_TODAY} - jo_date) >= 3)::int AS overdue,
+                COUNT(*) FILTER (WHERE NOT fresh AND NOT (status = ANY($1::text[])))::int AS backlog,
+                (SELECT to_char(${BOARD_START} AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD HH24:MI')) AS board_start,
                 COUNT(*) FILTER (WHERE status = ANY($1::text[]) AND ${MANILA_DATE('closed_at')} = ${MANILA_TODAY})::int AS closed_today,
                 COUNT(*) FILTER (WHERE jo_date = ${MANILA_TODAY})::int AS generated_today
-           FROM fe_jobs WHERE NOT history_only`,
+           FROM (SELECT *, created_at >= ${BOARD_START} AS fresh FROM fe_jobs WHERE NOT history_only) f`,
         [CLOSED_STATUSES]
       )
     ]);
@@ -325,14 +331,81 @@ router.patch('/visits/:id', async (req, res) => {
 
 // ---------------------------------------------------------------- teams
 
+// null clears the area; undefined means the value is not on the area list.
+async function teamArea(value) {
+  const area = clean(value, 120);
+  if (!area) return null;
+  const found = await query(`SELECT value FROM fe_options WHERE kind = 'area' AND lower(value) = lower($1)`, [area]);
+  return found.rowCount ? found.rows[0].value : undefined;
+}
+
+// Teams are named after where they are deployed, so a name that mentions an
+// area ("Team Kawit") gets that area.
+async function areaFromName(name) {
+  const areas = (await query(`SELECT value FROM fe_options WHERE kind = 'area' AND active ORDER BY sort`)).rows.map((r) => r.value);
+  const words = ` ${String(name).toLowerCase().replace(/[^a-z0-9]+/g, ' ')} `;
+  return areas.find((a) => words.includes(` ${a.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()} `)) || null;
+}
+
+export const splitCrew = (teamName) => String(teamName || '')
+  .split(/\s+-\s+/)
+  .map((part) => part.replace(/\s+/g, ' ').trim())
+  .filter(Boolean);
+
+// Name suggestions for adding team members. The old Excel team names are
+// crews ("JELO - ROLANDO"), so each person is credited with every visit their
+// crews made, per area. Current members are included so a new name shows up
+// the next time too.
+router.get('/people', async (_req, res) => {
+  try {
+    const [crews, members] = await Promise.all([
+      query(`SELECT t.name, j.area, COUNT(v.id)::int AS n
+               FROM fe_teams t
+               LEFT JOIN fe_visits v ON v.team_id = t.id
+               LEFT JOIN fe_jobs j ON j.id = v.job_id
+              WHERE t.legacy
+              GROUP BY t.name, j.area`),
+      query(`SELECT m.name, t.name AS team FROM fe_team_members m JOIN fe_teams t ON t.id = m.team_id
+              WHERE m.active AND NOT t.legacy ORDER BY m.created_at`)
+    ]);
+    const people = new Map();
+    const person = (name) => {
+      const key = name.toUpperCase();
+      if (!people.has(key)) people.set(key, { name, jobs: 0, areas: {}, teams: [] });
+      return people.get(key);
+    };
+    for (const row of crews.rows) {
+      for (const name of splitCrew(row.name)) {
+        const p = person(name);
+        p.jobs += row.n;
+        if (row.area && row.n) p.areas[row.area] = (p.areas[row.area] || 0) + row.n;
+      }
+    }
+    for (const row of members.rows) {
+      const p = person(clean(row.name, 120));
+      if (!p.teams.includes(row.team)) p.teams.push(row.team);
+    }
+    const list = [...people.values()].map((p) => ({
+      ...p,
+      topArea: Object.entries(p.areas).sort((a, b) => b[1] - a[1])[0]?.[0] || null
+    }));
+    list.sort((a, b) => b.jobs - a.jobs || a.name.localeCompare(b.name));
+    return res.json({ people: list });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/teams', async (req, res) => {
   try {
     const name = clean(req.body.name, 120);
     if (!name) return res.status(400).json({ error: 'Team name is required' });
     const exists = await query('SELECT 1 FROM fe_teams WHERE lower(name) = lower($1)', [name]);
     if (exists.rowCount) return res.status(409).json({ error: `A team called ${name} already exists` });
-    const created = await query('INSERT INTO fe_teams (name) VALUES ($1) RETURNING id', [name]);
-    await audit({ entity: 'team', entityId: created.rows[0].id, action: 'team_added', detail: { name }, user: req.user });
+    const area = req.body.area ? await teamArea(req.body.area) : await areaFromName(name);
+    if (area === undefined) return res.status(400).json({ error: 'Unknown area' });
+    const created = await query('INSERT INTO fe_teams (name, area) VALUES ($1, $2) RETURNING id', [name, area]);
+    await audit({ entity: 'team', entityId: created.rows[0].id, action: 'team_added', detail: { name, area }, user: req.user });
     return res.status(201).json(await loadMeta());
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -353,6 +426,14 @@ router.patch('/teams/:id', async (req, res) => {
       if (clash.rowCount) return res.status(409).json({ error: `A team called ${name} already exists` });
       await query('UPDATE fe_teams SET name = $2, updated_at = NOW() WHERE id = $1', [id, name]);
       await audit({ entity: 'team', entityId: id, action: 'team_renamed', detail: { from: team.name, to: name }, user: req.user });
+    }
+    if ('area' in req.body) {
+      const area = await teamArea(req.body.area);
+      if (area === undefined) return res.status(400).json({ error: 'Unknown area' });
+      if (area !== team.area) {
+        await query('UPDATE fe_teams SET area = $2, updated_at = NOW() WHERE id = $1', [id, area]);
+        await audit({ entity: 'team', entityId: id, action: 'team_area_changed', detail: { name: team.name, from: team.area, to: area }, user: req.user });
+      }
     }
     if ('active' in req.body) {
       const active = Boolean(req.body.active);
@@ -378,6 +459,77 @@ router.post('/teams/:id/members', async (req, res) => {
     const created = await query('INSERT INTO fe_team_members (team_id, name) VALUES ($1, $2) RETURNING id', [id, name]);
     await audit({ entity: 'team', entityId: id, action: 'member_added', detail: { member: name, memberId: created.rows[0].id }, user: req.user });
     return res.status(201).json(await loadMeta());
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------- materials report cards
+
+const MATERIAL_FIELDS = [['drop_core_m', false], ['f_clamp', true], ['house_clamp', true], ['sc_connector', true], ['onu', true]];
+const CARD_COLUMNS = `id, team_id, to_char(work_date, 'YYYY-MM-DD') AS work_date, drop_core_m::float AS drop_core_m,
+  f_clamp, house_clamp, sc_connector, onu, remarks`;
+
+router.get('/teams/:id/materials', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid team id' });
+    const rows = await query(
+      `SELECT ${CARD_COLUMNS} FROM fe_team_materials WHERE team_id = $1 ORDER BY work_date DESC LIMIT 31`, [id]
+    );
+    return res.json({ cards: rows.rows, today: (await query(`SELECT to_char(${MANILA_TODAY}, 'YYYY-MM-DD') AS d`)).rows[0].d });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// One card per team per day: saving the same date again corrects it.
+router.put('/teams/:id/materials/:date', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const date = String(req.params.date);
+    if (!Number.isInteger(id) || !DATE_RE.test(date)) return res.status(400).json({ error: 'Invalid team or date' });
+    const team = await query('SELECT name, legacy FROM fe_teams WHERE id = $1', [id]);
+    if (!team.rowCount) return res.status(404).json({ error: 'Team not found' });
+    if (team.rows[0].legacy) return res.status(409).json({ error: 'Old Excel crews are history only' });
+    const future = await query(`SELECT $1::date > ${MANILA_TODAY} AS f`, [date]);
+    if (future.rows[0].f) return res.status(400).json({ error: 'That date has not happened yet' });
+    const values = {};
+    for (const [field, int] of MATERIAL_FIELDS) {
+      const v = num(req.body[field], { int });
+      if (v === undefined) return res.status(400).json({ error: `Check the ${field.replace(/_/g, ' ')} value` });
+      values[field] = v ?? 0;
+    }
+    const remarks = clean(req.body.remarks, 500);
+    const before = await query(`SELECT ${CARD_COLUMNS} FROM fe_team_materials WHERE team_id = $1 AND work_date = $2`, [id, date]);
+    const saved = await query(
+      `INSERT INTO fe_team_materials (team_id, work_date, drop_core_m, f_clamp, house_clamp, sc_connector, onu, remarks, created_by, updated_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
+       ON CONFLICT (team_id, work_date) DO UPDATE SET drop_core_m = EXCLUDED.drop_core_m, f_clamp = EXCLUDED.f_clamp,
+         house_clamp = EXCLUDED.house_clamp, sc_connector = EXCLUDED.sc_connector, onu = EXCLUDED.onu,
+         remarks = EXCLUDED.remarks, updated_by = EXCLUDED.updated_by, updated_at = NOW()
+       RETURNING ${CARD_COLUMNS}`,
+      [id, date, values.drop_core_m, values.f_clamp, values.house_clamp, values.sc_connector, values.onu, remarks, req.user?.id || null]
+    );
+    await audit({
+      entity: 'team', entityId: id, action: before.rowCount ? 'materials_corrected' : 'materials_saved',
+      detail: { team: team.rows[0].name, date, ...values, remarks, before: before.rows[0] || null }, user: req.user
+    });
+    return res.json({ card: saved.rows[0] });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/teams/:id/materials/:date', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const date = String(req.params.date);
+    if (!Number.isInteger(id) || !DATE_RE.test(date)) return res.status(400).json({ error: 'Invalid team or date' });
+    const gone = await query(`DELETE FROM fe_team_materials WHERE team_id = $1 AND work_date = $2 RETURNING ${CARD_COLUMNS}`, [id, date]);
+    if (!gone.rowCount) return res.status(404).json({ error: 'No report card for that day' });
+    await audit({ entity: 'team', entityId: id, action: 'materials_removed', detail: { date, before: gone.rows[0] }, user: req.user });
+    return res.json({ ok: true });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -557,25 +709,27 @@ router.get('/today', async (_req, res) => {
       query(
         `WITH open_jobs AS (
             SELECT team_id, COUNT(*)::int AS open FROM fe_jobs
-             WHERE NOT history_only AND team_id IS NOT NULL AND NOT (status = ANY($1::text[])) GROUP BY team_id),
+             WHERE NOT history_only AND team_id IS NOT NULL AND NOT (status = ANY($1::text[]))
+               AND created_at >= ${BOARD_START} GROUP BY team_id),
           today AS (
             SELECT v.team_id, COUNT(*)::int AS visits,
                    COUNT(*) FILTER (WHERE v.status = ANY($2::text[]))::int AS done,
                    COUNT(*) FILTER (WHERE ${SLA_SQL} = 'PASS')::int AS pass,
                    COUNT(*) FILTER (WHERE ${SLA_SQL} = 'DELAY')::int AS delay
               ${VISIT_BASE} WHERE v.visit_date = ${MANILA_TODAY} AND v.team_id IS NOT NULL GROUP BY v.team_id)
-         SELECT t.id, t.name, COALESCE(o.open, 0) AS open, COALESCE(d.visits, 0) AS visits, COALESCE(d.done, 0) AS done,
-                COALESCE(d.pass, 0) AS pass, COALESCE(d.delay, 0) AS delay
+         SELECT t.id, t.name, t.area, COALESCE(o.open, 0) AS open, COALESCE(d.visits, 0) AS visits, COALESCE(d.done, 0) AS done,
+                COALESCE(d.pass, 0) AS pass, COALESCE(d.delay, 0) AS delay,
+                EXISTS (SELECT 1 FROM fe_team_materials m WHERE m.team_id = t.id AND m.work_date = ${MANILA_TODAY}) AS card_in
            FROM fe_teams t LEFT JOIN open_jobs o ON o.team_id = t.id LEFT JOIN today d ON d.team_id = t.id
-          WHERE COALESCE(o.open, 0) + COALESCE(d.visits, 0) > 0
-          ORDER BY lower(t.name)`,
+          WHERE NOT t.legacy AND t.active
+          ORDER BY t.area NULLS LAST, lower(t.name)`,
         [CLOSED_STATUSES, SUCCESS_STATUSES]
       ),
       query(
         `SELECT COALESCE(SUM(drop_core_m), 0)::float AS drop_core_m, COALESCE(SUM(f_clamp), 0)::int AS f_clamp,
                 COALESCE(SUM(house_clamp), 0)::int AS house_clamp, COALESCE(SUM(sc_connector), 0)::int AS sc_connector,
-                COALESCE(SUM(onu), 0)::int AS onu
-           FROM fe_visits WHERE visit_date = ${MANILA_TODAY}`
+                COALESCE(SUM(onu), 0)::int AS onu, COUNT(*)::int AS cards
+           FROM fe_team_materials WHERE work_date = ${MANILA_TODAY}`
       ),
       query(
         `SELECT COUNT(*) FILTER (WHERE ${SLA_SQL} = 'PASS')::int AS pass, COUNT(*) FILTER (WHERE ${SLA_SQL} = 'DELAY')::int AS delay
@@ -619,8 +773,8 @@ router.get('/reports', async (req, res) => {
     const [range, teams, areas, materials] = await Promise.all([
       query(`SELECT to_char(${r.sqlFrom}, 'YYYY-MM-DD') AS "from", to_char(${r.sqlTo}, 'YYYY-MM-DD') AS "to"`, r.params),
       query(
-        `SELECT COALESCE(t.name, 'No team') AS team, BOOL_OR(COALESCE(t.legacy, FALSE)) AS legacy,
-                COUNT(*) FILTER (WHERE ${EFFECTIVE_TYPE} = 'INSTALL' AND v.status = 'Installed')::int AS installed,
+        `SELECT t.name AS team, t.area,
+                COUNT(v.id) FILTER (WHERE ${EFFECTIVE_TYPE} = 'INSTALL' AND v.status = 'Installed')::int AS installed,
                 COUNT(*) FILTER (WHERE ${EFFECTIVE_TYPE} = 'INSTALL' AND v.status IN ('Installed', 'Not Installed', 'Cancelled', 'Reschedule'))::int AS install_closed,
                 COUNT(*) FILTER (WHERE ${EFFECTIVE_TYPE} = 'REPAIR' AND v.status = 'Repaired')::int AS repaired,
                 COUNT(*) FILTER (WHERE ${EFFECTIVE_TYPE} = 'REPAIR' AND v.status IN ('Repaired', 'Unresolved', 'Reschedule', 'Escalated'))::int AS repair_closed,
@@ -628,30 +782,43 @@ router.get('/reports', async (req, res) => {
                 COUNT(*) FILTER (WHERE j.job_type = 'PULLOUT')::int AS pullout_visits,
                 COUNT(*) FILTER (WHERE ${SLA_SQL} = 'PASS')::int AS sla_pass,
                 COUNT(*) FILTER (WHERE ${SLA_SQL} = 'DELAY')::int AS sla_delay
-           ${VISIT_BASE} WHERE ${inRange}
-          GROUP BY COALESCE(t.name, 'No team')
-          ORDER BY (COUNT(*)) DESC`,
+           FROM fe_teams t
+           LEFT JOIN fe_visits v ON v.team_id = t.id AND ${inRange}
+           LEFT JOIN fe_jobs j ON j.id = v.job_id
+          WHERE NOT t.legacy AND (t.active OR v.id IS NOT NULL)
+          GROUP BY t.id, t.name, t.area
+          ORDER BY t.area NULLS LAST, lower(t.name)`,
         r.params
       ),
       query(
-        `SELECT COALESCE(j.area, 'No area') AS area,
-                COUNT(*) FILTER (WHERE v.status = 'Installed')::int AS installed,
-                COUNT(*) FILTER (WHERE v.status = 'Repaired')::int AS repaired,
-                COUNT(*) FILTER (WHERE v.status = 'Nakuha ang Modem')::int AS retrieved,
-                COALESCE(SUM(v.drop_core_m), 0)::float AS drop_core_m
-           ${VISIT_BASE} WHERE ${inRange}
-          GROUP BY COALESCE(j.area, 'No area') ORDER BY 2 DESC`,
+        `WITH work AS (
+            SELECT COALESCE(j.area, 'No area') AS area,
+                   COUNT(*) FILTER (WHERE v.status = 'Installed')::int AS installed,
+                   COUNT(*) FILTER (WHERE v.status = 'Repaired')::int AS repaired,
+                   COUNT(*) FILTER (WHERE v.status = 'Nakuha ang Modem')::int AS retrieved
+              ${VISIT_BASE} WHERE ${inRange} AND NOT t.legacy
+             GROUP BY 1),
+          cards AS (
+            SELECT COALESCE(t.area, 'No area') AS area, SUM(m.drop_core_m)::float AS drop_core_m
+              FROM fe_team_materials m JOIN fe_teams t ON t.id = m.team_id
+             WHERE m.work_date BETWEEN ${r.sqlFrom} AND ${r.sqlTo}
+             GROUP BY 1)
+         SELECT COALESCE(w.area, c.area) AS area, COALESCE(w.installed, 0) AS installed, COALESCE(w.repaired, 0) AS repaired,
+                COALESCE(w.retrieved, 0) AS retrieved, COALESCE(c.drop_core_m, 0) AS drop_core_m
+           FROM work w FULL JOIN cards c ON c.area = w.area
+          ORDER BY 2 DESC, 1`,
         r.params
       ),
       query(
-        `SELECT COALESCE(t.name, 'No team') AS team,
-                COALESCE(SUM(v.drop_core_m), 0)::float AS drop_core_m, COALESCE(SUM(v.f_clamp), 0)::int AS f_clamp,
-                COALESCE(SUM(v.house_clamp), 0)::int AS house_clamp, COALESCE(SUM(v.sc_connector), 0)::int AS sc_connector,
-                COALESCE(SUM(v.onu), 0)::int AS onu
-           ${VISIT_BASE} WHERE ${inRange}
-          GROUP BY COALESCE(t.name, 'No team')
-         HAVING COALESCE(SUM(v.drop_core_m), 0) + COALESCE(SUM(v.f_clamp), 0) + COALESCE(SUM(v.sc_connector), 0) + COALESCE(SUM(v.onu), 0) > 0
-          ORDER BY 2 DESC`,
+        `SELECT t.name AS team, t.area, COUNT(m.id)::int AS cards,
+                COALESCE(SUM(m.drop_core_m), 0)::float AS drop_core_m, COALESCE(SUM(m.f_clamp), 0)::int AS f_clamp,
+                COALESCE(SUM(m.house_clamp), 0)::int AS house_clamp, COALESCE(SUM(m.sc_connector), 0)::int AS sc_connector,
+                COALESCE(SUM(m.onu), 0)::int AS onu
+           FROM fe_teams t
+           LEFT JOIN fe_team_materials m ON m.team_id = t.id AND m.work_date BETWEEN ${r.sqlFrom} AND ${r.sqlTo}
+          WHERE NOT t.legacy AND (t.active OR m.id IS NOT NULL)
+          GROUP BY t.id, t.name, t.area
+          ORDER BY t.area NULLS LAST, lower(t.name)`,
         r.params
       )
     ]);

@@ -445,3 +445,62 @@ CREATE TABLE IF NOT EXISTS fe_audit (
 );
 
 CREATE INDEX IF NOT EXISTS idx_fe_audit_job ON fe_audit(job_id);
+
+-- Each team works an area and the Teams page groups by it. Seeded once, while
+-- no team has an area yet: the four current teams by name, and the old Excel
+-- teams by the area most of their visits were in.
+ALTER TABLE fe_teams ADD COLUMN IF NOT EXISTS area VARCHAR(120);
+
+UPDATE fe_teams t SET area = s.area
+FROM (
+    SELECT id, CASE lower(name) WHEN 'team kawit' THEN 'KAWIT' WHEN 'team trece' THEN 'TRECE'
+                                WHEN 'team main' THEN 'TANZA' WHEN 'team julugan' THEN 'TANZA' END AS area
+      FROM fe_teams WHERE NOT legacy
+    UNION ALL
+    SELECT * FROM (
+        SELECT DISTINCT ON (v.team_id) v.team_id AS id, j.area
+          FROM fe_visits v
+          JOIN fe_jobs j ON j.id = v.job_id
+          JOIN fe_teams lt ON lt.id = v.team_id AND lt.legacy
+         WHERE j.area IS NOT NULL
+         GROUP BY v.team_id, j.area
+         ORDER BY v.team_id, COUNT(*) DESC, j.area
+    ) crews
+) s
+WHERE s.id = t.id AND s.area IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM fe_teams WHERE area IS NOT NULL);
+
+-- End-of-day materials per team, typed from the team's report card. One card
+-- per team per day; the materials reports read only these (fresh start: the
+-- per-visit materials from the old Excel stay on the visits but are not summed).
+CREATE TABLE IF NOT EXISTS fe_team_materials (
+    id SERIAL PRIMARY KEY,
+    team_id INT NOT NULL REFERENCES fe_teams(id),
+    work_date DATE NOT NULL,
+    drop_core_m NUMERIC(10,2) NOT NULL DEFAULT 0,
+    f_clamp INT NOT NULL DEFAULT 0,
+    house_clamp INT NOT NULL DEFAULT 0,
+    sc_connector INT NOT NULL DEFAULT 0,
+    onu INT NOT NULL DEFAULT 0,
+    remarks TEXT,
+    created_by UUID,
+    updated_by UUID,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (team_id, work_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_fe_team_materials_date ON fe_team_materials(work_date);
+
+-- Board fresh start: open / unassigned / 3+ days old count only jobs generated
+-- after board_start (UTC, like every timestamp here). Set once, the first time
+-- this runs; older open jobs stay reachable under "Old backlog".
+CREATE TABLE IF NOT EXISTS fe_settings (
+    key VARCHAR(60) PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO fe_settings (key, value)
+VALUES ('board_start', to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS'))
+ON CONFLICT (key) DO NOTHING;

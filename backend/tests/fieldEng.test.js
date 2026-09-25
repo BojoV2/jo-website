@@ -4,7 +4,7 @@ import { randomUUID } from 'crypto';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import app from '../src/app.js';
 import { query, pool } from '../src/db.js';
-import { jobTypeFor, guessArea, snapshotFromForm } from '../src/services/feJobs.js';
+import { jobTypeFor, guessArea, snapshotFromForm, CLOSED_STATUSES as CLOSED_LIKE } from '../src/services/feJobs.js';
 
 describe('feJobs mapping', () => {
   it('maps templates to job types', () => {
@@ -225,5 +225,107 @@ describe('Field Eng API', { timeout: 30000 }, () => {
     const after = await query('SELECT area FROM fe_jobs WHERE id = $1', [job.id]);
     expect(after.rows[0].area).toBe(`${value} 2`);
     await query('UPDATE fe_jobs SET area = $2 WHERE id = $1', [job.id, job.area]);
+  });
+  it('suggests people from the old Excel crews with their areas', async () => {
+    const res = await api('get', '/people');
+    expect(res.status).toBe(200);
+    const names = res.body.people.map((p) => p.name);
+    expect(names).toContain('JELO');
+    expect(names).toContain('ROLANDO');
+    expect(names.some((n) => n.includes(' - '))).toBe(false);
+    const jelo = res.body.people.find((p) => p.name === 'JELO');
+    expect(jelo.jobs).toBeGreaterThan(0);
+    expect(jelo.topArea).toBeTruthy();
+    expect(Object.values(jelo.areas).reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(jelo.jobs); // visits with no area count only in jobs
+  });
+
+  it('seeds team areas and lets anyone set, change and clear them', async () => {
+    const seeded = await query(`SELECT lower(name) AS name, area FROM fe_teams WHERE NOT legacy`);
+    const byName = Object.fromEntries(seeded.rows.map((r) => [r.name, r.area]));
+    expect(byName['team kawit']).toBe('KAWIT');
+    expect(byName['team trece']).toBe('TRECE');
+    const legacyWithArea = await query(`SELECT COUNT(*)::int AS n FROM fe_teams WHERE legacy AND area IS NOT NULL`);
+    expect(legacyWithArea.rows[0].n).toBeGreaterThan(0);
+
+    const name = `${teamName} Area`;
+    let res = await api('post', '/teams').send({ name, area: 'kawit' });
+    expect(res.status).toBe(201);
+    const team = res.body.teams.find((t) => t.name === name);
+    expect(team.area).toBe('KAWIT');
+    res = await api('patch', `/teams/${team.id}`).send({ area: 'NOWHERE' });
+    expect(res.status).toBe(400);
+    res = await api('patch', `/teams/${team.id}`).send({ area: 'TRECE' });
+    expect(res.body.teams.find((t) => t.id === team.id).area).toBe('TRECE');
+    res = await api('patch', `/teams/${team.id}`).send({ area: null });
+    expect(res.body.teams.find((t) => t.id === team.id).area).toBeNull();
+    const log = await query(`SELECT action FROM fe_audit WHERE user_id = $1 AND entity_id = $2 ORDER BY id`, [userId, String(team.id)]);
+    expect(log.rows.map((r) => r.action)).toEqual(['team_added', 'team_area_changed', 'team_area_changed']);
+
+    res = await api('post', `/teams/${team.id}/members`).send({ name: 'ZZTESTPERSON' });
+    expect(res.status).toBe(201);
+    res = await api('get', '/people');
+    expect(res.body.people.find((p) => p.name === 'ZZTESTPERSON')).toMatchObject({ jobs: 0, teams: [name] });
+    await query('DELETE FROM fe_team_members WHERE team_id = $1', [team.id]);
+    await query('DELETE FROM fe_teams WHERE id = $1', [team.id]);
+  });
+  it('takes the area from a team name and keeps report cards per day', async () => {
+    const name = `${teamName} Kawit Crew`;
+    let res = await api('post', '/teams').send({ name });
+    expect(res.status).toBe(201);
+    const team = res.body.teams.find((t) => t.name === name);
+    expect(team.area).toBe('KAWIT');
+    try {
+      const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date());
+      res = await api('put', `/teams/${team.id}/materials/${today}`).send({ drop_core_m: '120.5', f_clamp: 4, house_clamp: '', sc_connector: 2, onu: 1 });
+      expect(res.status).toBe(200);
+      expect(res.body.card).toMatchObject({ work_date: today, drop_core_m: 120.5, f_clamp: 4, house_clamp: 0, onu: 1 });
+      res = await api('put', `/teams/${team.id}/materials/${today}`).send({ drop_core_m: 100, f_clamp: 4, sc_connector: 2, onu: 1 });
+      expect(res.body.card.drop_core_m).toBe(100);
+      res = await api('get', `/teams/${team.id}/materials`);
+      expect(res.body.cards).toHaveLength(1);
+      res = await api('put', `/teams/${team.id}/materials/2999-01-01`).send({ onu: 1 });
+      expect(res.status).toBe(400);
+      res = await api('put', `/teams/${team.id}/materials/${today}`).send({ onu: -3 });
+      expect(res.status).toBe(400);
+
+      res = await api('get', '/reports?period=week');
+      const mats = res.body.materials.find((m) => m.team === name);
+      expect(mats).toMatchObject({ cards: 1, drop_core_m: 100, f_clamp: 4, onu: 1 });
+      const perf = res.body.teams.find((t) => t.team === name);
+      expect(perf).toMatchObject({ installed: 0, repaired: 0, area: 'KAWIT' });
+      const legacy = await query('SELECT name FROM fe_teams WHERE legacy');
+      const legacyNames = new Set(legacy.rows.map((r) => r.name));
+      for (const t of res.body.teams) expect(legacyNames.has(t.team)).toBe(false);
+      for (const m of res.body.materials) expect(legacyNames.has(m.team)).toBe(false);
+
+      res = await api('get', '/today');
+      expect(res.body.teams.find((t) => t.id === team.id)).toMatchObject({ card_in: true, area: 'KAWIT' });
+      for (const t of res.body.teams) expect(legacyNames.has(t.name)).toBe(false);
+      expect(res.body.materials.cards).toBeGreaterThanOrEqual(1);
+
+      const log = await query(`SELECT action FROM fe_audit WHERE user_id = $1 AND entity_id = $2 ORDER BY id`, [userId, String(team.id)]);
+      expect(log.rows.map((r) => r.action)).toEqual(['team_added', 'materials_saved', 'materials_corrected']);
+      res = await api('delete', `/teams/${team.id}/materials/${today}`);
+      expect(res.status).toBe(200);
+    } finally {
+      await query('DELETE FROM fe_team_materials WHERE team_id = $1', [team.id]);
+      await query('DELETE FROM fe_teams WHERE id = $1', [team.id]);
+    }
+  });
+  it('counts only jobs generated since the board fresh start', async () => {
+    const start = (await query(`SELECT value::timestamp AS v FROM fe_settings WHERE key = 'board_start'`)).rows[0].v;
+    expect(start).toBeTruthy();
+    let res = await api('get', '/jobs?view=open');
+    for (const j of res.body.jobs) expect(CLOSED_LIKE.includes(j.status)).toBe(false);
+    const fresh = await query(
+      `SELECT COUNT(*)::int AS n FROM fe_jobs WHERE NOT history_only AND created_at >= $1 AND NOT (status = ANY($2::text[]))`,
+      [start, CLOSED_LIKE]
+    );
+    expect(res.body.counts.open).toBe(fresh.rows[0].n);
+    expect(res.body.jobs.length).toBe(Math.min(fresh.rows[0].n, 300));
+    expect(res.body.counts.backlog).toBeGreaterThan(0);
+    expect(res.body.counts.board_start).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+    res = await api('get', '/jobs?view=backlog&limit=1000');
+    expect(res.body.jobs.length).toBe(Math.min(res.body.counts.backlog, 1000));
   });
 });

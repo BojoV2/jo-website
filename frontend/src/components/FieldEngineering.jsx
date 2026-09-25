@@ -162,14 +162,25 @@ export default function FieldEngineering({ token }) {
               </button>
             ))}
           </div>
+          {board.counts.board_start && (
+            <p className="fe-sub fe-board-start">
+              Open, unassigned and 3+ days old count jobs generated since {board.counts.board_start}.
+              {board.counts.backlog > 0 && (
+                <> {' '}<button type="button" className="fe-link" onClick={() => setFilters({ ...EMPTY_FILTERS, view: 'backlog' })}>
+                  {board.counts.backlog.toLocaleString()} older open jobs
+                </button> are kept under Old backlog.</>
+              )}
+            </p>
+          )}
 
           <div className="fe-card">
             <div className="fe-filters">
               <select aria-label="Which jobs" value={filters.view} onChange={(e) => setFilter('view', e.target.value)}>
                 <option value="today">Generated today</option>
-                <option value="open">Open jobs (all days)</option>
+                <option value="open">Open jobs</option>
                 <option value="closed_today">Closed today</option>
                 <option value="closed">Closed / unverified</option>
+                <option value="backlog">Old backlog (before the fresh start)</option>
                 <option value="all">Everything</option>
               </select>
               <select aria-label="Type" value={filters.type} onChange={(e) => setFilter('type', e.target.value)}>
@@ -216,7 +227,7 @@ export default function FieldEngineering({ token }) {
                     </tr>
                   ))}
                   {!board.jobs.length && (
-                    <tr><td colSpan={7} className="fe-empty">{loading ? 'Loading…' : filters.view === 'today' && !filters.q ? 'No Application Form or Job Order generated today yet.' : 'No jobs match these filters.'}</td></tr>
+                    <tr><td colSpan={7} className="fe-empty">{loading ? 'Loading…' : filters.view === 'today' && !filters.q ? 'No Application Form or Job Order generated today yet.' : filters.view === 'open' && !filters.q ? 'No open job. Every new Application Form and Job Order lands here.' : 'No jobs match these filters.'}</td></tr>
                   )}
                 </tbody>
               </table>
@@ -495,18 +506,23 @@ function TodayView({ data }) {
           <h4 className="fe-h">Teams today</h4>
           <div className="fe-table-wrap">
             <table className="fe-table">
-              <thead><tr><th>Team</th><th>Open jobs</th><th>Visits today</th><th>Done today</th><th>Install SLA</th></tr></thead>
+              <thead><tr><th>Team</th><th>Area</th><th>Open jobs</th><th>Visits today</th><th>Done today</th><th>Install SLA</th><th>Report card</th></tr></thead>
               <tbody>
                 {teams.map((t) => (
-                  <tr key={t.id}><td className="fe-name">{t.name}</td><td>{t.open}</td><td>{t.visits}</td><td>{t.done}</td><td>{t.pass + t.delay ? `${t.pass} pass · ${t.delay} delay` : '—'}</td></tr>
+                  <tr key={t.id}>
+                    <td className="fe-name">{t.name}</td><td>{t.area || '—'}</td><td>{t.open}</td><td>{t.visits}</td><td>{t.done}</td>
+                    <td>{t.pass + t.delay ? `${t.pass} pass · ${t.delay} delay` : '—'}</td>
+                    <td>{t.card_in ? <span className="fe-pill fe-ok">In</span> : <span className="fe-pill fe-muted">Not yet</span>}</td>
+                  </tr>
                 ))}
-                {!teams.length && <tr><td colSpan={5} className="fe-empty">No team has work today yet.</td></tr>}
+                {!teams.length && <tr><td colSpan={7} className="fe-empty">No active team yet. Add one under Teams.</td></tr>}
               </tbody>
             </table>
           </div>
         </div>
         <div className="fe-card fe-pad">
           <h4 className="fe-h fe-h--flush">Materials used today</h4>
+          <p className="fe-sub">From {materials.cards} team report {materials.cards === 1 ? 'card' : 'cards'} entered for today.</p>
           <table className="fe-table fe-table--kv"><tbody>
             {MATERIALS.map(([k, l]) => <tr key={k}><td>{l}</td><td className="fe-num">{materials[k]}</td></tr>)}
           </tbody></table>
@@ -555,18 +571,18 @@ function ReportsView({ data, period, setPeriod, onExport }) {
                 <tbody>
                   {data.teams.map((t) => (
                     <tr key={t.team}>
-                      <td className="fe-name">{t.team}{t.legacy && <span className="fe-sub"> · old Excel name</span>}</td>
+                      <td className="fe-name">{t.team}{t.area && <span className="fe-sub"> · {t.area}</span>}</td>
                       <td>{t.installed}</td><td><HitPill done={t.installed} closed={t.install_closed} ratio={ratio} /></td>
                       <td>{t.repaired}</td><td><HitPill done={t.repaired} closed={t.repair_closed} ratio={ratio} /></td>
                       <td>{t.retrieved}{t.pullout_visits ? ` / ${t.pullout_visits}` : ''}</td>
                       <td>{t.sla_pass + t.sla_delay ? `${t.sla_pass} pass · ${t.sla_delay} delay` : '—'}</td>
                     </tr>
                   ))}
-                  {!data.teams.length && <tr><td colSpan={7} className="fe-empty">No visits in this period.</td></tr>}
+                  {!data.teams.length && <tr><td colSpan={7} className="fe-empty">No active team yet. Add one under Teams.</td></tr>}
                 </tbody>
               </table>
             </div>
-            <p className="fe-sub fe-pad-x">HIT means at least {Math.round(ratio * 100)}% of closed jobs were completed. Targets: install {data.targets.installPerDay}/day, repair {data.targets.repairPerDay}/day.</p>
+            <p className="fe-sub fe-pad-x">Counts the current teams only; the old Excel crews are kept as history on each job. HIT means at least {Math.round(ratio * 100)}% of closed jobs were completed. Targets: install {data.targets.installPerDay}/day, repair {data.targets.repairPerDay}/day.</p>
           </div>
           <div className="fe-split fe-split--even">
             <div className="fe-card">
@@ -582,10 +598,14 @@ function ReportsView({ data, period, setPeriod, onExport }) {
               <h4 className="fe-h">Materials by team</h4>
               <div className="fe-table-wrap">
                 <table className="fe-table">
-                  <thead><tr><th>Team</th>{MATERIALS.map(([k, l]) => <th key={k}>{l}</th>)}</tr></thead>
-                  <tbody>{data.materials.map((m) => <tr key={m.team}><td className="fe-name">{m.team}</td>{MATERIALS.map(([k]) => <td key={k}>{k === 'drop_core_m' ? Math.round(m[k]).toLocaleString() : m[k]}</td>)}</tr>)}</tbody>
+                  <thead><tr><th>Team</th><th>Cards</th>{MATERIALS.map(([k, l]) => <th key={k}>{l}</th>)}</tr></thead>
+                  <tbody>
+                    {data.materials.map((m) => <tr key={m.team}><td className="fe-name">{m.team}</td><td>{m.cards}</td>{MATERIALS.map(([k]) => <td key={k}>{k === 'drop_core_m' ? Math.round(m[k]).toLocaleString() : m[k]}</td>)}</tr>)}
+                    {!data.materials.length && <tr><td colSpan={MATERIALS.length + 2} className="fe-empty">No active team yet.</td></tr>}
+                  </tbody>
                 </table>
               </div>
+              <p className="fe-sub fe-pad-x">From the teams' end-of-day report cards (Teams tab).</p>
             </div>
           </div>
         </>
@@ -594,10 +614,182 @@ function ReportsView({ data, period, setPeriod, onExport }) {
   );
 }
 
+// Suggests people from the old Excel crews and current teams. People who
+// mostly worked the team's area come first; typing a new name is fine too.
+function PersonInput({ people, area, team, onSave }) {
+  const [text, setText] = useState('');
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(0);
+  const listId = `fe-people-${team.id}`;
+  const taken = new Set(team.members.map((m) => m.name.toUpperCase()));
+
+  const matches = useMemo(() => {
+    const q = text.trim().toUpperCase();
+    return people
+      .filter((p) => !taken.has(p.name.toUpperCase()) && (!q || p.name.toUpperCase().includes(q)))
+      .map((p) => ({ ...p, here: area ? p.areas[area] || 0 : 0, starts: q && p.name.toUpperCase().startsWith(q) ? 1 : 0 }))
+      .sort((a, b) => b.starts - a.starts || b.here - a.here || b.jobs - a.jobs || a.name.localeCompare(b.name))
+      .slice(0, 8);
+  }, [people, text, area, team.members]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const save = async (name) => {
+    const value = (name ?? text).trim();
+    if (!value) return;
+    if (await onSave(value)) { setText(''); setActive(0); setOpen(false); }
+  };
+  const onKeyDown = (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      setOpen(true);
+      if (matches.length) setActive((i) => (i + (e.key === 'ArrowDown' ? 1 : -1) + matches.length) % matches.length);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      save(open && matches[active] ? matches[active].name : undefined);
+    } else if (e.key === 'Escape') {
+      setOpen(false);
+    }
+  };
+  const exact = matches.some((p) => p.name.toUpperCase() === text.trim().toUpperCase());
+
+  return (
+    <div className="fe-inline-form fe-person">
+      <div className="fe-person-box">
+        <input
+          role="combobox" aria-expanded={open && matches.length > 0} aria-controls={listId} aria-autocomplete="list"
+          aria-activedescendant={open && matches[active] ? `${listId}-${active}` : undefined}
+          placeholder="Type or pick a name" aria-label={`New member for ${team.name}`} value={text} maxLength={120}
+          onChange={(e) => { setText(e.target.value); setActive(0); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+          onBlur={() => window.setTimeout(() => setOpen(false), 150)}
+          onKeyDown={onKeyDown}
+        />
+        {open && matches.length > 0 && (
+          <ul id={listId} role="listbox" className="fe-person-list">
+            {matches.map((p, i) => (
+              <li
+                key={p.name} id={`${listId}-${i}`} role="option" aria-selected={i === active}
+                className={i === active ? 'is-on' : ''}
+                onMouseDown={(e) => { e.preventDefault(); save(p.name); }}
+                onMouseEnter={() => setActive(i)}
+              >
+                <span className="fe-person-name">{p.name}</span>
+                <span className="fe-sub">
+                  {p.jobs ? `${p.topArea || '—'} · ${p.jobs.toLocaleString()} jobs` : 'new'}
+                  {area && p.here > 0 && p.topArea !== area ? ` · ${p.here} in ${area}` : ''}
+                  {p.teams.length > 0 ? ` · in ${p.teams.join(', ')}` : ''}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <button type="button" className="fe-btn fe-btn--ghost" disabled={!text.trim()} onMouseDown={(e) => e.preventDefault()} onClick={() => save()}>
+        {text.trim() && !exact ? 'Add new' : 'Add'}
+      </button>
+    </div>
+  );
+}
+
+const BLANK_CARD = { drop_core_m: '', f_clamp: '', house_clamp: '', sc_connector: '', onu: '', remarks: '' };
+
+// End-of-day materials from the team's report card. One card per day; picking
+// a day that already has one loads it for correction.
+function MaterialsCard({ team, token, say }) {
+  const [open, setOpen] = useState(false);
+  const [cards, setCards] = useState([]);
+  const [date, setDate] = useState(manilaToday());
+  const [form, setForm] = useState(BLANK_CARD);
+  const [busy, setBusy] = useState(false);
+  const today = manilaToday();
+
+  const fill = (list, day) => {
+    const card = list.find((c) => c.work_date === day);
+    setForm(card ? Object.fromEntries(Object.keys(BLANK_CARD).map((k) => [k, card[k] ?? ''])) : BLANK_CARD);
+  };
+  const load = useCallback(async (day) => {
+    try {
+      const r = await apiRequest(`/field-eng/teams/${team.id}/materials`, { token });
+      setCards(r.cards);
+      fill(r.cards, day);
+    } catch (err) {
+      say(err.message, 'error');
+    }
+  }, [team.id, token, say]);
+  useEffect(() => { if (open) load(date); }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const pick = (day) => { setDate(day); fill(cards, day); };
+  const existing = cards.some((c) => c.work_date === date);
+  const save = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      await apiRequest(`/field-eng/teams/${team.id}/materials/${date}`, { method: 'PUT', token, body: form });
+      say(`${team.name}: materials for ${date} ${existing ? 'corrected' : 'saved'}`);
+      await load(date);
+    } catch (err) {
+      say(err.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  if (!open) {
+    return (
+      <button type="button" className="fe-btn fe-btn--ghost fe-card-toggle" onClick={() => setOpen(true)}>
+        Materials report card
+      </button>
+    );
+  }
+  return (
+    <form className="fe-mats" onSubmit={save}>
+      <div className="fe-mats-head">
+        <span className="fe-label">Materials report card</span>
+        <button type="button" className="fe-link" onClick={() => setOpen(false)}>Close</button>
+      </div>
+      <label className="fe-field">
+        <span>Day</span>
+        <input type="date" value={date} max={today} required onChange={(e) => pick(e.target.value)} />
+      </label>
+      <div className="fe-mats-grid">
+        {MATERIALS.map(([k, l]) => (
+          <label key={k} className="fe-field">
+            <span>{l}</span>
+            <input type="number" inputMode={k === 'drop_core_m' ? 'decimal' : 'numeric'} min="0" step={k === 'drop_core_m' ? '0.01' : '1'} value={form[k]} onChange={set(k)} placeholder="0" />
+          </label>
+        ))}
+      </div>
+      <label className="fe-field">
+        <span>Remarks</span>
+        <input value={form.remarks} maxLength={500} onChange={set('remarks')} placeholder="Optional" />
+      </label>
+      <button type="submit" className="fe-btn fe-btn--primary" disabled={busy}>{existing ? 'Save correction' : 'Save'}</button>
+      {cards.length > 0 && (
+        <div className="fe-mats-recent">
+          <span className="fe-label">Recent cards</span>
+          {cards.slice(0, 7).map((c) => (
+            <button key={c.work_date} type="button" className={c.work_date === date ? 'fe-mats-day is-on' : 'fe-mats-day'} onClick={() => pick(c.work_date)}>
+              <b>{c.work_date === today ? 'Today' : c.work_date}</b>
+              <span className="fe-sub">{Math.round(c.drop_core_m)} m · {c.f_clamp} F · {c.house_clamp} H · {c.sc_connector} SC · {c.onu} ONU</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </form>
+  );
+}
+
 function TeamsView({ token, meta, setMeta, say, onChanged }) {
   const [newTeam, setNewTeam] = useState('');
-  const [memberDraft, setMemberDraft] = useState({});
+  const [newArea, setNewArea] = useState('');
+  const [people, setPeople] = useState([]);
   const [showLegacy, setShowLegacy] = useState(false);
+
+  const loadPeople = useCallback(async () => {
+    try { setPeople((await apiRequest('/field-eng/people', { token })).people); } catch (err) { say(err.message, 'error'); }
+  }, [token, say]);
+  useEffect(() => { loadPeople(); }, [loadPeople]);
+
   const call = async (path, method, body, message) => {
     try {
       setMeta(await apiRequest(path, { method, token, body }));
@@ -609,15 +801,18 @@ function TeamsView({ token, meta, setMeta, say, onChanged }) {
       return false;
     }
   };
+  const areas = meta.lists.area || [];
   const current = meta.teams.filter((t) => !t.legacy);
   const legacy = meta.teams.filter((t) => t.legacy);
+  // Area order follows the Lists tab; teams without an area go last.
+  const groups = [...areas, ...new Set(current.map((t) => t.area).filter((a) => a && !areas.includes(a))), null]
+    .map((area) => ({ area, teams: current.filter((t) => (t.area || null) === area) }))
+    .filter((g) => g.teams.length || g.area);
 
-  const addMember = async (team) => {
-    const name = (memberDraft[team.id] || '').trim();
-    if (!name) return;
-    if (await call(`/field-eng/teams/${team.id}/members`, 'POST', { name }, `${name} added to ${team.name}`)) {
-      setMemberDraft((d) => ({ ...d, [team.id]: '' }));
-    }
+  const addMember = async (team, name) => {
+    const ok = await call(`/field-eng/teams/${team.id}/members`, 'POST', { name }, `${name} added to ${team.name}`);
+    if (ok) loadPeople();
+    return ok;
   };
   const rename = (team, value) => {
     const name = value.trim();
@@ -635,23 +830,31 @@ function TeamsView({ token, meta, setMeta, say, onChanged }) {
         />
         <span className={team.active ? 'fe-pill fe-ok' : 'fe-pill fe-muted'}>{team.active ? 'Active' : 'Retired'}</span>
       </div>
+      {!team.legacy && (
+        <label className="fe-team-area">
+          <span className="fe-label">Area</span>
+          <select
+            value={team.area || ''} aria-label={`Area for ${team.name}`}
+            onChange={(e) => call(`/field-eng/teams/${team.id}`, 'PATCH', { area: e.target.value || null }, `${team.name} moved to ${e.target.value || 'no area'}`)}
+          >
+            <option value="">No area</option>
+            {withCurrent(areas, team.area).map((a) => <option key={a}>{a}</option>)}
+          </select>
+        </label>
+      )}
       <span className="fe-label">Members · {team.members.length}</span>
       <div className="fe-chips">
         {team.members.map((m) => (
           <span key={m.id} className="fe-member">{m.name}
-            <button type="button" aria-label={`Remove ${m.name}`} onClick={() => call(`/field-eng/teams/${team.id}/members/${m.id}`, 'DELETE', undefined, `${m.name} removed from ${team.name}`)}>×</button>
+            <button type="button" aria-label={`Remove ${m.name}`} onClick={async () => {
+              if (await call(`/field-eng/teams/${team.id}/members/${m.id}`, 'DELETE', undefined, `${m.name} removed from ${team.name}`)) loadPeople();
+            }}>×</button>
           </span>
         ))}
         {!team.members.length && <span className="fe-sub">No members yet</span>}
       </div>
-      <div className="fe-inline-form">
-        <input
-          placeholder="Add a member" aria-label={`New member for ${team.name}`} value={memberDraft[team.id] || ''}
-          onChange={(e) => setMemberDraft((d) => ({ ...d, [team.id]: e.target.value }))}
-          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addMember(team); } }}
-        />
-        <button type="button" className="fe-btn fe-btn--ghost" onClick={() => addMember(team)}>Add</button>
-      </div>
+      {!team.legacy && <PersonInput people={people} area={team.area} team={team} onSave={(name) => addMember(team, name)} />}
+      {!team.legacy && <MaterialsCard team={team} token={token} say={say} />}
       <div className="fe-team-foot">
         <button type="button" className="fe-link" onClick={() => call(`/field-eng/teams/${team.id}`, 'PATCH', { active: !team.active }, `${team.name} ${team.active ? 'retired' : 'reactivated'}`)}>
           {team.active ? 'Retire team' : 'Reactivate'}
@@ -665,19 +868,48 @@ function TeamsView({ token, meta, setMeta, say, onChanged }) {
       <form className="fe-card fe-pad fe-inline-form fe-addteam" onSubmit={async (e) => {
         e.preventDefault();
         const name = newTeam.trim();
-        if (name && await call('/field-eng/teams', 'POST', { name }, `${name} added. Add its members below.`)) setNewTeam('');
+        if (name && await call('/field-eng/teams', 'POST', { name, area: newArea || null }, `${name} added. Add its members below.`)) { setNewTeam(''); setNewArea(''); }
       }}>
-        <div className="fe-field fe-grow"><label htmlFor="fe-newteam">New team name</label><input id="fe-newteam" value={newTeam} onChange={(e) => setNewTeam(e.target.value)} placeholder="e.g. Team Naic" /></div>
+        <div className="fe-field fe-grow"><label htmlFor="fe-newteam">New team name</label><input id="fe-newteam" value={newTeam} onChange={(e) => {
+          const name = e.target.value;
+          setNewTeam(name);
+          // Teams are named after their area, so "Team Naic" picks NAIC.
+          const words = ` ${name.toLowerCase().replace(/[^a-z0-9]+/g, ' ')} `;
+          const hit = areas.find((a) => words.includes(` ${a.toLowerCase()} `));
+          if (hit) setNewArea(hit);
+        }} placeholder="e.g. Team Naic" /></div>
+        <div className="fe-field">
+          <label htmlFor="fe-newteam-area">Area</label>
+          <select id="fe-newteam-area" value={newArea} onChange={(e) => setNewArea(e.target.value)}>
+            <option value="">No area</option>
+            {areas.map((a) => <option key={a}>{a}</option>)}
+          </select>
+        </div>
         <button type="submit" className="fe-btn fe-btn--primary">Add team</button>
-        <p className="fe-sub fe-full">Anyone can add or rename a team and add or remove members. Retired teams keep their past jobs and reports but leave the assign lists.</p>
+        <p className="fe-sub fe-full">Teams are named after the area they are deployed to; naming one "Team Naic" sets its area to NAIC. Anyone can add or rename a team and add or remove members: type a name to get suggestions from the old Excel crews, people who worked that area first. Enter each team's materials from its end-of-day report card under Materials report card. Retired teams keep their past jobs and reports but leave the assign lists.</p>
       </form>
-      <div className="fe-teams">{current.map(card)}</div>
+      {groups.map((g) => (
+        <div key={g.area || 'none'} className="fe-area-group">
+          <h4 className="fe-h fe-area-title">{g.area || 'No area'} <span className="fe-sub">{g.teams.length} {g.teams.length === 1 ? 'team' : 'teams'}</span></h4>
+          {g.teams.length
+            ? <div className="fe-teams">{g.teams.map(card)}</div>
+            : <p className="fe-sub">No team for this area yet.</p>}
+        </div>
+      ))}
       {legacy.length > 0 && (
         <div className="fe-card fe-pad">
           <button type="button" className="fe-link" onClick={() => setShowLegacy((s) => !s)}>
-            {showLegacy ? 'Hide' : 'Show'} {legacy.length} old team names from the Excel (history only)
+            {showLegacy ? 'Hide' : 'Show'} {legacy.length} old crews from the Excel (history only), by area
           </button>
-          {showLegacy && <div className="fe-teams fe-teams--legacy">{legacy.map(card)}</div>}
+          {showLegacy && [...areas, null].map((area) => {
+            const list = legacy.filter((t) => (t.area || null) === area);
+            return list.length > 0 && (
+              <div key={area || 'none'} className="fe-area-group">
+                <h4 className="fe-h fe-area-title">{area || 'No area'} <span className="fe-sub">{list.length}</span></h4>
+                <div className="fe-teams fe-teams--legacy">{list.map(card)}</div>
+              </div>
+            );
+          })}
         </div>
       )}
     </section>
