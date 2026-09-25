@@ -1,6 +1,7 @@
 import express from 'express';
 import { query } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
+import { FE_FIELDS, FE_JOIN } from './generatedPdfs.js';
 
 const router = express.Router();
 
@@ -95,10 +96,12 @@ router.get('/profile', async (req, res) => {
               ${CLIENT_REFERENCE} AS reference,
               t.title AS template_title,
               u.name AS created_by_name,
-              (SELECT COUNT(*)::int FROM generated_pdf_attachments a WHERE a.generated_pdf_id = g.id) AS attachment_count
+              (SELECT COUNT(*)::int FROM generated_pdf_attachments a WHERE a.generated_pdf_id = g.id) AS attachment_count,
+              ${FE_FIELDS}
        FROM generated_pdfs g
        LEFT JOIN pdf_templates t ON t.id = g.template_id
        LEFT JOIN users u ON u.id = g.user_id
+       ${FE_JOIN}
        WHERE LOWER(${CLIENT_NAME}) = LOWER($1)
        ORDER BY g.created_at DESC`,
       [name]

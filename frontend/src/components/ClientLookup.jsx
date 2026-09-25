@@ -1,6 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import { apiRequest, getApiBase } from '../api.js';
 
+// Field Eng status of a JO (team + last visit), read-only.
+const fieldCell = (row) => (row.fe_status
+  ? (
+    <span className="fe-field-tag" title={row.fe_last_visit ? `Last field visit ${row.fe_last_visit}` : 'No field visit yet'}>
+      <b className={`fe-field-tag-status fe-field-tag--${['Installed', 'Repaired', 'Nakuha ang Modem'].includes(row.fe_status) ? 'ok' : ['Cancelled', 'Not Installed', 'Unresolved', 'Hindi Nakuha ang Modem'].includes(row.fe_status) ? 'bad' : 'wait'}`}>{row.fe_status}</b>
+      <span>{row.fe_team || 'Unassigned'}{row.fe_last_visit ? ` · ${row.fe_last_visit}` : ''}</span>
+    </span>
+  )
+  : <span className="muted">—</span>);
+
 /* Client lookup - search a customer, then see everything filed under them:
    documents, the files attached to those documents, and their tickets. */
 
@@ -173,6 +183,7 @@ export default function ClientLookup({ token }) {
                     <th>Template</th>
                     <th>Reference</th>
                     <th>Status</th>
+                    <th>Field</th>
                     <th>Created</th>
                     <th>By</th>
                     <th>Files</th>
@@ -188,6 +199,7 @@ export default function ClientLookup({ token }) {
                         <span className={`cl-chip cl-chip--${doc.status}`}>{doc.status}</span>
                         {doc.auto_closed && <span className="auto-closed-tag">auto</span>}
                       </td>
+                      <td>{fieldCell(doc)}</td>
                       <td>{formatDateTime(doc.created_at)}</td>
                       <td>{doc.created_by_name || '-'}</td>
                       <td>{doc.attachment_count}</td>
@@ -197,7 +209,7 @@ export default function ClientLookup({ token }) {
                     </tr>
                   ))}
                   {profile.documents.length === 0 && (
-                    <tr><td colSpan="7">No documents.</td></tr>
+                    <tr><td colSpan="8">No documents.</td></tr>
                   )}
                 </tbody>
               </table>

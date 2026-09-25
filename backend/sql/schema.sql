@@ -504,3 +504,7 @@ CREATE TABLE IF NOT EXISTS fe_settings (
 INSERT INTO fe_settings (key, value)
 VALUES ('board_start', to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS'))
 ON CONFLICT (key) DO NOTHING;
+
+-- Set when the FE job was closed because its JO was cancelled in the workflow,
+-- so un-cancelling the JO can reopen it (FE never writes the JO's own status).
+ALTER TABLE fe_jobs ADD COLUMN IF NOT EXISTS jo_cancelled BOOLEAN NOT NULL DEFAULT FALSE;

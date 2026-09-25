@@ -10,6 +10,16 @@ import Profiling from './Profiling.jsx';
 import FieldEngineering from './FieldEngineering.jsx';
 import { resolveAvatar } from '../utils/avatar.js';
 
+// Field Eng status of a JO (team + last visit), read-only.
+const fieldCell = (row) => (row.fe_status
+  ? (
+    <span className="fe-field-tag" title={row.fe_last_visit ? `Last field visit ${row.fe_last_visit}` : 'No field visit yet'}>
+      <b className={`fe-field-tag-status fe-field-tag--${['Installed', 'Repaired', 'Nakuha ang Modem'].includes(row.fe_status) ? 'ok' : ['Cancelled', 'Not Installed', 'Unresolved', 'Hindi Nakuha ang Modem'].includes(row.fe_status) ? 'bad' : 'wait'}`}>{row.fe_status}</b>
+      <span>{row.fe_team || 'Unassigned'}{row.fe_last_visit ? ` · ${row.fe_last_visit}` : ''}</span>
+    </span>
+  )
+  : <span className="muted">—</span>);
+
 GlobalWorkerOptions.workerSrc = workerSrc;
 
 const statusTabs = ['pending', 'done', 'cancelled', 'rescheduled'];
@@ -1765,6 +1775,7 @@ export default function UserPanel({
                   <th scope="col" key={`head-${index}-${column}`}>{column}</th>
                 ))}
                 <th scope="col">Created</th>
+                <th scope="col">Field</th>
                 <th scope="col">Note</th>
                 <th scope="col">Reschedule Date</th>
                 <th scope="col">Action</th>
@@ -1780,6 +1791,7 @@ export default function UserPanel({
                       <td key={`${item.id}-${index}-${column}`}>{pickFieldValue(item.submitted_data, column)}</td>
                     ))}
                     <td>{new Date(item.created_at).toLocaleString()}</td>
+                    <td>{fieldCell(item)}</td>
                     <td>
                       {isEditing ? (
                         <input
@@ -1843,7 +1855,7 @@ export default function UserPanel({
                   </tr>
                   {attachmentRowId === item.id && (
                     <tr>
-                      <td colSpan={listColumns.length + 4}>
+                      <td colSpan={listColumns.length + 5}>
                         <div className="attachment-inline-panel">
                           {rowAttachments.length === 0 ? (
                             <span className="muted">No attachments for this record.</span>
@@ -1873,7 +1885,7 @@ export default function UserPanel({
               })}
               {visibleGenerated.length === 0 && (
                 <tr>
-                  <td colSpan={listColumns.length + 4}>No generated PDFs in this status.</td>
+                  <td colSpan={listColumns.length + 5}>No generated PDFs in this status.</td>
                 </tr>
               )}
             </tbody>

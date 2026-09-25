@@ -9,7 +9,7 @@ import { restoreFileToTemp } from '../services/archiveCrypto.js';
 import { generatePdfFromTemplate } from '../services/pdfService.js';
 import { syncGeneratedPdfToGoogleSheets, isGoogleSheetsEnabled } from '../services/googleSheetsService.js';
 import { PDF_STATUSES } from '../constants.js';
-import { createJobForGenerated } from '../services/feJobs.js';
+import { createJobForGenerated, syncJobFromJo } from '../services/feJobs.js';
 
 const router = express.Router();
 
@@ -326,6 +326,11 @@ router.post('/generate', requireAuth, async (req, res) => {
   }
 });
 
+// Field Eng state of each JO, for the workflow and user lists.
+export const FE_FIELDS = `fe.status AS fe_status, fet.name AS fe_team,
+  (SELECT to_char(MAX(v.visit_date), 'YYYY-MM-DD') FROM fe_visits v WHERE v.job_id = fe.id) AS fe_last_visit`;
+export const FE_JOIN = `LEFT JOIN fe_jobs fe ON fe.generated_pdf_id = g.id LEFT JOIN fe_teams fet ON fet.id = fe.team_id`;
+
 router.get('/', requireAuth, async (req, res) => {
   try {
     await autoMovePendingToDone();
@@ -382,10 +387,12 @@ router.get('/', requireAuth, async (req, res) => {
       `SELECT g.id, g.template_id, g.user_id, g.file_path, g.submitted_data, g.status, g.status_note, g.auto_closed, g.reschedule_date, g.created_at, g.updated_at,
               t.title AS template_title,
               u.name AS user_name,
-              u.avatar_url AS user_avatar_url
+              u.avatar_url AS user_avatar_url,
+              ${FE_FIELDS}
        FROM generated_pdfs g
        LEFT JOIN pdf_templates t ON t.id = g.template_id
        LEFT JOIN users u ON u.id = g.user_id
+       ${FE_JOIN}
        ${whereSql}
        ORDER BY g.created_at DESC`,
       params
@@ -721,6 +728,9 @@ router.patch('/:generatedPdfId/status', requireAuth, async (req, res) => {
       [uuidv4(), req.params.generatedPdfId, oldStatus, status, req.user.id, note]
     );
 
+    // Best effort: a cancelled JO closes its Field Eng job (and un-cancel reopens it).
+    await syncJobFromJo(req.params.generatedPdfId, req.user).catch((err) => console.error(`Field Eng JO sync failed: ${err.message}`));
+
     return res.json(updated.rows[0]);
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -795,6 +805,10 @@ router.post('/bulk-status', requireAuth, async (req, res) => {
       throw err;
     } finally {
       client.release();
+    }
+
+    for (const row of updated.rows) {
+      await syncJobFromJo(row.id, req.user).catch((err) => console.error(`Field Eng JO sync failed: ${err.message}`));
     }
 
     return res.json({ updated_count: updated.rowCount, records: updated.rows });

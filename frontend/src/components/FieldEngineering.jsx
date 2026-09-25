@@ -32,6 +32,10 @@ function slaFor(form, hours) {
   return m <= (hours[form.difficulty] || 999) * 60 ? 'PASS' : 'DELAY';
 }
 const pct = (a, b) => (b ? Math.round((a / b) * 100) : null);
+// What the office did with the JO itself (Field Eng never changes it).
+const joNote = (job) => (job.jo_status === 'cancelled' ? 'JO cancelled'
+  : job.jo_status === 'rescheduled' ? `JO rescheduled${job.jo_reschedule_date ? ` to ${job.jo_reschedule_date}` : ''}`
+    : job.jo_status === 'done' ? 'JO marked done' : null);
 // A saved value that was later retired from its list still shows on old records.
 const withCurrent = (list, value) => (value && !(list || []).includes(value) ? [...(list || []), value] : list || []);
 
@@ -223,6 +227,7 @@ export default function FieldEngineering({ token }) {
                       <td>
                         <span className={statusClass(job.status)}>{job.status}</span>
                         {job.visit_count > 0 && <div className="fe-sub">{job.visit_count} visit{job.visit_count > 1 ? 's' : ''} · last {job.last_visit_date}</div>}
+                        {joNote(job) && <div className={job.jo_status === 'cancelled' ? 'fe-sub fe-jo-note is-bad' : 'fe-sub fe-jo-note'}>{joNote(job)}</div>}
                       </td>
                     </tr>
                   ))}
@@ -342,7 +347,8 @@ function JobPanel({ jobId, token, meta, say, onClose }) {
     ['Contact', job.customer_contact],
     ['Plan', job.plan],
     ['JO reason', job.jo_reason],
-    ['JO date', job.jo_date]
+    ['JO date', job.jo_date],
+    ['JO status', job.jo_status ? `${job.jo_status}${job.jo_reschedule_date ? ` (to ${job.jo_reschedule_date})` : ''}${job.jo_cancelled ? ' · closed here because the JO was cancelled' : ''}` : null]
   ].filter(([, v]) => v) : [];
   const duration = form ? minutes(form.start_time, form.end_time) : null;
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import QRCode from 'qrcode';
 import { apiRequest, downloadWithToken, fetchArrayBuffer, openWithTokenInNewTab, getApiBase } from '../api.js';
 import { GlobalWorkerOptions, getDocument } from 'pdfjs-dist/build/pdf.mjs';
@@ -10,6 +10,16 @@ import StatusDonutChart from './StatusDonutChart.jsx';
 import VehicleMap from './VehicleMap.jsx';
 import Profiling from './Profiling.jsx';
 import FieldEngineering from './FieldEngineering.jsx';
+
+// Field Eng status of a JO (team + last visit), read-only.
+const fieldCell = (row) => (row.fe_status
+  ? (
+    <span className="fe-field-tag" title={row.fe_last_visit ? `Last field visit ${row.fe_last_visit}` : 'No field visit yet'}>
+      <b className={`fe-field-tag-status fe-field-tag--${['Installed', 'Repaired', 'Nakuha ang Modem'].includes(row.fe_status) ? 'ok' : ['Cancelled', 'Not Installed', 'Unresolved', 'Hindi Nakuha ang Modem'].includes(row.fe_status) ? 'bad' : 'wait'}`}>{row.fe_status}</b>
+      <span>{row.fe_team || 'Unassigned'}{row.fe_last_visit ? ` · ${row.fe_last_visit}` : ''}</span>
+    </span>
+  )
+  : <span className="muted">—</span>);
 
 GlobalWorkerOptions.workerSrc = workerSrc;
 
@@ -2368,14 +2378,15 @@ export default function AdminPanel({
                 <th>PDF ID</th>
                 <th>User</th>
                 <th>Created</th>
+                <th>Field</th>
                 <th>Status Note</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {items.map((item) => (
-                <>
-                <tr key={item.id}>
+                <Fragment key={item.id}>
+                <tr>
                   <td>
                     <input
                       name={`selected_row_${item.id}`}
@@ -2393,6 +2404,7 @@ export default function AdminPanel({
                     </div>
                   </td>
                   <td>{new Date(item.created_at).toLocaleString()}</td>
+                  <td>{fieldCell(item)}</td>
                   <td>{item.status_note || '-'}</td>
                   <td className="actions">
                     <button type="button" onClick={() => downloadWithToken(`/generated-pdfs/${item.id}/download`, token)}>Download</button>
@@ -2407,7 +2419,7 @@ export default function AdminPanel({
                 </tr>
                 {workflowAttachmentRowId === item.id && (
                   <tr key={`${item.id}-attachments`}>
-                    <td colSpan="6">
+                    <td colSpan="7">
                       <div className="attachment-inline-panel">
                         {workflowAttachments.length === 0 ? (
                           <span className="muted">No attachments for this record.</span>
@@ -2432,11 +2444,11 @@ export default function AdminPanel({
                     </td>
                   </tr>
                 )}
-                </>
+                </Fragment>
               ))}
               {items.length === 0 && (
                 <tr>
-                  <td colSpan="6">No records in this status.</td>
+                  <td colSpan="7">No records in this status.</td>
                 </tr>
               )}
             </tbody>

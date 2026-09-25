@@ -77,7 +77,9 @@ const JOB_COLUMNS = `j.id, j.generated_pdf_id, j.job_type, j.reloc_kind, j.histo
   to_char(j.jo_date, 'YYYY-MM-DD') AS jo_date, j.team_id, t.name AS team_name, j.area, j.status, j.reason,
   (${MANILA_TODAY} - j.jo_date) AS age_days,
   (SELECT to_char(MAX(v.visit_date), 'YYYY-MM-DD') FROM fe_visits v WHERE v.job_id = j.id) AS last_visit_date,
-  (SELECT COUNT(*)::int FROM fe_visits v WHERE v.job_id = j.id) AS visit_count`;
+  (SELECT COUNT(*)::int FROM fe_visits v WHERE v.job_id = j.id) AS visit_count,
+  j.jo_cancelled, (SELECT g.status FROM generated_pdfs g WHERE g.id = j.generated_pdf_id) AS jo_status,
+  (SELECT to_char(g.reschedule_date, 'YYYY-MM-DD') FROM generated_pdfs g WHERE g.id = j.generated_pdf_id) AS jo_reschedule_date`;
 
 router.get('/jobs', async (req, res) => {
   try {

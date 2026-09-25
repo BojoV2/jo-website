@@ -125,7 +125,59 @@ let lastSyncAt = 0;
 export async function syncMissingJobsThrottled() {
   if (Date.now() - lastSyncAt < 60 * 1000) return 0;
   lastSyncAt = Date.now();
-  return syncMissingJobs();
+  const created = await syncMissingJobs();
+  await reconcileJoStatuses();
+  return created;
+}
+
+// JO -> FE, one way. A cancelled JO closes its open FE job; un-cancelling the
+// JO reopens it to whatever its visits say. Done / rescheduled JOs are only
+// shown on the FE side (the field result stays the FE team's call).
+export async function syncJobFromJo(generatedPdfId, user) {
+  const r = await query(
+    `SELECT j.id, j.status, j.jo_cancelled, j.history_only, g.status AS jo_status
+       FROM fe_jobs j JOIN generated_pdfs g ON g.id = j.generated_pdf_id
+      WHERE j.generated_pdf_id = $1`,
+    [generatedPdfId]
+  );
+  const job = r.rows[0];
+  if (!job || job.history_only) return null;
+  if (job.jo_status === 'cancelled' && !job.jo_cancelled && !CLOSED_STATUSES.includes(job.status)) {
+    await query(
+      `UPDATE fe_jobs SET status = 'Cancelled', reason = 'JO cancelled in the workflow', jo_cancelled = TRUE,
+              closed_at = NOW(), updated_at = NOW(), updated_by = COALESCE($2, updated_by)
+        WHERE id = $1`,
+      [job.id, user?.id || null]
+    );
+    await audit({ entity: 'job', entityId: job.id, jobId: job.id, action: 'jo_cancelled', detail: { from: job.status }, user });
+    return 'cancelled';
+  }
+  if (job.jo_status !== 'cancelled' && job.jo_cancelled) {
+    await query(
+      `UPDATE fe_jobs SET status = 'Pending', reason = NULL, jo_cancelled = FALSE, closed_at = NULL,
+              updated_at = NOW(), updated_by = COALESCE($2, updated_by)
+        WHERE id = $1`,
+      [job.id, user?.id || null]
+    );
+    await refreshJobFromVisits(job.id, user?.id);
+    await audit({ entity: 'job', entityId: job.id, jobId: job.id, action: 'jo_reopened', detail: { jo_status: job.jo_status }, user });
+    return 'reopened';
+  }
+  return null;
+}
+
+// Safety net for status changes that happened without the hook (older code,
+// direct DB edits): same rules as syncJobFromJo, for every job at once.
+export async function reconcileJoStatuses() {
+  const r = await query(
+    `SELECT j.generated_pdf_id FROM fe_jobs j JOIN generated_pdfs g ON g.id = j.generated_pdf_id
+      WHERE NOT j.history_only
+        AND ((g.status = 'cancelled' AND NOT j.jo_cancelled AND NOT (j.status = ANY($1::text[])))
+          OR (g.status <> 'cancelled' AND j.jo_cancelled))`,
+    [CLOSED_STATUSES]
+  );
+  for (const row of r.rows) await syncJobFromJo(row.generated_pdf_id, null);
+  return r.rowCount;
 }
 
 export async function audit({ entity, entityId, jobId, action, detail, user }) {
