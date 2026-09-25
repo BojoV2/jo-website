@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { query, pool } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import {
-  MANILA_DATE, MANILA_TODAY, CLOSED_STATUSES, SUCCESS_STATUSES,
+  MANILA_DATE, MANILA_TODAY, CLOSED_STATUSES, SUCCESS_STATUSES, CORE_STATUSES, AUTO_AREAS,
   audit, refreshJobFromVisits, syncMissingJobsThrottled
 } from '../services/feJobs.js';
 
@@ -79,13 +79,14 @@ const JOB_COLUMNS = `j.id, j.generated_pdf_id, j.job_type, j.reloc_kind, j.histo
 router.get('/jobs', async (req, res) => {
   try {
     await syncMissingJobsThrottled().catch((err) => console.error(`FE sync failed: ${err.message}`));
-    const view = String(req.query.view || 'open');
+    const view = String(req.query.view || 'today');
     const where = ['NOT j.history_only'];
     const params = [];
     const add = (sql, value) => { params.push(value); where.push(sql.replace('?', `$${params.length}`)); };
 
     params.push(CLOSED_STATUSES);
-    if (view === 'open') where.push(`NOT (j.status = ANY($1::text[]))`);
+    if (view === 'today') where.push(`$1::text[] IS NOT NULL AND j.jo_date = ${MANILA_TODAY}`);
+    else if (view === 'open') where.push(`NOT (j.status = ANY($1::text[]))`);
     else if (view === 'closed_today') where.push(`j.status = ANY($1::text[]) AND ${MANILA_DATE('j.closed_at')} = ${MANILA_TODAY}`);
     else if (view === 'closed') where.push(`j.status = ANY($1::text[])`);
     else where.push('$1::text[] IS NOT NULL');
@@ -114,7 +115,8 @@ router.get('/jobs', async (req, res) => {
         `SELECT COUNT(*) FILTER (WHERE NOT (status = ANY($1::text[])))::int AS open,
                 COUNT(*) FILTER (WHERE NOT (status = ANY($1::text[])) AND team_id IS NULL)::int AS unassigned,
                 COUNT(*) FILTER (WHERE NOT (status = ANY($1::text[])) AND (${MANILA_TODAY} - jo_date) >= 3)::int AS overdue,
-                COUNT(*) FILTER (WHERE status = ANY($1::text[]) AND ${MANILA_DATE('closed_at')} = ${MANILA_TODAY})::int AS closed_today
+                COUNT(*) FILTER (WHERE status = ANY($1::text[]) AND ${MANILA_DATE('closed_at')} = ${MANILA_TODAY})::int AS closed_today,
+                COUNT(*) FILTER (WHERE jo_date = ${MANILA_TODAY})::int AS generated_today
            FROM fe_jobs WHERE NOT history_only`,
         [CLOSED_STATUSES]
       )
@@ -393,6 +395,154 @@ router.delete('/teams/:id/members/:memberId', async (req, res) => {
     return res.json(await loadMeta());
   } catch (err) {
     return res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------- dropdown lists
+
+export const OPTION_KINDS = [
+  'area', 'install_status', 'repair_status', 'pullout_status',
+  'install_reason', 'repair_reason', 'pullout_reason', 'problem'
+];
+
+// Where each kind's value is stored, for the "used N times" count.
+const OPTION_USE_COLUMN = (kind) => (kind === 'area' ? ['fe_jobs', 'area']
+  : kind.endsWith('_status') ? ['fe_visits', 'status']
+    : kind.endsWith('_reason') ? ['fe_visits', 'reason'] : ['fe_visits', 'problem']);
+
+export const optionLocked = (kind, value) => (kind === 'area' ? AUTO_AREAS.includes(value)
+  : kind.endsWith('_status') ? CORE_STATUSES.includes(value) : false);
+
+async function loadOptions() {
+  const rows = (await query('SELECT id, kind, value, sort, active FROM fe_options ORDER BY kind, sort, value')).rows;
+  const uses = {};
+  for (const [table, column] of [['fe_jobs', 'area'], ['fe_visits', 'status'], ['fe_visits', 'reason'], ['fe_visits', 'problem']]) {
+    const r = await query(`SELECT ${column} AS value, COUNT(*)::int AS n FROM ${table} WHERE ${column} IS NOT NULL GROUP BY 1`);
+    uses[`${table}.${column}`] = Object.fromEntries(r.rows.map((x) => [x.value, x.n]));
+  }
+  return {
+    kinds: OPTION_KINDS,
+    options: rows.map((o) => ({
+      ...o,
+      locked: optionLocked(o.kind, o.value),
+      uses: uses[OPTION_USE_COLUMN(o.kind).join('.')]?.[o.value] || 0
+    }))
+  };
+}
+
+const optionsPayload = async () => ({ ...(await loadOptions()), meta: await loadMeta() });
+
+router.get('/options', async (_req, res) => {
+  try {
+    return res.json(await loadOptions());
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Adding a value that exists but was retired brings the old one back.
+router.post('/options', async (req, res) => {
+  try {
+    const kind = String(req.body.kind || '');
+    const value = clean(req.body.value, 120);
+    if (!OPTION_KINDS.includes(kind)) return res.status(400).json({ error: 'Unknown list' });
+    if (!value) return res.status(400).json({ error: 'A value is required' });
+    const found = await query('SELECT id, value, active FROM fe_options WHERE kind = $1 AND lower(value) = lower($2)', [kind, value]);
+    if (found.rowCount && found.rows[0].active) return res.status(409).json({ error: `${found.rows[0].value} is already on this list` });
+    if (found.rowCount) {
+      const old = found.rows[0];
+      await query('UPDATE fe_options SET active = TRUE WHERE id = $1', [old.id]);
+      await audit({ entity: 'option', entityId: old.id, action: 'option_restored', detail: { kind, value: old.value }, user: req.user });
+      return res.json(await optionsPayload());
+    }
+    const created = await query(
+      `INSERT INTO fe_options (kind, value, sort)
+       VALUES ($1::varchar, $2, (SELECT COALESCE(MAX(sort), 0) + 1 FROM fe_options WHERE kind = $1::varchar)) RETURNING id`,
+      [kind, value]
+    );
+    await audit({ entity: 'option', entityId: created.rows[0].id, action: 'option_added', detail: { kind, value }, user: req.user });
+    return res.status(201).json(await optionsPayload());
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Renaming changes the list only; past visits keep the text they were saved
+// with. Areas are the exception: area is a property of the job, so jobs move
+// with the rename (same as teams).
+router.patch('/options/:id', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid id' });
+    const found = await client.query('SELECT * FROM fe_options WHERE id = $1', [id]);
+    if (!found.rowCount) return res.status(404).json({ error: 'Value not found' });
+    const opt = found.rows[0];
+    const locked = optionLocked(opt.kind, opt.value);
+    const value = 'value' in req.body ? clean(req.body.value, 120) : null;
+    const renaming = 'value' in req.body && value !== opt.value;
+    const retiring = 'active' in req.body && !req.body.active && opt.active;
+    if ('value' in req.body && !value) return res.status(400).json({ error: 'A value is required' });
+    if (locked && (renaming || retiring)) {
+      return res.status(400).json({ error: `${opt.value} is used by the board's own rules, so it can be moved but not renamed or retired` });
+    }
+    if (renaming) {
+      const clash = await client.query('SELECT 1 FROM fe_options WHERE kind = $1 AND lower(value) = lower($2) AND id <> $3', [opt.kind, value, id]);
+      if (clash.rowCount) return res.status(409).json({ error: `${value} is already on this list` });
+      if (optionLocked(opt.kind, value)) return res.status(400).json({ error: `${value} is a reserved name on this list` });
+    }
+    await client.query('BEGIN');
+    if (renaming) {
+      await client.query('UPDATE fe_options SET value = $2 WHERE id = $1', [id, value]);
+      let moved = 0;
+      if (opt.kind === 'area') moved = (await client.query('UPDATE fe_jobs SET area = $2, updated_at = NOW() WHERE area = $1', [opt.value, value])).rowCount;
+      await client.query(
+        `INSERT INTO fe_audit (entity, entity_id, action, detail, user_id, user_name) VALUES ('option', $1, 'option_renamed', $2, $3, $4)`,
+        [String(id), JSON.stringify({ kind: opt.kind, from: opt.value, to: value, jobsMoved: moved }), req.user?.id || null, req.user?.name || null]
+      );
+    }
+    if ('active' in req.body && Boolean(req.body.active) !== opt.active) {
+      const active = Boolean(req.body.active);
+      await client.query('UPDATE fe_options SET active = $2 WHERE id = $1', [id, active]);
+      await client.query(
+        `INSERT INTO fe_audit (entity, entity_id, action, detail, user_id, user_name) VALUES ('option', $1, $2, $3, $4, $5)`,
+        [String(id), active ? 'option_restored' : 'option_retired', JSON.stringify({ kind: opt.kind, value: value || opt.value }), req.user?.id || null, req.user?.name || null]
+      );
+    }
+    await client.query('COMMIT');
+    return res.json(await optionsPayload());
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    return res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+// Body: { kind, ids } with every id of that list in the new order.
+router.post('/options/reorder', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const kind = String(req.body.kind || '');
+    const ids = Array.isArray(req.body.ids) ? req.body.ids.map(Number) : [];
+    if (!OPTION_KINDS.includes(kind)) return res.status(400).json({ error: 'Unknown list' });
+    const current = (await client.query('SELECT id FROM fe_options WHERE kind = $1', [kind])).rows.map((r) => r.id);
+    if (ids.length !== current.length || new Set(ids).size !== ids.length || !ids.every((i) => current.includes(i))) {
+      return res.status(400).json({ error: 'The list changed while you were editing it. Reload and try again.' });
+    }
+    await client.query('BEGIN');
+    for (const [i, id] of ids.entries()) await client.query('UPDATE fe_options SET sort = $2 WHERE id = $1', [id, i + 1]);
+    await client.query(
+      `INSERT INTO fe_audit (entity, entity_id, action, detail, user_id, user_name) VALUES ('option', $1, 'option_reordered', $2, $3, $4)`,
+      [kind, JSON.stringify({ kind, ids }), req.user?.id || null, req.user?.name || null]
+    );
+    await client.query('COMMIT');
+    return res.json(await optionsPayload());
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    return res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 

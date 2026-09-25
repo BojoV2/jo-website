@@ -40,6 +40,7 @@ describe('Field Eng API', { timeout: 30000 }, () => {
   let job;
   let jobBefore;
   let teamId;
+  let sortBefore = [];
 
   beforeAll(async () => {
     process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret';
@@ -60,6 +61,8 @@ describe('Field Eng API', { timeout: 30000 }, () => {
         [jobBefore.id, jobBefore.status, jobBefore.reason, jobBefore.team_id, jobBefore.area, jobBefore.closed_at]
       );
     }
+    await query(`DELETE FROM fe_options WHERE value LIKE 'ZZ Test %'`);
+    for (const [id, sort] of sortBefore) await query('UPDATE fe_options SET sort = $2 WHERE id = $1', [id, sort]);
     await query('DELETE FROM fe_audit WHERE user_id = $1', [userId]);
     if (teamId) {
       await query('DELETE FROM fe_team_members WHERE team_id = $1', [teamId]);
@@ -153,5 +156,74 @@ describe('Field Eng API', { timeout: 30000 }, () => {
     expect(res.status).toBe(200);
     expect(res.headers['content-type']).toContain('text/csv');
     expect(res.text.split('\r\n')[0]).toContain('Subscriber Name');
+  });
+  it('shows only jobs generated today by default', async () => {
+    const res = await api('get', '/jobs');
+    expect(res.status).toBe(200);
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date());
+    for (const j of res.body.jobs) expect(j.jo_date).toBe(today);
+    expect(res.body.counts.generated_today).toBe(res.body.jobs.length);
+  });
+
+  it('adds, renames, retires, restores and reorders list values', async () => {
+    const before = await query(`SELECT id, sort FROM fe_options WHERE kind = 'problem'`);
+    sortBefore = before.rows.map((r) => [r.id, r.sort]);
+    const value = `ZZ Test ${userId.slice(0, 8)}`;
+    let res = await api('post', '/options').send({ kind: 'problem', value });
+    expect(res.status).toBe(201);
+    expect(res.body.meta.lists.problem.at(-1)).toBe(value);
+    const opt = res.body.options.find((o) => o.value === value);
+    expect(opt).toMatchObject({ kind: 'problem', active: true, locked: false, uses: 0 });
+
+    res = await api('post', '/options').send({ kind: 'problem', value: value.toLowerCase() });
+    expect(res.status).toBe(409);
+    res = await api('post', '/options').send({ kind: 'nope', value: 'x' });
+    expect(res.status).toBe(400);
+
+    res = await api('patch', `/options/${opt.id}`).send({ value: `${value} B` });
+    expect(res.status).toBe(200);
+    expect(res.body.meta.lists.problem).toContain(`${value} B`);
+
+    res = await api('patch', `/options/${opt.id}`).send({ active: false });
+    expect(res.body.meta.lists.problem).not.toContain(`${value} B`);
+    res = await api('post', '/options').send({ kind: 'problem', value: `${value} b` });
+    expect(res.status).toBe(200);
+    expect(res.body.meta.lists.problem).toContain(`${value} B`);
+
+    const ids = res.body.options.filter((o) => o.kind === 'problem').map((o) => o.id);
+    const reversed = [...ids].reverse();
+    res = await api('post', '/options/reorder').send({ kind: 'problem', ids: reversed });
+    expect(res.status).toBe(200);
+    expect(res.body.meta.lists.problem[0]).toBe(`${value} B`);
+    res = await api('post', '/options/reorder').send({ kind: 'problem', ids: ids.slice(1) });
+    expect(res.status).toBe(400);
+
+    const log = await query(`SELECT action FROM fe_audit WHERE user_id = $1 AND entity = 'option' ORDER BY id`, [userId]);
+    expect(log.rows.map((r) => r.action)).toEqual(['option_added', 'option_renamed', 'option_retired', 'option_restored', 'option_reordered']);
+  });
+
+  it('keeps built-in statuses and auto-detected areas from being renamed or retired', async () => {
+    const { rows } = await query(`SELECT id, kind, value FROM fe_options WHERE (kind = 'install_status' AND value = 'Installed') OR (kind = 'area' AND value = 'TANZA')`);
+    for (const o of rows) {
+      let res = await api('patch', `/options/${o.id}`).send({ value: `${o.value}X` });
+      expect(res.status).toBe(400);
+      res = await api('patch', `/options/${o.id}`).send({ active: false });
+      expect(res.status).toBe(400);
+    }
+    const res = await api('get', '/options');
+    expect(res.body.options.find((o) => o.kind === 'install_status' && o.value === 'Installed')).toMatchObject({ locked: true, active: true });
+  });
+
+  it('moves jobs with a renamed area', async () => {
+    const value = `ZZ Test Area ${userId.slice(0, 8)}`;
+    let res = await api('post', '/options').send({ kind: 'area', value });
+    const opt = res.body.options.find((o) => o.value === value);
+    const job = (await query(`SELECT id, area FROM fe_jobs WHERE NOT history_only LIMIT 1`)).rows[0];
+    await query('UPDATE fe_jobs SET area = $2 WHERE id = $1', [job.id, value]);
+    res = await api('patch', `/options/${opt.id}`).send({ value: `${value} 2` });
+    expect(res.status).toBe(200);
+    const after = await query('SELECT area FROM fe_jobs WHERE id = $1', [job.id]);
+    expect(after.rows[0].area).toBe(`${value} 2`);
+    await query('UPDATE fe_jobs SET area = $2 WHERE id = $1', [job.id, job.area]);
   });
 });

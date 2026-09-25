@@ -9,7 +9,7 @@ const CLOSED = ['Installed', 'Repaired', 'Nakuha ang Modem', 'Cancelled', 'Not I
 const GOOD = ['Installed', 'Repaired', 'Nakuha ang Modem'];
 const BAD = ['Cancelled', 'Not Installed', 'Unresolved', 'Hindi Nakuha ang Modem'];
 const MATERIALS = [['drop_core_m', 'Drop core (m)'], ['f_clamp', 'F-clamp'], ['house_clamp', 'House clamp'], ['sc_connector', 'SC connector'], ['onu', 'ONU']];
-const EMPTY_FILTERS = { view: 'open', type: '', area: '', team: '', q: '' };
+const EMPTY_FILTERS = { view: 'today', type: '', area: '', team: '', q: '' };
 
 const effType = (job) => (job.job_type === 'RELOC' ? (job.reloc_kind === 'install' ? 'INSTALL' : 'REPAIR') : job.job_type);
 const statusKind = (type) => (type === 'INSTALL' ? 'install' : type === 'PULLOUT' ? 'pullout' : 'repair');
@@ -32,6 +32,8 @@ function slaFor(form, hours) {
   return m <= (hours[form.difficulty] || 999) * 60 ? 'PASS' : 'DELAY';
 }
 const pct = (a, b) => (b ? Math.round((a / b) * 100) : null);
+// A saved value that was later retired from its list still shows on old records.
+const withCurrent = (list, value) => (value && !(list || []).includes(value) ? [...(list || []), value] : list || []);
 
 function blankVisit(job) {
   return {
@@ -133,16 +135,17 @@ export default function FieldEngineering({ token }) {
 
   const setFilter = (key, value) => setFilters((f) => ({ ...f, [key]: value }));
   const kpis = [
-    { label: 'Open jobs', value: board.counts.open, apply: { ...EMPTY_FILTERS } },
-    { label: 'Unassigned', value: board.counts.unassigned, tone: 'bad', apply: { ...EMPTY_FILTERS, team: 'none' } },
-    { label: '3+ days old', value: board.counts.overdue, tone: 'warn', apply: { ...EMPTY_FILTERS, minAge: '3' } },
+    { label: 'Generated today', value: board.counts.generated_today, apply: { ...EMPTY_FILTERS } },
+    { label: 'Open jobs', value: board.counts.open, apply: { ...EMPTY_FILTERS, view: 'open' } },
+    { label: 'Unassigned', value: board.counts.unassigned, tone: 'bad', apply: { ...EMPTY_FILTERS, view: 'open', team: 'none' } },
+    { label: '3+ days old', value: board.counts.overdue, tone: 'warn', apply: { ...EMPTY_FILTERS, view: 'open', minAge: '3' } },
     { label: 'Closed today', value: board.counts.closed_today, tone: 'ok', apply: { ...EMPTY_FILTERS, view: 'closed_today' } }
   ];
 
   return (
     <div className="fe">
       <div className="fe-tabs" role="tablist" aria-label="Field Eng sections">
-        {[['board', 'Board'], ['today', 'Today'], ['reports', 'Reports'], ['teams', 'Teams']].map(([id, label]) => (
+        {[['board', 'Board'], ['today', 'Today'], ['reports', 'Reports'], ['teams', 'Teams'], ['lists', 'Lists']].map(([id, label]) => (
           <button key={id} type="button" role="tab" aria-selected={tab === id} className={tab === id ? 'fe-tab is-on' : 'fe-tab'} onClick={() => setTab(id)}>{label}</button>
         ))}
       </div>
@@ -163,7 +166,8 @@ export default function FieldEngineering({ token }) {
           <div className="fe-card">
             <div className="fe-filters">
               <select aria-label="Which jobs" value={filters.view} onChange={(e) => setFilter('view', e.target.value)}>
-                <option value="open">Open jobs</option>
+                <option value="today">Generated today</option>
+                <option value="open">Open jobs (all days)</option>
                 <option value="closed_today">Closed today</option>
                 <option value="closed">Closed / unverified</option>
                 <option value="all">Everything</option>
@@ -212,7 +216,7 @@ export default function FieldEngineering({ token }) {
                     </tr>
                   ))}
                   {!board.jobs.length && (
-                    <tr><td colSpan={7} className="fe-empty">{loading ? 'Loading…' : 'No jobs match these filters.'}</td></tr>
+                    <tr><td colSpan={7} className="fe-empty">{loading ? 'Loading…' : filters.view === 'today' && !filters.q ? 'No Application Form or Job Order generated today yet.' : 'No jobs match these filters.'}</td></tr>
                   )}
                 </tbody>
               </table>
@@ -232,6 +236,7 @@ export default function FieldEngineering({ token }) {
         />
       )}
 
+      {tab === 'lists' && <ListsView token={token} setMeta={setMeta} say={say} onChanged={() => loadBoard({ quiet: true })} />}
       {tab === 'teams' && <TeamsView token={token} meta={meta} setMeta={setMeta} say={say} onChanged={() => loadBoard({ quiet: true })} />}
 
       {openJobId && (
@@ -396,21 +401,21 @@ function JobPanel({ jobId, token, meta, say, onClose }) {
                   <label htmlFor="fe-area">Area</label>
                   <select id="fe-area" value={job.area || ''} onChange={(e) => setArea(e.target.value)}>
                     <option value="">—</option>
-                    {(meta.lists.area || []).map((a) => <option key={a}>{a}</option>)}
+                    {withCurrent(meta.lists.area, job.area).map((a) => <option key={a}>{a}</option>)}
                   </select>
                 </div>
                 <div className="fe-field">
                   <label htmlFor="fe-status">{type === 'PULLOUT' ? 'Modem result' : 'Status'}</label>
                   <select id="fe-status" value={form.status} onChange={set('status')} required>
                     <option value="">Choose…</option>
-                    {(meta.lists[`${kind}_status`] || []).map((s) => <option key={s}>{s}</option>)}
+                    {withCurrent(meta.lists[`${kind}_status`], form.status).map((s) => <option key={s}>{s}</option>)}
                   </select>
                 </div>
                 <div className="fe-field">
                   <label htmlFor="fe-reason">Reason</label>
                   <select id="fe-reason" value={form.reason} onChange={set('reason')}>
                     <option value="">—</option>
-                    {(meta.lists[`${kind}_reason`] || []).map((s) => <option key={s}>{s}</option>)}
+                    {withCurrent(meta.lists[`${kind}_reason`], form.reason).map((s) => <option key={s}>{s}</option>)}
                   </select>
                 </div>
                 {type === 'INSTALL' && (
@@ -427,7 +432,7 @@ function JobPanel({ jobId, token, meta, say, onClose }) {
                     <label htmlFor="fe-problem">Problem found</label>
                     <select id="fe-problem" value={form.problem} onChange={set('problem')}>
                       <option value="">—</option>
-                      {(meta.lists.problem || []).map((s) => <option key={s}>{s}</option>)}
+                      {withCurrent(meta.lists.problem, form.problem).map((s) => <option key={s}>{s}</option>)}
                     </select>
                   </div>
                 )}
@@ -675,6 +680,140 @@ function TeamsView({ token, meta, setMeta, say, onChanged }) {
           {showLegacy && <div className="fe-teams fe-teams--legacy">{legacy.map(card)}</div>}
         </div>
       )}
+    </section>
+  );
+}
+
+const LIST_LABELS = {
+  area: ['Areas', 'Where a job is. Renaming an area moves its jobs with it.'],
+  install_status: ['Install results', 'Status choices for install visits.'],
+  repair_status: ['Repair results', 'Status choices for repair visits.'],
+  pullout_status: ['Pull-out results', 'Modem result choices for pull-out visits.'],
+  install_reason: ['Install reasons', 'Why an install was not finished.'],
+  repair_reason: ['Repair reasons', 'Why a repair was not finished.'],
+  pullout_reason: ['Pull-out reasons', 'Why a modem was not collected.'],
+  problem: ['Problems found', 'What the team found on a repair.']
+};
+
+function ListsView({ token, setMeta, say, onChanged }) {
+  const [data, setData] = useState(null);
+  const [kind, setKind] = useState('area');
+  const [draft, setDraft] = useState('');
+  const [showRetired, setShowRetired] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try { setData(await apiRequest('/field-eng/options', { token })); } catch (err) { say(err.message, 'error'); }
+  }, [token, say]);
+  useEffect(() => { load(); }, [load]);
+
+  const call = async (path, method, body, message) => {
+    setBusy(true);
+    try {
+      const result = await apiRequest(path, { method, token, body });
+      setData({ kinds: result.kinds, options: result.options });
+      setMeta(result.meta);
+      say(message);
+      onChanged();
+      return true;
+    } catch (err) {
+      say(err.message, 'error');
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!data) return <section className="fe-section"><div className="fe-card fe-pad fe-sub">Loading lists…</div></section>;
+
+  const all = data.options.filter((o) => o.kind === kind);
+  const active = all.filter((o) => o.active);
+  const retired = all.filter((o) => !o.active);
+  const [title, hint] = LIST_LABELS[kind] || [kind, ''];
+
+  const move = (opt, step) => {
+    const order = active.map((o) => o.id);
+    const i = order.indexOf(opt.id);
+    const j = i + step;
+    if (j < 0 || j >= order.length) return;
+    [order[i], order[j]] = [order[j], order[i]];
+    call('/field-eng/options/reorder', 'POST', { kind, ids: [...order, ...retired.map((o) => o.id)] }, `Moved ${opt.value}`);
+  };
+  const rename = (opt, value) => {
+    const next = value.trim();
+    if (!next || next === opt.value) return;
+    call(`/field-eng/options/${opt.id}`, 'PATCH', { value: next },
+      kind === 'area' ? `Renamed ${opt.value} to ${next}. Its jobs moved with it.` : `Renamed ${opt.value} to ${next}. Past visits keep the old wording.`);
+  };
+  const add = async (e) => {
+    e.preventDefault();
+    const value = draft.trim();
+    if (value && await call('/field-eng/options', 'POST', { kind, value }, `${value} added to ${title}`)) setDraft('');
+  };
+
+  const row = (opt, i) => (
+    <li key={opt.id} className={`fe-opt ${opt.active ? '' : 'is-off'}`}>
+      {opt.active && (
+        <span className="fe-opt-move">
+          <button type="button" aria-label={`Move ${opt.value} up`} disabled={busy || i === 0} onClick={() => move(opt, -1)}>↑</button>
+          <button type="button" aria-label={`Move ${opt.value} down`} disabled={busy || i === active.length - 1} onClick={() => move(opt, 1)}>↓</button>
+        </span>
+      )}
+      {opt.locked || !opt.active
+        ? <span className="fe-opt-value">{opt.value}</span>
+        : (
+          <input
+            key={opt.value} defaultValue={opt.value} aria-label={`Rename ${opt.value}`} className="fe-opt-value fe-opt-input" maxLength={120}
+            onBlur={(e) => rename(opt, e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') e.currentTarget.blur();
+              if (e.key === 'Escape') { e.currentTarget.value = opt.value; e.currentTarget.blur(); }
+            }}
+          />
+        )}
+      <span className="fe-sub fe-opt-uses">{opt.uses ? `used ${opt.uses.toLocaleString()}×` : 'unused'}</span>
+      {opt.locked
+        ? <span className="fe-pill fe-muted" title="The board's own rules use this value (closing jobs, SLA, reports or area auto-detect)">Built in</span>
+        : (
+          <button type="button" className="fe-link" disabled={busy}
+            onClick={() => call(`/field-eng/options/${opt.id}`, 'PATCH', { active: !opt.active }, `${opt.value} ${opt.active ? 'retired' : 'restored'}`)}>
+            {opt.active ? 'Retire' : 'Restore'}
+          </button>
+        )}
+    </li>
+  );
+
+  return (
+    <section className="fe-section fe-lists">
+      <nav className="fe-card fe-pad fe-list-kinds" aria-label="Lists">
+        {data.kinds.map((k) => {
+          const n = data.options.filter((o) => o.kind === k && o.active).length;
+          return (
+            <button key={k} type="button" className={k === kind ? 'fe-list-kind is-on' : 'fe-list-kind'} aria-current={k === kind}
+              onClick={() => { setKind(k); setDraft(''); setShowRetired(false); }}>
+              <span>{LIST_LABELS[k]?.[0] || k}</span><span className="fe-sub">{n}</span>
+            </button>
+          );
+        })}
+      </nav>
+      <div className="fe-card fe-pad">
+        <h4 className="fe-h">{title}</h4>
+        <p className="fe-sub">{hint} Click a value to rename it. Retired values leave the dropdowns but stay on past records. Built-in values drive closing, SLA and reports, so they can only be moved.</p>
+        <form className="fe-inline-form" onSubmit={add}>
+          <input aria-label={`New value for ${title}`} placeholder="Add a value" value={draft} maxLength={120} onChange={(e) => setDraft(e.target.value)} />
+          <button type="submit" className="fe-btn fe-btn--primary" disabled={busy || !draft.trim()}>Add</button>
+        </form>
+        <ol className="fe-opts">{active.map(row)}</ol>
+        {!active.length && <p className="fe-sub">Nothing on this list yet.</p>}
+        {retired.length > 0 && (
+          <>
+            <button type="button" className="fe-link" onClick={() => setShowRetired((s) => !s)}>
+              {showRetired ? 'Hide' : 'Show'} {retired.length} retired
+            </button>
+            {showRetired && <ul className="fe-opts">{retired.map(row)}</ul>}
+          </>
+        )}
+      </div>
     </section>
   );
 }

@@ -14,6 +14,13 @@ const SYNC_LOOKBACK_DAYS = 7;
 
 export const CLOSED_STATUSES = ['Installed', 'Repaired', 'Nakuha ang Modem', 'Cancelled', 'Not Installed', 'Unresolved', 'Unverified'];
 export const SUCCESS_STATUSES = ['Installed', 'Repaired', 'Nakuha ang Modem'];
+// Values the code itself relies on (closing, SLA, reports, area auto-detect).
+// The list editor lets people reorder these but not rename or retire them.
+export const CORE_STATUSES = [
+  'Pending', 'Installed', 'Reschedule', 'Not Installed', 'Cancelled', 'Reassigned',
+  'Repaired', 'Unresolved', 'Escalated', 'Nakuha ang Modem', 'Hindi Nakuha ang Modem'
+];
+export const AUTO_AREAS = ['TANZA', 'KAWIT', 'TRECE', 'NAIC'];
 
 const first = (data, keys) => {
   for (const key of keys) {

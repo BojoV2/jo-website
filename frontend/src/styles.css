@@ -5924,6 +5924,31 @@ div.fe-kpi { cursor: default; }
 .fe-addteam { flex-direction: row; align-items: flex-end; }
 .fe-addteam .fe-full { margin: 0; }
 .fe-team-foot { border-top: 1px solid var(--line); padding-top: 8px; }
+/* lists */
+.fe-lists { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 14px; align-items: start; }
+.fe-list-kinds { display: flex; flex-direction: column; gap: 2px; }
+.fe-list-kind { display: flex; justify-content: space-between; align-items: center; gap: 8px; border: 0; background: transparent; color: var(--heading); font-weight: 600; font-size: 14px; text-align: left; padding: 8px 10px; border-radius: 8px; cursor: pointer; }
+.fe-list-kind:hover { background: var(--surface-strong); }
+.fe-list-kind.is-on { background: var(--surface-strong); color: var(--primary); box-shadow: inset 3px 0 0 var(--primary); }
+.fe-opts { list-style: none; margin: 12px 0; padding: 0; border: 1px solid var(--line); border-radius: 10px; }
+.fe-opt { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-top: 1px solid var(--line); min-height: 44px; }
+.fe-opt:first-child { border-top: 0; }
+.fe-opt.is-off { opacity: 0.65; }
+.fe-opt-move { display: inline-flex; gap: 2px; }
+.fe-opt-move button { border: 1px solid var(--line); background: transparent; color: var(--muted); width: 28px; height: 28px; padding: 0; border-radius: 6px; cursor: pointer; line-height: 1; }
+.fe-opt-move button:hover:not(:disabled) { color: var(--primary); border-color: var(--primary); }
+.fe-opt-move button:disabled { opacity: 0.35; cursor: default; }
+.fe-opt-value { flex: 1; min-width: 0; font-weight: 600; color: var(--heading); overflow-wrap: anywhere; }
+.fe .fe-opt-input { background: transparent; border-color: transparent; padding: 4px 6px; font: inherit; font-weight: 600; }
+.fe .fe-opt-input:hover { border-color: var(--line); }
+.fe-opt-uses { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.fe-opt .fe-link:disabled { opacity: 0.5; cursor: default; }
+@media (max-width: 800px) {
+  .fe-lists { grid-template-columns: 1fr; }
+  .fe-list-kinds { flex-direction: row; flex-wrap: wrap; }
+  .fe-list-kind.is-on { box-shadow: inset 0 -2px 0 var(--primary); }
+  .fe-opt { flex-wrap: wrap; }
+}
 @media (max-width: 1100px) {
   .fe-split, .fe-split--even, .fe-drawer-body { grid-template-columns: 1fr; }
   .fe-grid5 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
