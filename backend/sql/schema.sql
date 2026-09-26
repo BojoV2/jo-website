@@ -508,3 +508,20 @@ ON CONFLICT (key) DO NOTHING;
 -- Set when the FE job was closed because its JO was cancelled in the workflow,
 -- so un-cancelling the JO can reopen it (FE never writes the JO's own status).
 ALTER TABLE fe_jobs ADD COLUMN IF NOT EXISTS jo_cancelled BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- Quick Cancel / Reschedule from the board: a reschedule carries its new date,
+-- and every job type can now be cancelled or rescheduled. Added once; a value
+-- someone retired later stays retired.
+ALTER TABLE fe_visits ADD COLUMN IF NOT EXISTS reschedule_date DATE;
+
+INSERT INTO fe_options (kind, value, sort)
+SELECT v.kind, v.value, (SELECT COALESCE(MAX(sort), 0) + 1 FROM fe_options o WHERE o.kind = v.kind)
+  FROM (VALUES ('repair_status', 'Cancelled'), ('pullout_status', 'Cancelled'), ('pullout_status', 'Reschedule')) AS v(kind, value)
+ WHERE EXISTS (SELECT 1 FROM fe_options)
+ON CONFLICT (kind, value) DO NOTHING;
+
+-- Today tab fresh start: it counts only visits and report cards entered after
+-- today_start (UTC). Set once, the first time this runs.
+INSERT INTO fe_settings (key, value)
+VALUES ('today_start', to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS'))
+ON CONFLICT (key) DO NOTHING;

@@ -5967,6 +5967,24 @@ div.fe-kpi { cursor: default; }
 .fe-visits li > .fe-visit { flex: 1; min-width: 0; }
 .fe-visit-remove { font-size: 12px; color: var(--muted); white-space: nowrap; }
 .fe-visit-remove.is-armed { color: var(--danger); }
+/* cancel / reschedule */
+.fe-row-actions { position: relative; display: inline-flex; align-items: center; gap: 4px; margin-left: 6px; vertical-align: middle; }
+.fe-row-actions .fe-done-btn { margin-left: 0; }
+.fe-more-btn { border: 1px solid var(--line); background: transparent; color: var(--muted); border-radius: 99px; width: 26px; height: 22px; padding: 0; line-height: 1; cursor: pointer; font-weight: 700; }
+.fe-more-btn:hover, .fe-more-btn[aria-expanded='true'] { color: var(--primary); border-color: var(--primary); }
+.fe-popover { position: fixed; z-index: 60; background: var(--paper); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 10px 28px rgba(15, 23, 42, 0.18); padding: 10px; min-width: 240px; text-align: left; cursor: default; }
+.fe-menu { display: flex; flex-direction: column; padding: 4px; min-width: 160px; }
+.fe-menu button { border: 0; background: transparent; text-align: left; padding: 8px 10px; border-radius: 7px; font-weight: 600; color: var(--heading); cursor: pointer; }
+.fe-menu button:hover { background: var(--surface-strong); }
+.fe-menu button.is-bad { color: var(--danger); }
+.fe-quick { display: flex; flex-direction: column; gap: 8px; }
+.fe-quick .fe-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.fe-quick .fe-field input, .fe-quick .fe-field select { width: 100%; }
+.fe-quick-actions { display: flex; align-items: center; gap: 10px; }
+.fe-quick-panel { padding: 12px 20px 0; max-width: 420px; }
+.fe-btn--danger { background: var(--danger); color: #fff; }
+.fe-btn--danger:disabled { opacity: 0.6; }
+.fe-btn--bad { color: var(--danger); }
 /* lists */
 .fe-lists { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 14px; align-items: start; }
 .fe-list-kinds { display: flex; flex-direction: column; gap: 2px; }

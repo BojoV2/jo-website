@@ -436,4 +436,61 @@ describe('Field Eng API', { timeout: 30000 }, () => {
       await query(`UPDATE fe_jobs SET status = $2, reason = $3, closed_at = $4, team_id = $5 WHERE id = $1`, [job.id, job.status, job.reason, job.closed_at, job.team_id]);
     }
   });
+  it('cancels and reschedules from the board, with undo', async () => {
+    const opts = await query(`SELECT kind, value FROM fe_options WHERE (kind, value) IN (('repair_status', 'Cancelled'), ('pullout_status', 'Cancelled'), ('pullout_status', 'Reschedule'))`);
+    expect(opts.rowCount).toBe(3);
+    const pick = await query(
+      `SELECT j.* FROM fe_jobs j WHERE NOT j.history_only AND j.status = 'Pending' AND j.job_type = 'REPAIR' AND NOT j.jo_cancelled
+        ORDER BY j.created_at DESC LIMIT 1`
+    );
+    const job = pick.rows[0];
+    const created = [];
+    try {
+      const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date());
+      let res = await api('post', `/jobs/${job.id}/reschedule`).send({});
+      expect(res.status).toBe(400);
+      res = await api('post', `/jobs/${job.id}/reschedule`).send({ reschedule_date: '2020-01-01' });
+      expect(res.status).toBe(400);
+      res = await api('post', `/jobs/${job.id}/reschedule`).send({ reschedule_date: '2999-12-31', reason: 'No Access' });
+      expect(res.status).toBe(201);
+      created.push(res.body.visitId);
+      expect(res.body.job).toMatchObject({ status: 'Reschedule', reschedule_to: '2999-12-31', reason: 'No Access' });
+      const open = await api('get', '/jobs?view=open&q=' + encodeURIComponent(job.customer_name || ''));
+      if (job.customer_name && job.customer_name.length >= 2) expect(open.body.jobs.some((j) => j.id === job.id)).toBe(true);
+
+      res = await api('post', `/jobs/${job.id}/cancel`).send({ reason: 'Customer Not Around' });
+      expect(res.status).toBe(201);
+      created.push(res.body.visitId);
+      expect(res.body.job.status).toBe('Cancelled');
+      res = await api('post', `/jobs/${job.id}/cancel`).send({});
+      expect(res.status).toBe(409);
+
+      res = await api('delete', `/visits/${created.pop()}`);
+      expect(res.body.job.status).toBe('Reschedule');
+      res = await api('delete', `/visits/${created.pop()}`);
+      expect(res.body.job.status).toBe(job.status);
+
+      const log = await query(`SELECT action FROM fe_audit WHERE job_id = $1 AND user_id = $2 ORDER BY id`, [job.id, userId]);
+      expect(log.rows.map((r) => r.action)).toEqual(['marked_rescheduled', 'marked_cancelled', 'visit_removed', 'visit_removed']);
+      expect(today).toMatch(/^\d{4}-/);
+    } finally {
+      for (const id of created) await query('DELETE FROM fe_visits WHERE id = $1', [id]);
+      await query(`UPDATE fe_jobs SET status = $2, reason = $3, closed_at = $4, team_id = $5 WHERE id = $1`, [job.id, job.status, job.reason, job.closed_at, job.team_id]);
+    }
+  });
+  it('Today counts only work entered after its fresh start', async () => {
+    const start = (await query(`SELECT value FROM fe_settings WHERE key = 'today_start'`)).rows[0];
+    expect(start).toBeTruthy();
+    const old = await query(`SELECT value FROM fe_settings WHERE key = 'today_start'`);
+    try {
+      await query(`UPDATE fe_settings SET value = '2999-01-01T00:00:00' WHERE key = 'today_start'`);
+      const res = await api('get', '/today');
+      expect(res.body.counts).toMatchObject({ visits: 0, done: 0 });
+      expect(res.body.pullout).toMatchObject({ retrieved: 0, visited: 0 });
+      expect(res.body.materials.cards).toBe(0);
+      for (const t of res.body.teams) expect(t).toMatchObject({ visits: 0, done: 0, card_in: false });
+    } finally {
+      await query(`UPDATE fe_settings SET value = $1 WHERE key = 'today_start'`, [old.rows[0].value]);
+    }
+  });
 });

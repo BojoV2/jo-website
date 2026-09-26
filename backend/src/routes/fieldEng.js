@@ -20,6 +20,8 @@ const TYPES = ['INSTALL', 'REPAIR', 'PULLOUT', 'RELOC'];
 // Jobs generated before the board's fresh start are the old backlog: they are
 // left out of the open counts and the Open view (fe_settings.board_start).
 const BOARD_START = `COALESCE((SELECT value::timestamp FROM fe_settings WHERE key = 'board_start'), '-infinity'::timestamp)`;
+// The Today tab's fresh start: only visits / report cards entered after it count.
+const TODAY_START = `COALESCE((SELECT value::timestamp FROM fe_settings WHERE key = 'today_start'), '-infinity'::timestamp)`;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
 
@@ -78,6 +80,8 @@ const JOB_COLUMNS = `j.id, j.generated_pdf_id, j.job_type, j.reloc_kind, j.histo
   (${MANILA_TODAY} - j.jo_date) AS age_days,
   (SELECT to_char(MAX(v.visit_date), 'YYYY-MM-DD') FROM fe_visits v WHERE v.job_id = j.id) AS last_visit_date,
   (SELECT COUNT(*)::int FROM fe_visits v WHERE v.job_id = j.id) AS visit_count,
+  (SELECT to_char(v.reschedule_date, 'YYYY-MM-DD') FROM fe_visits v WHERE v.job_id = j.id
+    ORDER BY v.visit_date DESC NULLS LAST, v.created_at DESC LIMIT 1) AS reschedule_to,
   j.jo_cancelled, (SELECT g.status FROM generated_pdfs g WHERE g.id = j.generated_pdf_id) AS jo_status,
   (SELECT to_char(g.reschedule_date, 'YYYY-MM-DD') FROM generated_pdfs g WHERE g.id = j.generated_pdf_id) AS jo_reschedule_date`;
 
@@ -141,6 +145,7 @@ async function jobDetail(id) {
   const [visits, log] = await Promise.all([
     query(
       `SELECT v.id, to_char(v.visit_date, 'YYYY-MM-DD') AS visit_date, v.team_id, t.name AS team_name, v.status, v.reason,
+              to_char(v.reschedule_date, 'YYYY-MM-DD') AS reschedule_date,
               v.problem, v.difficulty, to_char(v.start_time, 'HH24:MI') AS start_time, to_char(v.end_time, 'HH24:MI') AS end_time,
               v.drop_core_m::float AS drop_core_m, v.f_clamp, v.house_clamp, v.sc_connector, v.onu, v.modem_serial, v.remarks,
               v.source, ${SLA_SQL} AS sla
@@ -261,10 +266,20 @@ const VISIT_FIELDS = ['visit_date', 'team_id', 'status', 'reason', 'problem', 'd
 // The finished result for each kind of job, used by "Mark done".
 const DONE_STATUS = { INSTALL: 'Installed', REPAIR: 'Repaired', PULLOUT: 'Nakuha ang Modem' };
 
-// Mark done = record a visit today with the finished result, so reports,
-// SLA and team performance count it like any other visit.
-router.post('/jobs/:id/done', async (req, res) => {
+// Quick actions from the board. Each records a visit today, so reports, SLA
+// and team performance count it like any other visit:
+//   done       -> the finished result for the job type (closes the job)
+//   cancel     -> Cancelled (closes the job)
+//   reschedule -> Reschedule with the new date (the job stays open)
+const QUICK = {
+  done: { action: 'marked_done', note: () => 'Marked done from the board' },
+  cancel: { action: 'marked_cancelled', status: 'Cancelled', note: () => 'Cancelled from the board' },
+  reschedule: { action: 'marked_rescheduled', status: 'Reschedule', note: (d) => `Rescheduled to ${d} from the board` }
+};
+
+router.post('/jobs/:id/:quick(done|cancel|reschedule)', async (req, res) => {
   try {
+    const quick = QUICK[req.params.quick];
     if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) return res.status(400).json({ error: 'Invalid job id' });
     const found = await query('SELECT * FROM fe_jobs WHERE id = $1', [req.params.id]);
     if (!found.rowCount) return res.status(404).json({ error: 'Job not found' });
@@ -274,25 +289,36 @@ router.post('/jobs/:id/done', async (req, res) => {
     if (job.job_type === 'RELOC' && !job.reloc_kind) {
       return res.status(400).json({ error: 'Open the job and choose whether this relocation is install-type or repair-type first', needsRelocKind: true });
     }
-    const status = DONE_STATUS[effectiveType(job.job_type, job.reloc_kind)];
+    let rescheduleDate = null;
+    if (req.params.quick === 'reschedule') {
+      rescheduleDate = String(req.body.reschedule_date || '');
+      if (!DATE_RE.test(rescheduleDate)) return res.status(400).json({ error: 'Pick the new date for the visit' });
+      const past = await query(`SELECT $1::date < ${MANILA_TODAY} AS p`, [rescheduleDate]);
+      if (past.rows[0].p) return res.status(400).json({ error: 'The new date cannot be in the past' });
+    }
+    const status = quick.status || DONE_STATUS[effectiveType(job.job_type, job.reloc_kind)];
     const body = {
       status,
+      reason: req.body.reason || null,
       team_id: req.body.team_id === undefined ? job.team_id : req.body.team_id,
       visit_date: req.body.visit_date || null,
-      remarks: clean(req.body.remarks, 2000) || 'Marked done from the board'
+      remarks: clean(req.body.remarks, 2000) || quick.note(rescheduleDate)
     };
     const checked = await validateVisit(body, job);
-    if (checked.error) return res.status(400).json({ error: checked.error });
+    if (checked.error) {
+      return res.status(400).json({ error: checked.error === 'Pick a status from the list' ? `${status} is not on this job's status list (see the Lists tab)` : checked.error });
+    }
     const id = uuidv4();
     const v = checked.value;
     await query(
-      `INSERT INTO fe_visits (id, job_id, ${VISIT_FIELDS.join(', ')}, source, created_by, updated_by)
-       VALUES ($1, $2, COALESCE($3::date, ${MANILA_TODAY}), ${VISIT_FIELDS.slice(1).map((_, i) => `$${i + 4}`).join(', ')}, 'app', $18, $18)`,
-      [id, job.id, ...VISIT_FIELDS.map((f) => v[f]), req.user.id]
+      `INSERT INTO fe_visits (id, job_id, ${VISIT_FIELDS.join(', ')}, reschedule_date, source, created_by, updated_by)
+       VALUES ($1, $2, COALESCE($3::date, ${MANILA_TODAY}), ${VISIT_FIELDS.slice(1).map((_, i) => `$${i + 4}`).join(', ')},
+               $${VISIT_FIELDS.length + 3}::date, 'app', $${VISIT_FIELDS.length + 4}, $${VISIT_FIELDS.length + 4})`,
+      [id, job.id, ...VISIT_FIELDS.map((f) => v[f]), rescheduleDate, req.user.id]
     );
     await refreshJobFromVisits(job.id, req.user.id);
-    await audit({ entity: 'visit', entityId: id, jobId: job.id, action: 'marked_done', detail: v, user: req.user });
-    return res.status(201).json({ visitId: id, status, ...(await jobDetail(job.id)) });
+    await audit({ entity: 'visit', entityId: id, jobId: job.id, action: quick.action, detail: { ...v, reschedule_date: rescheduleDate }, user: req.user });
+    return res.status(201).json({ visitId: id, status, rescheduleDate, ...(await jobDetail(job.id)) });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -789,10 +815,12 @@ router.get('/today', async (_req, res) => {
                    COUNT(*) FILTER (WHERE v.status = ANY($2::text[]))::int AS done,
                    COUNT(*) FILTER (WHERE ${SLA_SQL} = 'PASS')::int AS pass,
                    COUNT(*) FILTER (WHERE ${SLA_SQL} = 'DELAY')::int AS delay
-              ${VISIT_BASE} WHERE v.visit_date = ${MANILA_TODAY} AND v.team_id IS NOT NULL GROUP BY v.team_id)
+              ${VISIT_BASE} WHERE v.visit_date = ${MANILA_TODAY} AND v.team_id IS NOT NULL AND v.created_at >= ${TODAY_START}
+             GROUP BY v.team_id)
          SELECT t.id, t.name, t.area, COALESCE(o.open, 0) AS open, COALESCE(d.visits, 0) AS visits, COALESCE(d.done, 0) AS done,
                 COALESCE(d.pass, 0) AS pass, COALESCE(d.delay, 0) AS delay,
-                EXISTS (SELECT 1 FROM fe_team_materials m WHERE m.team_id = t.id AND m.work_date = ${MANILA_TODAY}) AS card_in
+                EXISTS (SELECT 1 FROM fe_team_materials m WHERE m.team_id = t.id AND m.work_date = ${MANILA_TODAY}
+                         AND m.updated_at >= ${TODAY_START}) AS card_in
            FROM fe_teams t LEFT JOIN open_jobs o ON o.team_id = t.id LEFT JOIN today d ON d.team_id = t.id
           WHERE NOT t.legacy AND t.active
           ORDER BY t.area NULLS LAST, lower(t.name)`,
@@ -802,20 +830,21 @@ router.get('/today', async (_req, res) => {
         `SELECT COALESCE(SUM(drop_core_m), 0)::float AS drop_core_m, COALESCE(SUM(f_clamp), 0)::int AS f_clamp,
                 COALESCE(SUM(house_clamp), 0)::int AS house_clamp, COALESCE(SUM(sc_connector), 0)::int AS sc_connector,
                 COALESCE(SUM(onu), 0)::int AS onu, COUNT(*)::int AS cards
-           FROM fe_team_materials WHERE work_date = ${MANILA_TODAY}`
+           FROM fe_team_materials WHERE work_date = ${MANILA_TODAY} AND updated_at >= ${TODAY_START}`
       ),
       query(
         `SELECT COUNT(*) FILTER (WHERE ${SLA_SQL} = 'PASS')::int AS pass, COUNT(*) FILTER (WHERE ${SLA_SQL} = 'DELAY')::int AS delay
-           ${VISIT_BASE} WHERE v.visit_date = ${MANILA_TODAY}`
+           ${VISIT_BASE} WHERE v.visit_date = ${MANILA_TODAY} AND v.created_at >= ${TODAY_START}`
       ),
       query(
         `SELECT COUNT(*) FILTER (WHERE v.status = 'Nakuha ang Modem')::int AS retrieved, COUNT(*)::int AS visited
            ${VISIT_BASE}
-          WHERE j.job_type = 'PULLOUT' AND v.visit_date >= date_trunc('week', ${MANILA_TODAY})::date AND v.visit_date <= ${MANILA_TODAY}`
+          WHERE j.job_type = 'PULLOUT' AND v.visit_date >= date_trunc('week', ${MANILA_TODAY})::date AND v.visit_date <= ${MANILA_TODAY}
+            AND v.created_at >= ${TODAY_START}`
       ),
       query(
         `SELECT COUNT(*)::int AS visits, COUNT(*) FILTER (WHERE status = ANY($1::text[]))::int AS done
-           FROM fe_visits WHERE visit_date = ${MANILA_TODAY}`,
+           FROM fe_visits WHERE visit_date = ${MANILA_TODAY} AND created_at >= ${TODAY_START}`,
         [SUCCESS_STATUSES]
       )
     ]);

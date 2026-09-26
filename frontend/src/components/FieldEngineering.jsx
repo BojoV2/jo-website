@@ -138,11 +138,12 @@ export default function FieldEngineering({ token }) {
     }
   };
 
-  const markDone = async (job) => {
+  const quickAction = async (job, kind, extra = {}) => {
     try {
-      const r = await apiRequest(`/field-eng/jobs/${job.id}/done`, { method: 'POST', token, body: {} });
+      const r = await apiRequest(`/field-eng/jobs/${job.id}/${kind}`, { method: 'POST', token, body: extra });
       loadBoard({ quiet: true });
-      say(`${job.customer_name || 'Job'} marked ${r.status}`, 'ok', {
+      const what = kind === 'reschedule' ? `rescheduled to ${r.rescheduleDate}` : kind === 'cancel' ? 'cancelled' : `marked ${r.status}`;
+      say(`${job.customer_name || 'Job'} ${what}`, 'ok', {
         label: 'Undo',
         run: async () => {
           try {
@@ -154,9 +155,11 @@ export default function FieldEngineering({ token }) {
           }
         }
       });
+      return true;
     } catch (err) {
       if (err.message.includes('relocation')) setOpenJobId(job.id);
       say(err.message, 'error');
+      return false;
     }
   };
 
@@ -254,9 +257,8 @@ export default function FieldEngineering({ token }) {
                       </td>
                       <td>
                         <span className={statusClass(job.status)}>{job.status}</span>
-                        {!CLOSED.includes(job.status) && !job.history_only && (
-                          <button type="button" className="fe-done-btn" aria-label={`Mark ${job.customer_name || 'job'} done`} title={`Record a visit today as ${DONE_LABEL[effType(job)] || 'done'}`} onClick={(e) => { e.stopPropagation(); markDone(job); }}>✓ Done</button>
-                        )}
+                        {!CLOSED.includes(job.status) && !job.history_only && <RowActions job={job} meta={meta} onQuick={quickAction} />}
+                        {job.status === 'Reschedule' && job.reschedule_to && <div className="fe-sub fe-jo-note">to {job.reschedule_to}</div>}
                         {job.visit_count > 0 && <div className="fe-sub">{job.visit_count} visit{job.visit_count > 1 ? 's' : ''} · last {job.last_visit_date}</div>}
                         {joNote(job) && <div className={job.jo_status === 'cancelled' ? 'fe-sub fe-jo-note is-bad' : 'fe-sub fe-jo-note'}>{joNote(job)}</div>}
                       </td>
@@ -296,12 +298,97 @@ export default function FieldEngineering({ token }) {
   );
 }
 
+// Small form behind Cancel / Reschedule: an optional reason from the job's
+// reason list, and for a reschedule the new date (today or later).
+function QuickForm({ job, meta, mode, busy, onSubmit, onClose }) {
+  const [reason, setReason] = useState('');
+  const [date, setDate] = useState('');
+  const reasons = meta.lists[`${statusKind(effType(job))}_reason`] || [];
+  const today = manilaToday();
+  return (
+    <form
+      className="fe-quick" onClick={(e) => e.stopPropagation()}
+      onSubmit={(e) => { e.preventDefault(); onSubmit({ reason: reason || null, reschedule_date: mode === 'reschedule' ? date : undefined }); }}
+    >
+      <span className="fe-label">{mode === 'cancel' ? 'Cancel this job' : 'Reschedule this job'}</span>
+      {mode === 'reschedule' && (
+        <label className="fe-field"><span>New date</span>
+          <input type="date" required min={today} value={date} onChange={(e) => setDate(e.target.value)} />
+        </label>
+      )}
+      <label className="fe-field"><span>Reason</span>
+        <select value={reason} onChange={(e) => setReason(e.target.value)}>
+          <option value="">—</option>
+          {reasons.map((r) => <option key={r}>{r}</option>)}
+        </select>
+      </label>
+      <div className="fe-quick-actions">
+        <button type="submit" className={mode === 'cancel' ? 'fe-btn fe-btn--danger' : 'fe-btn fe-btn--primary'} disabled={busy || (mode === 'reschedule' && !date)}>
+          {mode === 'cancel' ? 'Cancel job' : 'Reschedule'}
+        </button>
+        <button type="button" className="fe-link" onClick={onClose}>Back</button>
+      </div>
+    </form>
+  );
+}
+
+// Done / Cancel / Reschedule for a board row: Done is one click, the other
+// two open the QuickForm in a small popover.
+function RowActions({ job, meta, onQuick }) {
+  const [mode, setMode] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [pos, setPos] = useState(null);
+  const moreRef = useRef(null);
+  // The table scrolls inside its own box, so the popover is placed against the
+  // viewport (fixed) from the ⋯ button, opening upward when there is no room.
+  const place = useCallback(() => {
+    const r = moreRef.current?.getBoundingClientRect();
+    if (!r) return;
+    const right = Math.max(8, window.innerWidth - r.right);
+    setPos(window.innerHeight - r.bottom < 300 ? { right, bottom: window.innerHeight - r.top + 6 } : { right, top: r.bottom + 6 });
+  }, []);
+  useEffect(() => {
+    if (!mode) return undefined;
+    place();
+    const close = () => setMode(null);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => { window.removeEventListener('scroll', close, true); window.removeEventListener('resize', close); };
+  }, [mode, place]);
+  const run = async (kind, extra) => {
+    setBusy(true);
+    const ok = await onQuick(job, kind, extra);
+    setBusy(false);
+    if (ok) setMode(null);
+  };
+  return (
+    <span className="fe-row-actions" onClick={(e) => e.stopPropagation()}>
+      <button type="button" className="fe-done-btn" disabled={busy} aria-label={`Mark ${job.customer_name || 'job'} done`}
+        title={`Record a visit today as ${DONE_LABEL[effType(job)] || 'done'}`} onClick={() => run('done', {})}>✓ Done</button>
+      <button ref={moreRef} type="button" className="fe-more-btn" aria-label={`More actions for ${job.customer_name || 'job'}`} aria-expanded={Boolean(mode)}
+        onClick={() => setMode((m) => (m ? null : 'menu'))}>⋯</button>
+      {mode === 'menu' && (
+        <span className="fe-popover fe-menu" role="menu" style={pos || undefined}>
+          <button type="button" role="menuitem" onClick={() => setMode('reschedule')}>Reschedule…</button>
+          <button type="button" role="menuitem" className="is-bad" onClick={() => setMode('cancel')}>Cancel…</button>
+        </span>
+      )}
+      {(mode === 'cancel' || mode === 'reschedule') && (
+        <span className="fe-popover" style={pos || undefined}>
+          <QuickForm job={job} meta={meta} mode={mode} busy={busy} onClose={() => setMode(null)} onSubmit={(extra) => run(mode, extra)} />
+        </span>
+      )}
+    </span>
+  );
+}
+
 function JobPanel({ jobId, token, meta, say, onClose }) {
   const [detail, setDetail] = useState(null);
   const [form, setForm] = useState(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [confirmRemove, setConfirmRemove] = useState(null);
+  const [quickMode, setQuickMode] = useState(null);
   const closeRef = useRef(null);
 
   const load = useCallback(async () => {
@@ -327,14 +414,15 @@ function JobPanel({ jobId, token, meta, say, onClose }) {
   const kind = type ? statusKind(type) : 'repair';
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
-  const markDone = async () => {
+  const quick = async (kind, extra = {}) => {
     setSaving(true);
     setError('');
     try {
-      const r = await apiRequest(`/field-eng/jobs/${job.id}/done`, { method: 'POST', token, body: {} });
+      const r = await apiRequest(`/field-eng/jobs/${job.id}/${kind}`, { method: 'POST', token, body: extra });
       setDetail(r);
       setForm(blankVisit(r.job));
-      say(`${job.customer_name || 'Job'} marked ${r.status}`);
+      setQuickMode(null);
+      say(`${job.customer_name || 'Job'} ${kind === 'reschedule' ? `rescheduled to ${r.rescheduleDate}` : kind === 'cancel' ? 'cancelled' : `marked ${r.status}`}`);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -417,10 +505,20 @@ function JobPanel({ jobId, token, meta, say, onClose }) {
           <h3>{job?.customer_name || 'Loading…'} {job?.order_number && <span className="fe-mono fe-sub">{job.order_number}</span>}</h3>
           {job && <span className={statusClass(job.status)}>{job.status}</span>}
           {job && !CLOSED.includes(job.status) && !job.history_only && (job.job_type !== 'RELOC' || job.reloc_kind) && (
-            <button type="button" className="fe-btn fe-btn--primary" disabled={saving} onClick={markDone}>Mark done · {DONE_LABEL[type]}</button>
+            <>
+              <button type="button" className="fe-btn fe-btn--primary" disabled={saving} onClick={() => quick('done')}>Mark done · {DONE_LABEL[type]}</button>
+              <button type="button" className="fe-btn fe-btn--ghost" disabled={saving} aria-expanded={quickMode === 'reschedule'} onClick={() => setQuickMode((m) => (m === 'reschedule' ? null : 'reschedule'))}>Reschedule</button>
+              <button type="button" className="fe-btn fe-btn--ghost fe-btn--bad" disabled={saving} aria-expanded={quickMode === 'cancel'} onClick={() => setQuickMode((m) => (m === 'cancel' ? null : 'cancel'))}>Cancel job</button>
+            </>
           )}
           <button ref={closeRef} type="button" className="fe-btn fe-btn--ghost" onClick={onClose}>Close</button>
         </div>
+        {job && quickMode && (
+          <div className="fe-quick-panel">
+            <QuickForm key={quickMode} job={job} meta={meta} mode={quickMode} busy={saving} onClose={() => setQuickMode(null)} onSubmit={(extra) => quick(quickMode, extra)} />
+            {error && <div className="fe-notice is-error" role="alert">{error}</div>}
+          </div>
+        )}
         {!detail && <div className="fe-drawer-body"><p className="fe-sub">{error || 'Loading…'}</p></div>}
         {detail && form && (
           <div className="fe-drawer-body">
@@ -440,7 +538,7 @@ function JobPanel({ jobId, token, meta, say, onClose }) {
                     <li key={v.id}>
                       <button type="button" className={form.id === v.id ? 'fe-visit is-on' : 'fe-visit'} onClick={() => editVisit(v)}>
                         <span className="fe-mono">{v.visit_date || 'no date'}</span>
-                        <span className={statusClass(v.status)}>{v.status}</span>
+                        <span className={statusClass(v.status)}>{v.status}{v.reschedule_date ? ` → ${v.reschedule_date}` : ''}</span>
                         <span className="fe-sub">{[v.team_name, v.reason, v.sla && v.sla !== 'EXEMPTED' ? `SLA ${v.sla}` : null, v.source === 'excel' ? 'from Excel' : null].filter(Boolean).join(' · ')}</span>
                       </button>
                       {v.source === 'app' && (
