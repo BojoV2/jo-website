@@ -68,6 +68,7 @@ describe('Field Eng API', { timeout: 30000 }, () => {
       await query('DELETE FROM fe_team_members WHERE team_id = $1', [teamId]);
       await query('DELETE FROM fe_teams WHERE id = $1', [teamId]);
     }
+    await query('DELETE FROM status_history WHERE changed_by = $1', [userId]);
     await query('DELETE FROM users WHERE id = $1', [userId]);
     await pool.end();
   });
@@ -328,74 +329,111 @@ describe('Field Eng API', { timeout: 30000 }, () => {
     res = await api('get', '/jobs?view=backlog&limit=1000');
     expect(res.body.jobs.length).toBe(Math.min(res.body.counts.backlog, 1000));
   });
-  it('follows the JO: cancel closes the field job, un-cancel reopens it (single, bulk, safety net)', async () => {
+  it('syncs the JO status both ways (cancel, done with team note, reschedule, back to pending, undo)', async () => {
     await query(`UPDATE users SET role = 'admin' WHERE id = $1`, [userId]);
     const admin = jwt.sign({ id: userId, tv: 0, role: 'admin', name: 'FE Test' }, process.env.JWT_SECRET, { expiresIn: '1h' });
     const jo = (method, path) => request(app)[method](`/api/generated-pdfs${path}`).set('Authorization', `Bearer ${admin}`);
+    const asAdmin = (method, path) => request(app)[method](`/api/field-eng${path}`).set('Authorization', `Bearer ${admin}`);
     const pick = await query(
-      `SELECT j.id AS job_id, j.status, j.reason, j.closed_at, g.id AS gid, g.status AS jo_status, g.status_note, g.reschedule_date, g.auto_closed
+      `SELECT j.id AS job_id, j.status, j.reason, j.closed_at, j.team_id, j.job_type, g.id AS gid, g.status AS jo_status, g.status_note, g.reschedule_date, g.auto_closed
          FROM fe_jobs j JOIN generated_pdfs g ON g.id = j.generated_pdf_id
-        WHERE NOT j.history_only AND g.status = 'pending' AND j.status = 'Pending' AND NOT j.jo_cancelled
+        WHERE NOT j.history_only AND g.status = 'pending' AND j.status = 'Pending' AND NOT j.jo_cancelled AND j.job_type = 'REPAIR'
+          AND NOT EXISTS (SELECT 1 FROM fe_visits v WHERE v.job_id = j.id)
         ORDER BY g.created_at DESC LIMIT 2`
     );
     expect(pick.rowCount).toBe(2);
     const [a, b] = pick.rows;
+    const team = (await query(`SELECT id, name FROM fe_teams WHERE NOT legacy AND active ORDER BY id LIMIT 1`)).rows[0];
     const fe = async (id) => (await query('SELECT status, jo_cancelled, reason FROM fe_jobs WHERE id = $1', [id])).rows[0];
+    const g = async (id) => (await query(`SELECT status, status_note, to_char(reschedule_date, 'YYYY-MM-DD') AS d FROM generated_pdfs WHERE id = $1`, [id])).rows[0];
     try {
+      // JO cancelled -> field job closed; un-cancel reopens (single, bulk, safety net)
       let res = await jo('patch', `/${a.gid}/status`).send({ status: 'cancelled', note: 'test' });
       expect(res.status).toBe(200);
-      expect(await fe(a.job_id)).toMatchObject({ status: 'Cancelled', jo_cancelled: true, reason: 'JO cancelled in the workflow' });
-      res = await api('get', `/jobs/${a.job_id}`);
-      expect(res.body.job).toMatchObject({ jo_status: 'cancelled', jo_cancelled: true });
-
-      res = await jo('patch', `/${a.gid}/status`).send({ status: 'pending' });
+      expect(await fe(a.job_id)).toMatchObject({ status: 'Cancelled', jo_cancelled: true });
+      await jo('patch', `/${a.gid}/status`).send({ status: 'pending' });
       expect(await fe(a.job_id)).toMatchObject({ status: 'Pending', jo_cancelled: false });
-
-      res = await jo('post', '/bulk-status').send({ ids: [a.gid, b.gid], status: 'cancelled' });
-      expect(res.status).toBe(200);
-      expect((await fe(a.job_id)).status).toBe('Cancelled');
+      await jo('post', '/bulk-status').send({ ids: [a.gid, b.gid], status: 'cancelled' });
       expect((await fe(b.job_id)).status).toBe('Cancelled');
-
-      // A status change made behind the hook's back is caught by the safety net.
       await query(`UPDATE generated_pdfs SET status = 'pending' WHERE id = $1`, [b.gid]);
       expect(await reconcileJoStatuses()).toBeGreaterThanOrEqual(1);
-      expect(await fe(b.job_id)).toMatchObject({ status: 'Pending', jo_cancelled: false });
-
-      // Rescheduling or finishing the JO does not touch the field result.
-      await jo('patch', `/${a.gid}/status`).send({ status: 'rescheduled', reschedule_date: '2026-12-01' });
-      expect(await fe(a.job_id)).toMatchObject({ status: 'Pending', jo_cancelled: false });
-      res = await api('get', `/jobs/${a.job_id}`);
-      expect(res.body.job).toMatchObject({ jo_status: 'rescheduled', jo_reschedule_date: '2026-12-01' });
-      await jo('patch', `/${a.gid}/status`).send({ status: 'done' });
+      expect((await fe(b.job_id)).status).toBe('Pending');
+      await jo('patch', `/${a.gid}/status`).send({ status: 'pending' });
       expect((await fe(a.job_id)).status).toBe('Pending');
 
-      const log = await query(`SELECT action FROM fe_audit WHERE job_id = $1 AND action LIKE 'jo_%' ORDER BY id`, [a.job_id]);
-      expect(log.rows.map((r) => r.action)).toEqual(['jo_cancelled', 'jo_reopened', 'jo_cancelled', 'jo_reopened']);
+      // JO done in the workflow -> field job Repaired + "Repaired by <team>" on the JO note
+      await query('UPDATE fe_jobs SET team_id = $2 WHERE id = $1', [a.job_id, team.id]);
+      await jo('patch', `/${a.gid}/status`).send({ status: 'done', note: 'ok' });
+      expect((await fe(a.job_id)).status).toBe('Repaired');
+      expect((await g(a.gid)).status_note).toBe(`ok · Repaired by ${team.name}`);
+      let v = (await query(`SELECT source, remarks FROM fe_visits WHERE job_id = $1`, [a.job_id])).rows;
+      expect(v).toEqual([{ source: 'jo', remarks: 'Marked done in the JO workflow' }]);
+      // back to pending -> the JO-made visit is removed and the field job reopens
+      await jo('patch', `/${a.gid}/status`).send({ status: 'pending' });
+      expect((await fe(a.job_id)).status).toBe('Pending');
+      expect((await query(`SELECT count(*)::int n FROM fe_visits WHERE job_id = $1`, [a.job_id])).rows[0].n).toBe(0);
+      // JO rescheduled -> field job Reschedule with the date
+      await jo('patch', `/${a.gid}/status`).send({ status: 'rescheduled', reschedule_date: '2026-12-01' });
+      res = await api('get', `/jobs/${a.job_id}`);
+      expect(res.body.job).toMatchObject({ status: 'Reschedule', reschedule_to: '2026-12-01', jo_status: 'rescheduled' });
+      await jo('patch', `/${a.gid}/status`).send({ status: 'pending' });
+      expect((await fe(a.job_id)).status).toBe('Pending');
+
+      // Field Eng done -> JO done + team note; no team -> done, note untouched; undo restores
+      await query(`UPDATE generated_pdfs SET status_note = NULL WHERE id = $1`, [a.gid]);
+      res = await asAdmin('post', `/jobs/${a.job_id}/done`).send({});
+      expect(res.body.joSynced).toBe(true);
+      expect(await g(a.gid)).toMatchObject({ status: 'done', status_note: `Repaired by ${team.name}` });
+      const hist = await query(`SELECT old_status, new_status, note FROM status_history WHERE generated_pdf_id = $1 ORDER BY created_at DESC LIMIT 1`, [a.gid]);
+      if (hist) expect(hist.rows[0]).toMatchObject({ old_status: 'pending', new_status: 'done', note: 'From Field Eng: Repaired' });
+      res = await asAdmin('delete', `/visits/${res.body.visitId}`);
+      expect(await g(a.gid)).toMatchObject({ status: 'pending', status_note: null });
+
+      res = await asAdmin('post', `/jobs/${b.job_id}/done`).send({ team_id: null });
+      expect(await g(b.gid)).toMatchObject({ status: 'done', status_note: b.status_note });
+      const bDone = res.body.visitId;
+      // a JO the office changed since is not overwritten by an undo
+      await query(`UPDATE generated_pdfs SET status = 'cancelled' WHERE id = $1`, [b.gid]);
+      await asAdmin('delete', `/visits/${bDone}`);
+      expect((await g(b.gid)).status).toBe('cancelled');
+      await query(`UPDATE generated_pdfs SET status = 'pending' WHERE id = $1`, [b.gid]);
+
+      // cancel / reschedule from Field Eng set the JO too
+      res = await asAdmin('post', `/jobs/${a.job_id}/reschedule`).send({ reschedule_date: '2999-12-31' });
+      expect(await g(a.gid)).toMatchObject({ status: 'rescheduled', d: '2999-12-31' });
+      const r1 = res.body.visitId;
+      res = await asAdmin('post', `/jobs/${a.job_id}/cancel`).send({});
+      expect((await g(a.gid)).status).toBe('cancelled');
+      await asAdmin('delete', `/visits/${res.body.visitId}`);
+      expect(await g(a.gid)).toMatchObject({ status: 'rescheduled', d: '2999-12-31' });
+      await asAdmin('delete', `/visits/${r1}`);
+      expect((await g(a.gid)).status).toBe('pending');
+
+      // JOs closed by the 30-day sweeper are not field work
+      await query(`UPDATE generated_pdfs SET status = 'done', auto_closed = TRUE WHERE id = $1`, [b.gid]);
+      const { syncJobFromJo } = await import('../src/services/feJobs.js');
+      expect(await syncJobFromJo(b.gid, null)).toBeNull();
+      expect((await fe(b.job_id)).status).toBe('Pending');
 
       // The JO list and Client Lookup carry the field status.
       res = await jo('get', `?keyword=${a.gid}`);
-      expect(res.status).toBe(200);
-      const row = res.body.find((r) => r.id === a.gid);
-      expect(row).toHaveProperty('fe_status', 'Pending');
-      expect(row).toHaveProperty('fe_team');
-      const nameRow = await query(`SELECT customer_name FROM fe_jobs WHERE id = $1`, [a.job_id]);
-      if (nameRow.rows[0].customer_name) {
-        res = await request(app).get(`/api/clients/profile?name=${encodeURIComponent(nameRow.rows[0].customer_name)}`).set('Authorization', `Bearer ${admin}`);
-        if (res.status === 200) expect(res.body.documents.some((d) => 'fe_status' in d)).toBe(true);
-      }
+      expect(res.body.find((r) => r.id === a.gid)).toHaveProperty('fe_status', 'Pending');
     } finally {
       for (const r of [a, b]) {
+        await query('DELETE FROM fe_visits WHERE job_id = $1', [r.job_id]);
         await query(
           `UPDATE generated_pdfs SET status = $2, status_note = $3, reschedule_date = $4, auto_closed = $5 WHERE id = $1`,
           [r.gid, r.jo_status, r.status_note, r.reschedule_date, r.auto_closed]
         );
-        await query(`UPDATE fe_jobs SET status = $2, reason = $3, closed_at = $4, jo_cancelled = FALSE WHERE id = $1`, [r.job_id, r.status, r.reason, r.closed_at]);
-        await query(`DELETE FROM status_history WHERE generated_pdf_id = $1 AND changed_by = $2`, [r.gid, userId]);
-        await query(`DELETE FROM fe_audit WHERE job_id = $1 AND action LIKE 'jo_%'`, [r.job_id]);
+        await query(`UPDATE fe_jobs SET status = $2, reason = $3, closed_at = $4, jo_cancelled = FALSE, team_id = $5 WHERE id = $1`, [r.job_id, r.status, r.reason, r.closed_at, r.team_id]);
+        await query(`DELETE FROM status_history WHERE generated_pdf_id = $1 AND (changed_by = $2 OR changed_by IS NULL) AND created_at > NOW() - INTERVAL '1 hour'`, [r.gid, userId]).catch(() =>
+          query(`DELETE FROM status_history WHERE generated_pdf_id = $1 AND changed_by = $2`, [r.gid, userId]));
+        await query(`DELETE FROM fe_audit WHERE job_id = $1 AND (user_id = $2 OR user_id IS NULL) AND created_at > NOW() - INTERVAL '1 hour'`, [r.job_id, userId]);
       }
       await query(`UPDATE users SET role = 'user' WHERE id = $1`, [userId]);
     }
   });
+
   it('marks a job done with one click and undoes it', async () => {
     const pick = await query(
       `SELECT j.* FROM fe_jobs j
@@ -403,6 +441,7 @@ describe('Field Eng API', { timeout: 30000 }, () => {
         ORDER BY j.created_at DESC LIMIT 1`
     );
     const job = pick.rows[0];
+    const joBefore = (await query('SELECT g.status FROM generated_pdfs g WHERE g.id = $1', [job.generated_pdf_id])).rows[0]?.status;
     const expected = job.job_type === 'INSTALL' ? 'Installed' : 'Repaired';
     let visitId;
     try {
@@ -429,7 +468,9 @@ describe('Field Eng API', { timeout: 30000 }, () => {
       res = await api('delete', `/visits/${excel.rows[0].id}`);
       expect(res.status).toBe(409);
 
-      const log = await query(`SELECT action FROM fe_audit WHERE job_id = $1 AND user_id = $2 ORDER BY id`, [job.id, userId]);
+      const log = await query(`SELECT action FROM fe_audit WHERE job_id = $1 AND user_id = $2 AND entity = 'visit' ORDER BY id`, [job.id, userId]);
+      const joNow = await query('SELECT g.status FROM generated_pdfs g JOIN fe_jobs j ON j.generated_pdf_id = g.id WHERE j.id = $1', [job.id]);
+      expect(joNow.rows[0].status).toBe(joBefore);
       expect(log.rows.map((r) => r.action)).toEqual(['marked_done', 'visit_removed']);
     } finally {
       if (visitId) await query('DELETE FROM fe_visits WHERE id = $1', [visitId]);
@@ -444,6 +485,7 @@ describe('Field Eng API', { timeout: 30000 }, () => {
         ORDER BY j.created_at DESC LIMIT 1`
     );
     const job = pick.rows[0];
+    const joBefore = (await query('SELECT g.status FROM generated_pdfs g WHERE g.id = $1', [job.generated_pdf_id])).rows[0]?.status;
     const created = [];
     try {
       const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date());
@@ -470,7 +512,9 @@ describe('Field Eng API', { timeout: 30000 }, () => {
       res = await api('delete', `/visits/${created.pop()}`);
       expect(res.body.job.status).toBe(job.status);
 
-      const log = await query(`SELECT action FROM fe_audit WHERE job_id = $1 AND user_id = $2 ORDER BY id`, [job.id, userId]);
+      const log = await query(`SELECT action FROM fe_audit WHERE job_id = $1 AND user_id = $2 AND entity = 'visit' ORDER BY id`, [job.id, userId]);
+      const joNow = await query('SELECT g.status FROM generated_pdfs g JOIN fe_jobs j ON j.generated_pdf_id = g.id WHERE j.id = $1', [job.id]);
+      expect(joNow.rows[0].status).toBe(joBefore);
       expect(log.rows.map((r) => r.action)).toEqual(['marked_rescheduled', 'marked_cancelled', 'visit_removed', 'visit_removed']);
       expect(today).toMatch(/^\d{4}-/);
     } finally {

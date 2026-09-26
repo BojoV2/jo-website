@@ -4,7 +4,7 @@ import { query, pool } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import {
   MANILA_DATE, MANILA_TODAY, CLOSED_STATUSES, SUCCESS_STATUSES, CORE_STATUSES, AUTO_AREAS,
-  audit, refreshJobFromVisits, syncMissingJobsThrottled
+  audit, refreshJobFromVisits, syncMissingJobsThrottled, pushVisitToJo, restoreJoForVisit
 } from '../services/feJobs.js';
 
 const router = express.Router();
@@ -278,23 +278,26 @@ const QUICK = {
 };
 
 router.post('/jobs/:id/:quick(done|cancel|reschedule)', async (req, res) => {
+  const client = await pool.connect();
   try {
     const quick = QUICK[req.params.quick];
     if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) return res.status(400).json({ error: 'Invalid job id' });
-    const found = await query('SELECT * FROM fe_jobs WHERE id = $1', [req.params.id]);
-    if (!found.rowCount) return res.status(404).json({ error: 'Job not found' });
+    // Row lock: a double click waits here and then sees the job already closed.
+    await client.query('BEGIN');
+    const found = await client.query('SELECT * FROM fe_jobs WHERE id = $1 FOR UPDATE', [req.params.id]);
+    if (!found.rowCount) return (await client.query('ROLLBACK'), res.status(404).json({ error: 'Job not found' }));
     const job = found.rows[0];
-    if (job.history_only) return res.status(409).json({ error: 'Imported history cannot be edited from the board' });
-    if (CLOSED_STATUSES.includes(job.status)) return res.status(409).json({ error: `This job is already closed (${job.status})` });
+    if (job.history_only) return (await client.query('ROLLBACK'), res.status(409).json({ error: 'Imported history cannot be edited from the board' }));
+    if (CLOSED_STATUSES.includes(job.status)) return (await client.query('ROLLBACK'), res.status(409).json({ error: `This job is already closed (${job.status})` }));
     if (job.job_type === 'RELOC' && !job.reloc_kind) {
-      return res.status(400).json({ error: 'Open the job and choose whether this relocation is install-type or repair-type first', needsRelocKind: true });
+      return (await client.query('ROLLBACK'), res.status(400).json({ error: 'Open the job and choose whether this relocation is install-type or repair-type first', needsRelocKind: true }));
     }
     let rescheduleDate = null;
     if (req.params.quick === 'reschedule') {
       rescheduleDate = String(req.body.reschedule_date || '');
-      if (!DATE_RE.test(rescheduleDate)) return res.status(400).json({ error: 'Pick the new date for the visit' });
+      if (!DATE_RE.test(rescheduleDate)) return (await client.query('ROLLBACK'), res.status(400).json({ error: 'Pick the new date for the visit' }));
       const past = await query(`SELECT $1::date < ${MANILA_TODAY} AS p`, [rescheduleDate]);
-      if (past.rows[0].p) return res.status(400).json({ error: 'The new date cannot be in the past' });
+      if (past.rows[0].p) return (await client.query('ROLLBACK'), res.status(400).json({ error: 'The new date cannot be in the past' }));
     }
     const status = quick.status || DONE_STATUS[effectiveType(job.job_type, job.reloc_kind)];
     const body = {
@@ -306,21 +309,30 @@ router.post('/jobs/:id/:quick(done|cancel|reschedule)', async (req, res) => {
     };
     const checked = await validateVisit(body, job);
     if (checked.error) {
-      return res.status(400).json({ error: checked.error === 'Pick a status from the list' ? `${status} is not on this job's status list (see the Lists tab)` : checked.error });
+      return (await client.query('ROLLBACK'), res.status(400).json({ error: checked.error === 'Pick a status from the list' ? `${status} is not on this job's status list (see the Lists tab)` : checked.error }));
     }
     const id = uuidv4();
     const v = checked.value;
-    await query(
+    await client.query(
       `INSERT INTO fe_visits (id, job_id, ${VISIT_FIELDS.join(', ')}, reschedule_date, source, created_by, updated_by)
        VALUES ($1, $2, COALESCE($3::date, ${MANILA_TODAY}), ${VISIT_FIELDS.slice(1).map((_, i) => `$${i + 4}`).join(', ')},
                $${VISIT_FIELDS.length + 3}::date, 'app', $${VISIT_FIELDS.length + 4}, $${VISIT_FIELDS.length + 4})`,
       [id, job.id, ...VISIT_FIELDS.map((f) => v[f]), rescheduleDate, req.user.id]
     );
+    await client.query(
+      `UPDATE fe_jobs SET status = $2, reason = $3, team_id = COALESCE($4, team_id), updated_at = NOW() WHERE id = $1`,
+      [job.id, status, v.reason, v.team_id]
+    );
+    await client.query('COMMIT');
     await refreshJobFromVisits(job.id, req.user.id);
     await audit({ entity: 'visit', entityId: id, jobId: job.id, action: quick.action, detail: { ...v, reschedule_date: rescheduleDate }, user: req.user });
-    return res.status(201).json({ visitId: id, status, rescheduleDate, ...(await jobDetail(job.id)) });
+    const jo = await pushVisitToJo(id, req.user).catch((err) => { console.error(`Field Eng -> JO sync failed: ${err.message}`); return null; });
+    return res.status(201).json({ visitId: id, status, rescheduleDate, joSynced: Boolean(jo), ...(await jobDetail(job.id)) });
   } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
     return res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 
@@ -334,6 +346,7 @@ router.delete('/visits/:id', async (req, res) => {
     const visit = found.rows[0];
     if (visit.source !== 'app') return res.status(409).json({ error: 'Imported visits are history and cannot be removed' });
     await query('DELETE FROM fe_visits WHERE id = $1', [visit.id]);
+    await restoreJoForVisit(visit, req.user).catch((err) => console.error(`Field Eng -> JO undo failed: ${err.message}`));
     const left = await query('SELECT 1 FROM fe_visits WHERE job_id = $1 LIMIT 1', [visit.job_id]);
     if (left.rowCount) {
       await refreshJobFromVisits(visit.job_id, req.user.id);
@@ -386,6 +399,7 @@ router.post('/jobs/:id/visits', async (req, res) => {
     await client.query('COMMIT');
     await refreshJobFromVisits(job.id, req.user.id);
     await audit({ entity: 'visit', entityId: id, jobId: job.id, action: 'visit_added', detail: v, user: req.user });
+    await pushVisitToJo(id, req.user).catch((err) => console.error(`Field Eng -> JO sync failed: ${err.message}`));
     return res.status(201).json(await jobDetail(job.id));
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
@@ -422,6 +436,11 @@ router.patch('/visits/:id', async (req, res) => {
     const before = Object.fromEntries(VISIT_FIELDS.map((f) => [f, visit[f]]));
     await refreshJobFromVisits(visit.job_id, req.user.id);
     await audit({ entity: 'visit', entityId: visit.id, jobId: visit.job_id, action: 'visit_edited', detail: { before, after: v }, user: req.user });
+    // Only the newest visit decides the job (and so the JO) status.
+    const newest = await query(`SELECT id FROM fe_visits WHERE job_id = $1 ORDER BY visit_date DESC NULLS LAST, created_at DESC LIMIT 1`, [visit.job_id]);
+    if (newest.rows[0]?.id === visit.id && v.status !== visit.status) {
+      await pushVisitToJo(visit.id, req.user).catch((err) => console.error(`Field Eng -> JO sync failed: ${err.message}`));
+    }
     return res.json(await jobDetail(visit.job_id));
   } catch (err) {
     return res.status(500).json({ error: err.message });

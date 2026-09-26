@@ -539,7 +539,7 @@ function JobPanel({ jobId, token, meta, say, onClose }) {
                       <button type="button" className={form.id === v.id ? 'fe-visit is-on' : 'fe-visit'} onClick={() => editVisit(v)}>
                         <span className="fe-mono">{v.visit_date || 'no date'}</span>
                         <span className={statusClass(v.status)}>{v.status}{v.reschedule_date ? ` → ${v.reschedule_date}` : ''}</span>
-                        <span className="fe-sub">{[v.team_name, v.reason, v.sla && v.sla !== 'EXEMPTED' ? `SLA ${v.sla}` : null, v.source === 'excel' ? 'from Excel' : null].filter(Boolean).join(' · ')}</span>
+                        <span className="fe-sub">{[v.team_name, v.reason, v.sla && v.sla !== 'EXEMPTED' ? `SLA ${v.sla}` : null, v.source === 'excel' ? 'from Excel' : v.source === 'jo' ? 'from the JO workflow' : null].filter(Boolean).join(' · ')}</span>
                       </button>
                       {v.source === 'app' && (
                         <button
@@ -648,7 +648,7 @@ function JobPanel({ jobId, token, meta, say, onClose }) {
               <div className="fe-field"><label htmlFor="fe-remarks">Remarks</label><textarea id="fe-remarks" rows={3} value={form.remarks} onChange={set('remarks')} /></div>
 
               {error && <div className="fe-notice is-error" role="alert">{error}</div>}
-              <p className="fe-sub">Saved to Field Eng only. The JO record and its status are not changed.</p>
+              <p className="fe-sub">A done, cancelled or rescheduled result also sets the JO status (done adds "… by &lt;team&gt;" to the JO note). Removing the visit puts the JO back.</p>
               <div className="fe-actions">
                 {form.id && <button type="button" className="fe-btn fe-btn--ghost" onClick={() => setForm(blankVisit(job))}>New visit instead</button>}
                 <button type="submit" className="fe-btn fe-btn--primary" disabled={saving}>{saving ? 'Saving…' : form.id ? 'Save changes' : 'Save visit'}</button>

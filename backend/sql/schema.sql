@@ -525,3 +525,7 @@ ON CONFLICT (kind, value) DO NOTHING;
 INSERT INTO fe_settings (key, value)
 VALUES ('today_start', to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS'))
 ON CONFLICT (key) DO NOTHING;
+
+-- JO status sync: the JO's state before a Field Eng visit changed it, so
+-- removing that visit (Undo) can put the JO back.
+ALTER TABLE fe_visits ADD COLUMN IF NOT EXISTS jo_prev JSONB;

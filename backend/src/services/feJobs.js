@@ -130,19 +130,115 @@ export async function syncMissingJobsThrottled() {
   return created;
 }
 
-// JO -> FE, one way. A cancelled JO closes its open FE job; un-cancelling the
-// JO reopens it to whatever its visits say. Done / rescheduled JOs are only
-// shown on the FE side (the field result stays the FE team's call).
+// ---------------------------------------------------------------- JO <-> Field Eng status sync
+//
+// Field Eng -> JO: a visit whose result is done / cancelled / rescheduled sets
+// the JO workflow status the same way. "Done" also adds a note naming the team
+// ("Installed by Team Kawit"); with no team the JO is just marked done. The
+// JO's previous state is kept on the visit (fe_visits.jo_prev) so removing
+// that visit (Undo) puts the JO back.
+//
+// JO -> Field Eng: a JO marked done / rescheduled / back to pending in the JO
+// workflow records a matching visit (source 'jo') on its field job; a done JO
+// also gets the team note. Cancelled keeps its own rule (jo_cancelled). JOs
+// closed by the 30-day sweeper are not field work and are never synced.
+
+export const JO_STATUS_FOR = { Installed: 'done', Repaired: 'done', 'Nakuha ang Modem': 'done', Cancelled: 'cancelled', Reschedule: 'rescheduled' };
+const DONE_FOR_TYPE = { INSTALL: 'Installed', REPAIR: 'Repaired', PULLOUT: 'Nakuha ang Modem' };
+const DONE_VERB = { Installed: 'Installed', Repaired: 'Repaired', 'Nakuha ang Modem': 'Modem retrieved' };
+const typeOf = (job) => (job.job_type === 'RELOC' ? (job.reloc_kind === 'install' ? 'INSTALL' : job.reloc_kind === 'repair' ? 'REPAIR' : null) : job.job_type);
+
+// "Installed by Team Kawit" added to the JO note (kept once, never duplicated).
+function teamNote(existing, status, teamName) {
+  if (!teamName || !DONE_VERB[status]) return existing || null;
+  const line = `${DONE_VERB[status]} by ${teamName}`;
+  if ((existing || '').includes(line)) return existing;
+  return existing ? `${existing} · ${line}` : line;
+}
+
+async function teamNameOf(teamId) {
+  if (!teamId) return null;
+  const r = await query('SELECT name FROM fe_teams WHERE id = $1', [teamId]);
+  return r.rows[0]?.name || null;
+}
+
+async function writeJo(generatedPdfId, { status, note, rescheduleDate, autoClosed = false }, oldStatus, user, why) {
+  await query(
+    `UPDATE generated_pdfs SET status = $2, status_note = $3, reschedule_date = $4, auto_closed = $5, updated_at = NOW() WHERE id = $1`,
+    [generatedPdfId, status, note, status === 'rescheduled' ? rescheduleDate : null, autoClosed]
+  );
+  await query(
+    `INSERT INTO status_history (id, generated_pdf_id, old_status, new_status, changed_by, note) VALUES ($1, $2, $3, $4, $5, $6)`,
+    [uuidv4(), generatedPdfId, oldStatus, status, user?.id || null, why]
+  );
+}
+
+// Field Eng -> JO for one visit. Returns the JO's previous state (stored on the
+// visit for Undo) or null when the JO was left alone.
+export async function pushVisitToJo(visitId, user) {
+  const r = await query(
+    `SELECT v.id, v.status, v.team_id, to_char(v.reschedule_date, 'YYYY-MM-DD') AS reschedule_date, j.id AS job_id, j.generated_pdf_id,
+            g.status AS jo_status, g.status_note, to_char(g.reschedule_date, 'YYYY-MM-DD') AS jo_reschedule_date, g.auto_closed
+       FROM fe_visits v JOIN fe_jobs j ON j.id = v.job_id JOIN generated_pdfs g ON g.id = j.generated_pdf_id
+      WHERE v.id = $1 AND NOT j.history_only`,
+    [visitId]
+  );
+  const v = r.rows[0];
+  const target = v && JO_STATUS_FOR[v.status];
+  if (!target) return null;
+  const note = target === 'done' ? teamNote(v.status_note, v.status, await teamNameOf(v.team_id)) : v.status_note;
+  const same = v.jo_status === target && (note || null) === (v.status_note || null)
+    && (target !== 'rescheduled' || v.jo_reschedule_date === v.reschedule_date);
+  if (same) return null;
+  const prev = { status: v.jo_status, status_note: v.status_note, reschedule_date: v.jo_reschedule_date, auto_closed: v.auto_closed, set: target };
+  await writeJo(v.generated_pdf_id, { status: target, note, rescheduleDate: v.reschedule_date }, v.jo_status, user, `From Field Eng: ${v.status}`);
+  await query('UPDATE fe_visits SET jo_prev = $2 WHERE id = $1', [visitId, JSON.stringify(prev)]);
+  await audit({ entity: 'job', entityId: v.job_id, jobId: v.job_id, action: 'jo_status_set', detail: { from: v.jo_status, to: target, note }, user });
+  return prev;
+}
+
+// Undo of a Field Eng visit that had changed the JO: put the JO back, but only
+// if nobody changed the JO since.
+export async function restoreJoForVisit(visit, user) {
+  const prev = visit.jo_prev;
+  if (!prev) return false;
+  const r = await query(
+    `SELECT g.id, g.status FROM fe_jobs j JOIN generated_pdfs g ON g.id = j.generated_pdf_id WHERE j.id = $1`,
+    [visit.job_id]
+  );
+  const g = r.rows[0];
+  if (!g || g.status !== prev.set) return false;
+  await writeJo(g.id, { status: prev.status, note: prev.status_note, rescheduleDate: prev.reschedule_date, autoClosed: prev.auto_closed },
+    g.status, user, 'Field Eng visit undone');
+  await audit({ entity: 'job', entityId: visit.job_id, jobId: visit.job_id, action: 'jo_status_restored', detail: { to: prev.status }, user });
+  return true;
+}
+
+async function addJoVisit(job, status, { rescheduleDate = null, remarks, user }) {
+  const id = uuidv4();
+  await query(
+    `INSERT INTO fe_visits (id, job_id, visit_date, team_id, status, reschedule_date, remarks, source, created_by, updated_by)
+     VALUES ($1, $2, ${MANILA_TODAY}, $3, $4, $5::date, $6, 'jo', $7, $7)`,
+    [id, job.id, job.team_id, status, rescheduleDate, remarks, user?.id || null]
+  );
+  await refreshJobFromVisits(job.id, user?.id);
+  return id;
+}
+
+// JO -> Field Eng, after a status change in the JO workflow.
 export async function syncJobFromJo(generatedPdfId, user) {
   const r = await query(
-    `SELECT j.id, j.status, j.jo_cancelled, j.history_only, g.status AS jo_status
+    `SELECT j.*, g.status AS jo_status, g.status_note, g.auto_closed, to_char(g.reschedule_date, 'YYYY-MM-DD') AS jo_reschedule_date
        FROM fe_jobs j JOIN generated_pdfs g ON g.id = j.generated_pdf_id
       WHERE j.generated_pdf_id = $1`,
     [generatedPdfId]
   );
   const job = r.rows[0];
   if (!job || job.history_only) return null;
-  if (job.jo_status === 'cancelled' && !job.jo_cancelled && !CLOSED_STATUSES.includes(job.status)) {
+  const open = !CLOSED_STATUSES.includes(job.status);
+
+  if (job.jo_status === 'cancelled') {
+    if (job.jo_cancelled || !open) return null;
     await query(
       `UPDATE fe_jobs SET status = 'Cancelled', reason = 'JO cancelled in the workflow', jo_cancelled = TRUE,
               closed_at = NOW(), updated_at = NOW(), updated_by = COALESCE($2, updated_by)
@@ -152,7 +248,7 @@ export async function syncJobFromJo(generatedPdfId, user) {
     await audit({ entity: 'job', entityId: job.id, jobId: job.id, action: 'jo_cancelled', detail: { from: job.status }, user });
     return 'cancelled';
   }
-  if (job.jo_status !== 'cancelled' && job.jo_cancelled) {
+  if (job.jo_cancelled) {
     await query(
       `UPDATE fe_jobs SET status = 'Pending', reason = NULL, jo_cancelled = FALSE, closed_at = NULL,
               updated_at = NOW(), updated_by = COALESCE($2, updated_by)
@@ -161,6 +257,54 @@ export async function syncJobFromJo(generatedPdfId, user) {
     );
     await refreshJobFromVisits(job.id, user?.id);
     await audit({ entity: 'job', entityId: job.id, jobId: job.id, action: 'jo_reopened', detail: { jo_status: job.jo_status }, user });
+    if (job.jo_status === 'pending') return 'reopened';
+    return syncJobFromJo(generatedPdfId, user);
+  }
+
+  if (job.jo_status === 'done' && !job.auto_closed) {
+    if (!open) return null;
+    const type = typeOf(job);
+    if (!type) return null; // relocation without install/repair kind: leave it for the FE office
+    const status = DONE_FOR_TYPE[type];
+    await addJoVisit(job, status, { remarks: 'Marked done in the JO workflow', user });
+    const note = teamNote(job.status_note, status, await teamNameOf(job.team_id));
+    if ((note || null) !== (job.status_note || null)) {
+      await query('UPDATE generated_pdfs SET status_note = $2, updated_at = NOW() WHERE id = $1', [generatedPdfId, note]);
+    }
+    await audit({ entity: 'job', entityId: job.id, jobId: job.id, action: 'jo_done', detail: { status, note }, user });
+    return 'done';
+  }
+
+  if (job.jo_status === 'rescheduled') {
+    if (!open || !job.jo_reschedule_date) return null;
+    const latest = await query(
+      `SELECT status, to_char(reschedule_date, 'YYYY-MM-DD') AS d FROM fe_visits WHERE job_id = $1 ORDER BY visit_date DESC NULLS LAST, created_at DESC LIMIT 1`,
+      [job.id]
+    );
+    if (latest.rows[0]?.status === 'Reschedule' && latest.rows[0]?.d === job.jo_reschedule_date) return null;
+    await addJoVisit(job, 'Reschedule', { rescheduleDate: job.jo_reschedule_date, remarks: `Rescheduled to ${job.jo_reschedule_date} in the JO workflow`, user });
+    await audit({ entity: 'job', entityId: job.id, jobId: job.id, action: 'jo_rescheduled', detail: { to: job.jo_reschedule_date }, user });
+    return 'rescheduled';
+  }
+
+  if (job.jo_status === 'pending') {
+    // Back to pending in the JO workflow: undo a JO-made visit, or reopen a
+    // field job that Field Eng had closed / rescheduled.
+    const latest = await query(
+      `SELECT id, source, status FROM fe_visits WHERE job_id = $1 ORDER BY visit_date DESC NULLS LAST, created_at DESC LIMIT 1`,
+      [job.id]
+    );
+    const last = latest.rows[0];
+    if (!last || !JO_STATUS_FOR[last.status]) return null;
+    if (last.source === 'jo') {
+      await query('DELETE FROM fe_visits WHERE id = $1', [last.id]);
+      const left = await query('SELECT 1 FROM fe_visits WHERE job_id = $1 LIMIT 1', [job.id]);
+      if (left.rowCount) await refreshJobFromVisits(job.id, user?.id);
+      else await query(`UPDATE fe_jobs SET status = 'Pending', reason = NULL, closed_at = NULL, updated_at = NOW() WHERE id = $1`, [job.id]);
+    } else {
+      await addJoVisit(job, 'Pending', { remarks: 'Reopened in the JO workflow', user });
+    }
+    await audit({ entity: 'job', entityId: job.id, jobId: job.id, action: 'jo_reopened', detail: { from: last.status }, user });
     return 'reopened';
   }
   return null;
