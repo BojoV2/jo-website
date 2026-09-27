@@ -24,3 +24,5 @@ storage/*
 macfinder/data/*
 macfinder/config/*.json
 !macfinder/config/*.example.json
+macfinder/config/refresh_key*
+macfinder/config/refresh_known_hosts

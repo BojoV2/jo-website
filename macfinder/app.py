@@ -33,6 +33,8 @@ OLTS_PATH = os.path.join(BASE_DIR, "config", "olts.json")
 CREDS_PATH = os.path.join(BASE_DIR, "config", "creds.json")
 MIKROTIK_PATH = os.path.join(BASE_DIR, "config", "mikrotik.json")
 SNMP_PATH = os.path.join(BASE_DIR, "config", "snmp.json")
+REFRESH_KEY_PATH = os.path.join(BASE_DIR, "config", "refresh_key")
+REFRESH_KNOWN_HOSTS = os.path.join(BASE_DIR, "config", "refresh_known_hosts")
 
 CONNECT_TIMEOUT = 4
 READ_TIMEOUT = 8
@@ -159,6 +161,35 @@ ROW_RE = re.compile(
     r"<td>(\d+)</td>\s*<td>(\d+)</td>\s*<td>([0-9a-fA-F:]{17})</td>\s*"
     r"<td>(\w+)</td>\s*<td>(\d+):(\d+)</td>",
     re.IGNORECASE,
+)
+
+# Some classic-login OLTs (seen on .104/.201 EPON and .200 GPON) have no
+# macinfoPon.html at all (404) — their MAC table is macinfo.html, one row per
+# MAC with the port written "EPON0/4:49" / "GPON0/1:12" (= PON 4, ONU 49).
+# Rows on GE*/CPU ports are uplink/local MACs, not clients, so the regex only
+# accepts PON ports. That page also has a "clear table" button that POSTs back
+# to itself — only ever GET it.
+MACINFO_ROW_RE = re.compile(
+    r"<td>(\d+)</td>\s*<td>([0-9a-fA-F:]{17})</td>\s*<td>(\w+)</td>\s*"
+    r"<td>([EG])PON\d+/(\d+):(\d+)</td>",
+    re.IGNORECASE,
+)
+
+# EPON OLTs on the macinfo.html layout have neither the onu* nor gpononu*
+# detail pages the bundle uses; their per-PON listing pages carry the same
+# facts in one row per ONU, keyed "EPON0/<pon>:<onu>".
+EPON_AUTH_ROW_RE_TMPL = (
+    r"<td class='hd'>EPON0/{pon}:{onu}</td>\s*"
+    r"<td>(?:<[^>]+>)*([^<]*)(?:</[^>]+>)*</td>\s*"  # status
+    r"<td>([0-9a-fA-F:]{{17}})</td>\s*"  # ONU MAC
+    r"<td>([^<]*)</td>\s*"  # description
+    r"<td>([^<]*)</td>\s*"  # RTT (TQ)
+    r"<td>([^<]*)</td>"  # type
+)
+EPON_OPM_ROW_RE_TMPL = (
+    r"<td class='hd'>EPON0/{pon}:{onu}</td>\s*<td>[^<]*</td>\s*<td>[^<]*</td>\s*"
+    r"<td>([^<]*)</td>\s*<td>([^<]*)</td>\s*<td>([^<]*)</td>\s*"
+    r"<td>([^<]*)</td>\s*<td>([^<]*)</td>\s*<td>([^<]*)</td>"
 )
 
 # Two OLT web-UI firmware families seen across the fleet, differing only in the
@@ -677,6 +708,52 @@ def fetch_onu_bundle(sess, ip, pon, onu, mac=None):
     return out
 
 
+def fetch_epon_onu_bundle(sess, ip, pon, onu):
+    """Status + optics for one ONU on an EPON OLT, from the per-PON listing
+    pages (GET only — the rows' Deregister/Reset links are never followed)."""
+    out = {}
+    try:
+        auth = sess.get(
+            f"https://{ip}/action/onuauthinfo.html",
+            params={"who": 100, "select": pon},
+            timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
+        ).text
+        m = re.search(EPON_AUTH_ROW_RE_TMPL.format(pon=pon, onu=onu), auth)
+        if m:
+            status, onu_mac, desc, rtt, onu_type = (g.strip() for g in m.groups())
+            out.update({
+                "online_status": status,
+                "onu_mac": onu_mac.lower(),
+                "auth_description": "" if desc == "N/A" else desc,
+                "auth_model": onu_type,
+                "rtt_tq": rtt,
+            })
+        opm = sess.get(
+            f"https://{ip}/action/onuopmdiag.html",
+            params={"who": 100, "select": pon},
+            timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
+        ).text
+        m = re.search(EPON_OPM_ROW_RE_TMPL.format(pon=pon, onu=onu), opm)
+        if m:
+            distance, temp, volt, bias, tx, rx = (g.strip() for g in m.groups())
+            out.update({
+                "distance": f"{distance} m" if distance else None,
+                "temperature": temp or None,
+                "voltage": volt or None,
+                "bias_current": bias or None,
+                "tx_power_dbm": tx or None,
+                "rx_power_dbm": rx or None,
+            })
+    except requests.exceptions.RequestException:
+        pass
+    out["running_config"] = (
+        f"epon-onu {pon}:{onu}  (EPON — running config not exposed by this firmware's web UI)\n"
+        f"  onu-mac {out.get('onu_mac') or '—'}  type {out.get('auth_model') or '—'}  "
+        f"status {out.get('online_status') or '—'}"
+    )
+    return out
+
+
 # Third firmware family seen on a couple of OLTs: a Vue SPA frontend backed by
 # a clean JSON API (no ".html" pages, no "mainFrame" login marker at all).
 # Its data endpoints (unlike its config/"set" endpoints) turned out to need
@@ -913,28 +990,57 @@ def search_olt(olt, target_mac, creds_cfg):
             f"https://{host}/action/macinfoPon.html",
             timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
         )
+        if page.status_code == 404:
+            page = sess.get(
+                f"https://{host}/action/macinfo.html",
+                timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
+            )
+            if page.status_code != 200 or "macCount" not in page.text:
+                result["status"] = "error"
+                result["detail"] = f"no MAC table page on this OLT (macinfo.html HTTP {page.status_code})"
+                return result
+            techs = {}
+            rows = []
+            for vlan, mac, mtype, tech, pon, onu in MACINFO_ROW_RE.findall(page.text):
+                techs[(pon, onu)] = tech.upper()
+                rows.append((vlan, mac, mtype, pon, onu))
+        elif page.status_code != 200:
+            # Never report an unreadable table as "not found" — that is how
+            # three OLTs silently dropped out of every search until 2026-09-27.
+            result["status"] = "error"
+            result["detail"] = f"MAC table HTTP {page.status_code}"
+            return result
+        else:
+            techs = {}
+            rows = [(vlan, mac, mtype, pon, onu) for _idx, vlan, mac, mtype, pon, onu in ROW_RE.findall(page.text)]
         text = page.text
         if target_mac not in text.lower():
             result["status"] = "not_found"
             return result
 
-        for m in ROW_RE.finditer(text):
-            _idx, vlan, mac, mtype, pon, onu = m.groups()
+        for vlan, mac, mtype, pon, onu in rows:
             if mac.lower() == target_mac:
                 result["status"] = "found"
                 result["pon"] = pon
                 result["onu"] = onu
                 result["vlan"] = vlan
                 result["mac_type"] = mtype
-                result.update(fetch_onu_bundle(sess, host, pon, onu, mac=mac))
+                if techs.get((pon, onu)) == "E":
+                    result.update(fetch_epon_onu_bundle(sess, host, pon, onu))
+                else:
+                    result.update(fetch_onu_bundle(sess, host, pon, onu, mac=mac))
                 result.update(fetch_pon_traffic(ip, pon))
                 result["onu_macs"] = [
                     {"vlan": ov, "mac": omac.lower(), "mac_type": ot}
-                    for _oi, ov, omac, ot, opon, oonu in ROW_RE.findall(text)
+                    for ov, omac, ot, opon, oonu in rows
                     if opon == pon and oonu == onu
                 ]
                 return result
 
+        if page.url.endswith("/macinfo.html"):
+            # only seen on an uplink/CPU port — upstream of this OLT, not a client on it
+            result["status"] = "not_found"
+            return result
         # MAC string appeared but row regex didn't parse it (page layout drift)
         result["status"] = "found_unparsed"
         return result
@@ -1120,23 +1226,22 @@ def api_history(raw_mac):
 @app.route("/api/refresh-fleet", methods=["POST"])
 def api_refresh_fleet():
     """Re-pulls the authoritative OLT list from oltmon.olt_meta via .186 (only
-    host allowed to reach .204:3306). Requires plink + the vmwarenms SSH creds."""
-    plink = r"C:\Program Files\PuTTY\plink.exe"
-    if not os.path.exists(plink):
-        return jsonify({"error": "plink.exe not found, cannot refresh"}), 500
-
-    query = (
-        "mysql -h10.86.0.204 -ugrafana_ro -p'OltGrafana#Ro2026' oltmon "
-        "-N -e \"SELECT olt_ip, olt_label, olt_location FROM olt_meta "
-        "ORDER BY INET_ATON(olt_ip);\""
-    )
+    host allowed to reach .204:3306). Uses a dedicated SSH key whose
+    authorized_keys entry on .186 pins it to the one read-only olt_meta query
+    (forced command) — no passwords live in this app. The key and a pinned
+    known_hosts sit in config/ (gitignored)."""
+    if not os.path.exists(REFRESH_KEY_PATH):
+        return jsonify({"error": "fleet refresh key missing (config/refresh_key)"}), 500
     try:
         proc = subprocess.run(
             [
-                plink, "-ssh", "imperial999@10.86.0.186",
-                "-pw", "Imperial@999",
-                "-hostkey", "SHA256:sL0z91iC8H3nbluI7fdSvIAzL4gepTHqdORx6yyiXs8",
-                "-batch", query,
+                "ssh", "-i", REFRESH_KEY_PATH,
+                "-o", "BatchMode=yes",
+                "-o", "IdentitiesOnly=yes",
+                "-o", "StrictHostKeyChecking=yes",
+                "-o", f"UserKnownHostsFile={REFRESH_KNOWN_HOSTS}",
+                "-o", "ConnectTimeout=8",
+                "imperial999@10.86.0.186",
             ],
             capture_output=True, text=True, timeout=30,
         )
@@ -1146,13 +1251,17 @@ def api_refresh_fleet():
     if proc.returncode != 0:
         return jsonify({"error": proc.stderr.strip() or "refresh failed"}), 500
 
+    # keep any per-OLT extras (e.g. a non-default "port") across a refresh
+    old = {o["ip"]: o for o in load_json(OLTS_PATH)}
     olts = []
     for line in proc.stdout.splitlines():
         parts = line.split("\t")
         if len(parts) < 3:
             continue
         ip, label, loc = parts[0], parts[1], parts[2]
-        olts.append({"ip": ip, "label": label, "location": loc})
+        entry = dict(old.get(ip, {}))
+        entry.update({"ip": ip, "label": label, "location": loc})
+        olts.append(entry)
 
     if not olts:
         return jsonify({"error": "query returned no rows, fleet list left unchanged"}), 500
