@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { apiRequest, getApiBase } from '../api.js';
+import useDialog from './useDialog.jsx';
 
 const chatImageUrl = (messageId, token) =>
   `${getApiBase()}/tickets/messages/${messageId}/image?t=${encodeURIComponent(token || '')}`;
@@ -98,6 +99,7 @@ function fmtTime(value) {
 }
 
 export default function Ticketing({ token }) {
+  const dialog = useDialog();
   const [form, setForm] = useState(EMPTY_FORM);
   const [creating, setCreating] = useState(false);
   const [createMsg, setCreateMsg] = useState('');
@@ -198,7 +200,7 @@ export default function Ticketing({ token }) {
   }
 
   async function closeTicket(id) {
-    if (!window.confirm('Close this ticket? It will leave the open list and be saved to the Google Sheet.')) return;
+    if (!(await dialog.confirm('It leaves the open list and is saved to the Google Sheet.', { title: 'Close this ticket?', confirmLabel: 'Close ticket' }))) return;
     try {
       await apiRequest(`/tickets/${id}/close`, { method: 'PATCH', token });
       await loadList();
@@ -247,6 +249,7 @@ export default function Ticketing({ token }) {
 
   return (
     <div className="tk">
+      {dialog.element}
       {/* ── Top: create form (left) + Ticket Number & TSR checklist (right) ── */}
       <div className="tk-top">
         <form className="tk-form" onSubmit={createTicket}>

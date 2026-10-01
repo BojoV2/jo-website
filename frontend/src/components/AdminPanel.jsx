@@ -4,6 +4,7 @@ import { apiRequest, downloadWithToken, fetchArrayBuffer, openWithTokenInNewTab,
 import { GlobalWorkerOptions, getDocument } from 'pdfjs-dist/build/pdf.mjs';
 import workerSrc from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import ProfileSidebar from './ProfileSidebar.jsx';
+import useDialog from './useDialog.jsx';
 import { resolveAvatar } from '../utils/avatar.js';
 import { APP_GROUPS, ALL_APPS, isPrivileged, allowedMap, permsFromAllowed } from '../appCatalogue.js';
 import StatusStackedBarChart from './StatusStackedBarChart.jsx';
@@ -236,6 +237,7 @@ export default function AdminPanel({
   const [users, setUsers] = useState([]);
   const [manageId, setManageId] = useState(null);
   const [tempPassword, setTempPassword] = useState(null); // { name, value, copied }
+  const dialog = useDialog();
   const [createOpen, setCreateOpen] = useState(false);
   const [accountQuery, setAccountQuery] = useState('');
   const [auditEvents, setAuditEvents] = useState([]);
@@ -872,7 +874,7 @@ export default function AdminPanel({
   }
 
   async function removeField(fieldId) {
-    const ok = window.confirm('Delete this mapped field?');
+    const ok = await dialog.confirm('Delete this mapped field?', { danger: true, confirmLabel: 'Delete' });
     if (!ok) return;
     setBusy(true);
     setMessage('');
@@ -1055,7 +1057,7 @@ export default function AdminPanel({
   }
 
   async function deletePredefinedPdf(predefinedPdfId) {
-    const ok = window.confirm('Delete this predefined PDF?');
+    const ok = await dialog.confirm('Delete this predefined PDF?', { danger: true, confirmLabel: 'Delete' });
     if (!ok) return;
 
     setBusy(true);
@@ -1076,7 +1078,7 @@ export default function AdminPanel({
 
   async function deleteTemplate() {
     if (!selectedTemplateId) return;
-    const ok = window.confirm('Delete this template and all generated files under it?');
+    const ok = await dialog.confirm('This removes the template and every PDF generated from it.', { title: 'Delete this template?', danger: true, confirmLabel: 'Delete template' });
     if (!ok) return;
     setBusy(true);
     setMessage('');
@@ -1162,7 +1164,7 @@ export default function AdminPanel({
   }
 
   async function deletePreset(presetId) {
-    const ok = window.confirm('Delete this preset?');
+    const ok = await dialog.confirm('Delete this preset?', { danger: true, confirmLabel: 'Delete' });
     if (!ok) return;
     try {
       await apiRequest(`/templates/presets/${presetId}`, {
@@ -1203,7 +1205,7 @@ export default function AdminPanel({
   }
 
   async function deleteDocRequirement(reqId) {
-    if (!window.confirm('Delete this document requirement?')) return;
+    if (!(await dialog.confirm('Delete this document requirement?', { danger: true, confirmLabel: 'Delete' }))) return;
     try {
       await apiRequest(`/templates/${selectedTemplateId}/document-requirements/${reqId}`, {
         method: 'DELETE',
@@ -1247,7 +1249,7 @@ export default function AdminPanel({
       const text = rows.length
         ? rows.map((h) => `${new Date(h.created_at).toLocaleString()} | ${h.old_status || '-'} -> ${h.new_status} | ${h.changed_by_name || h.changed_by || '-'} | ${h.note || ''}`).join('\n')
         : 'No history found.';
-      window.alert(text);
+      await dialog.alert(text, { title: 'Status history' });
     } catch (err) {
       setMessage(err.message);
     }
@@ -1259,7 +1261,9 @@ export default function AdminPanel({
       setMessage('Select at least one record.');
       return;
     }
-    const note = window.prompt('Optional note for bulk action:', '') || null;
+    const typedNote = await dialog.prompt('Optional note for this bulk change.', { title: 'Bulk status change', confirmLabel: 'Apply' });
+    if (typedNote === null) return;
+    const note = typedNote || null;
     try {
       await apiRequest('/generated-pdfs/bulk-status', {
         method: 'POST',
@@ -1338,11 +1342,13 @@ export default function AdminPanel({
   }
 
   async function updateStatus(itemId, status) {
-    const note = window.prompt('Optional note/reason:', '') || null;
+    const typedNote = await dialog.prompt('Optional note or reason.', { title: `Mark as ${status}`, confirmLabel: 'Save' });
+    if (typedNote === null) return;
+    const note = typedNote || null;
     let rescheduleDate = null;
 
     if (status === 'rescheduled') {
-      const raw = window.prompt('Reschedule date/time (YYYY-MM-DDTHH:mm), required:', '');
+      const raw = await dialog.prompt('When should it be rescheduled to?', { title: 'Reschedule date', type: 'datetime-local', required: true, confirmLabel: 'Reschedule' });
       if (!raw) {
         setMessage('A reschedule date is required. Nothing was changed.');
         return;
@@ -1374,7 +1380,7 @@ export default function AdminPanel({
   }
 
   async function changeUserPassword(userId) {
-    const password = window.prompt('Enter new password (min 6 chars):', '');
+    const password = await dialog.prompt('Their sessions are signed out once it is saved.', { title: 'Set a new password', type: 'password', required: true, hint: 'At least 10 characters, with both letters and numbers.', confirmLabel: 'Set password' });
     if (!password) return;
     setBusy(true);
     setMessage('');
@@ -1422,16 +1428,19 @@ export default function AdminPanel({
       : 'This account owns no records.';
 
     if (kept.length) {
-      const typed = window.prompt(
-        `Delete ${target.name} (${target.role})?\n\n${summary}\n\nType the account name to confirm:`,
-        ''
-      );
+      const typed = await dialog.prompt(`${summary} Type the account name to confirm.`, {
+        title: `Delete ${target.name}?`,
+        placeholder: target.name,
+        expect: target.name,
+        danger: true,
+        confirmLabel: 'Delete account'
+      });
       if (typed === null) return;
       if (typed.trim() !== target.name) {
         setMessage('Name did not match. Account was not deleted.');
         return;
       }
-    } else if (!window.confirm(`Delete ${target.name} (${target.role})? ${summary}`)) {
+    } else if (!(await dialog.confirm(summary, { title: `Delete ${target.name}?`, danger: true, confirmLabel: 'Delete account' }))) {
       return;
     }
 
@@ -1449,7 +1458,7 @@ export default function AdminPanel({
 
   async function resetAndShowUserPassword(userId) {
 
-    const ok = window.confirm('Reset this user password and view the temporary password?');
+    const ok = await dialog.confirm('A temporary password is created and shown once. Their current password stops working and their sessions are signed out.', { title: 'Reset password?', confirmLabel: 'Reset password' });
     if (!ok) return;
     setBusy(true);
     setMessage('');
@@ -1496,6 +1505,7 @@ export default function AdminPanel({
 
   const contentArea = (
     <>
+      {dialog.element}
       {embeddedToolbar}
 
       {message && (
@@ -2842,7 +2852,7 @@ export default function AdminPanel({
                       className="btn-sm btn-danger"
                       disabled={arBusy}
                       onClick={async () => {
-                        if (!window.confirm('Delete this message and all its images?')) return;
+                        if (!(await dialog.confirm('Delete this message and all its images?', { danger: true, confirmLabel: 'Delete' }))) return;
                         setArBusy(true);
                         try {
                           await apiRequest(`/auto-reply/${msg.id}`, { method: 'DELETE', token });
@@ -2883,7 +2893,7 @@ export default function AdminPanel({
                         title="Remove image"
                         disabled={arBusy}
                         onClick={async () => {
-                          if (!window.confirm('Remove this image?')) return;
+                          if (!(await dialog.confirm('Remove this image?', { danger: true, confirmLabel: 'Remove' }))) return;
                           setArBusy(true);
                           try {
                             await apiRequest(`/auto-reply/${msg.id}/images/${img.id}`, { method: 'DELETE', token });
@@ -3354,7 +3364,7 @@ export default function AdminPanel({
                         type="button"
                         className="btn-sm btn-danger"
                         onClick={async () => {
-                          if (!window.confirm(`Delete tracker "${t.name}"?`)) return;
+                          if (!(await dialog.confirm(`Delete tracker "${t.name}"?`, { danger: true, confirmLabel: 'Delete' }))) return;
                           try {
                             await apiRequest(`/tracking/${t.id}`, { method: 'DELETE', token });
                             setTrackers((prev) => prev.filter((x) => x.id !== t.id));

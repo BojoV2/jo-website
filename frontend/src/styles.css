@@ -7273,3 +7273,75 @@ div.fe-kpi { cursor: default; }
   user-select: all;
   word-break: break-all;
 }
+
+/* in-app confirm / prompt / alert (components/useDialog.jsx) */
+.jo-dialog-backdrop {
+  z-index: 80;
+}
+
+.jo-dialog {
+  width: min(440px, 92vw);
+  max-height: 86vh;
+  overflow: auto;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: 0 24px 60px rgba(10, 25, 45, 0.28);
+}
+
+.jo-dialog h3 {
+  margin: 0 0 6px;
+  font-size: 17px;
+  color: var(--heading);
+}
+
+.jo-dialog-message {
+  margin: 0 0 14px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.jo-dialog input {
+  width: 100%;
+  margin: 0 0 6px;
+}
+
+.jo-dialog-hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.jo-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.jo-dialog-actions button {
+  width: auto;
+  margin: 0;
+  padding: 8px 18px;
+  border-radius: 999px;
+  font-size: 13px;
+}
+
+.jo-dialog-actions button:hover {
+  transform: none;
+}
+
+.jo-dialog .jo-dialog-cancel {
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.jo-dialog .jo-dialog-danger {
+  background: #dc2626;
+}
