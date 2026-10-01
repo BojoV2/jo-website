@@ -51,8 +51,6 @@ function buildCatalogue(user, templates) {
       label: 'Applications',
       color: SECTION_COLORS.apps,
       cards: [
-        userCard('my-pdfs', 'MP', 'My PDFs', 'Every PDF you generated, with status, filters and history.', 'mypdfs'),
-        ...(isAdmin ? [adminCard('workflow', 'WF', 'Workflow', 'All submitted PDFs across every user. Update status and notes.')] : []),
         userCard('analytics', 'AN', 'Analytics', 'Monthly activity, status breakdown and the template preview mapper.', 'analytics'),
         userCard('profiling', 'PR', 'Profiling', 'Client profile archive by year and month, with folders.', 'profiling'),
         userCard('fieldeng', 'FE', 'Field Eng', 'Job orders for the field team: done, cancel, reschedule.', 'fieldeng'),

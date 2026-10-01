@@ -12,7 +12,6 @@ export const APP_GROUPS = [
     key: 'applications',
     label: 'Applications',
     apps: [
-      { id: 'my-pdfs', label: 'My PDFs' },
       { id: 'analytics', label: 'Analytics' },
       { id: 'profiling', label: 'Profiling' },
       { id: 'fieldeng', label: 'Field Eng' },
