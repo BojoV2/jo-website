@@ -84,7 +84,7 @@ router.post('/', async (req, res) => {
 
     return res.status(201).json({ id, name, email: normalizedEmail, role, section_permissions: perms });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error(err); return res.status(500).json({ error: 'Something went wrong' });
   }
 });
 
@@ -97,7 +97,7 @@ router.get('/', async (_req, res) => {
     );
     return res.json(users.rows);
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error(err); return res.status(500).json({ error: 'Something went wrong' });
   }
 });
 
@@ -111,7 +111,7 @@ router.get('/audit', async (req, res) => {
     );
     return res.json(rows.rows);
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error(err); return res.status(500).json({ error: 'Something went wrong' });
   }
 });
 
@@ -133,7 +133,7 @@ router.patch('/:userId/permissions', async (req, res) => {
     await logAccount(req, { action: 'admin.user.access', targetName: target.rows[0].name, detail: describePermissions(perms) });
     return res.json({ success: true, section_permissions: perms });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error(err); return res.status(500).json({ error: 'Something went wrong' });
   }
 });
 
@@ -166,7 +166,7 @@ router.patch('/:userId/role', async (req, res) => {
     await logAccount(req, { action: 'admin.user.role', targetName: current.name, detail: `${current.role} -> ${role}` });
     return res.json({ success: true, role, sessions_ended: true });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error(err); return res.status(500).json({ error: 'Something went wrong' });
   }
 });
 
@@ -197,7 +197,7 @@ router.patch('/:userId/status', async (req, res) => {
     await logAccount(req, { action: disable ? 'admin.user.disable' : 'admin.user.enable', targetName: current.name });
     return res.json({ success: true, disabled: disable });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error(err); return res.status(500).json({ error: 'Something went wrong' });
   }
 });
 
@@ -227,7 +227,7 @@ router.patch('/:userId/password', async (req, res) => {
     await logAccount(req, { action: 'admin.user.password', targetName: target.rows[0].name, detail: 'password set, sessions ended' });
     return res.json({ success: true, sessions_ended: true });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error(err); return res.status(500).json({ error: 'Something went wrong' });
   }
 });
 
@@ -253,7 +253,7 @@ router.post('/:userId/password/reset', async (req, res) => {
     await logAccount(req, { action: 'admin.user.password_reset', targetName: target.rows[0].name, detail: 'temporary password issued, sessions ended' });
     return res.json({ temp_password: tempPassword, sessions_ended: true });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error(err); return res.status(500).json({ error: 'Something went wrong' });
   }
 });
 // ── delete a user account ──────────────────────────────────────────
@@ -304,7 +304,7 @@ router.get('/:userId/deletion-preview', async (req, res) => {
       blocked_reason: blocked || null
     });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error(err); return res.status(500).json({ error: 'Something went wrong' });
   }
 });
 
@@ -353,7 +353,7 @@ router.delete('/:userId', async (req, res) => {
     } catch (_rollbackErr) {
       // connection already gone - nothing to roll back
     }
-    return res.status(500).json({ error: err.message });
+    console.error(err); return res.status(500).json({ error: 'Something went wrong' });
   } finally {
     client.release();
   }
@@ -374,7 +374,7 @@ router.post('/:userId/sign-out-everywhere', async (req, res) => {
     await logAccount(req, { action: 'admin.user.signout', targetName: target.rows[0].name });
     return res.json({ success: true, user: target.rows[0].name });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error(err); return res.status(500).json({ error: 'Something went wrong' });
   }
 });
 

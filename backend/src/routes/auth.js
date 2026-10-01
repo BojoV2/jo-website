@@ -61,7 +61,7 @@ function noteFailedLogin(key) {
 // busy office behind one address is not locked out of its own portal.
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 60,
+  max: 10,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many requests, please try again later.' }
@@ -132,7 +132,7 @@ router.post('/register', authLimiter, async (req, res) => {
       last_active_at: null
     });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error(err); return res.status(500).json({ error: 'Something went wrong' });
   }
 });
 
@@ -214,7 +214,7 @@ router.post('/login', authLimiter, async (req, res) => {
       user: mapUser(user)
     });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error(err); return res.status(500).json({ error: 'Something went wrong' });
   }
 });
 
@@ -229,7 +229,7 @@ router.get('/me', requireAuth, async (req, res) => {
     }
     return res.json({ user: mapUser(result.rows[0]) });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error(err); return res.status(500).json({ error: 'Something went wrong' });
   }
 });
 
@@ -301,7 +301,7 @@ router.patch('/me', requireAuth, async (req, res) => {
 
     return res.json({ user: mapUser(result.rows[0]) });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error(err); return res.status(500).json({ error: 'Something went wrong' });
   }
 });
 
@@ -311,10 +311,6 @@ router.patch('/me/password', requireAuth, async (req, res) => {
     if (!current_password || !new_password) {
       return res.status(400).json({ error: 'current_password and new_password are required' });
     }
-    if (String(new_password).length < 6) {
-      return res.status(400).json({ error: 'new_password must be at least 6 characters' });
-    }
-
     const current = await query('SELECT id, password_hash FROM users WHERE id = $1', [req.user.id]);
     if (current.rowCount === 0) {
       return res.status(404).json({ error: 'User not found' });
@@ -335,7 +331,7 @@ router.patch('/me/password', requireAuth, async (req, res) => {
 
     return res.json({ success: true });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error(err); return res.status(500).json({ error: 'Something went wrong' });
   }
 });
 
@@ -350,7 +346,7 @@ router.get('/active-users', requireAuth, async (_req, res) => {
     );
     return res.json(result.rows.map(mapUser));
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    console.error(err); return res.status(500).json({ error: 'Something went wrong' });
   }
 });
 

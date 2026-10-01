@@ -85,7 +85,7 @@ app.use('/api/clients', clientRoutes);
 app.use('/api/field-eng', fieldEngRoutes);
 
 app.use((err, _req, res, _next) => {
-  return res.status(500).json({ error: err.message || 'Internal server error' });
+  console.error(err); return res.status(500).json({ error: 'Something went wrong' });
 });
 
 export default app;
