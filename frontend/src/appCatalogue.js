@@ -5,15 +5,14 @@ export const APP_GROUPS = [
     key: 'pdf_creation',
     label: 'PDF Creation',
     apps: [
-      { id: 'create', label: 'Create PDF' },
-      { id: 'templates', label: 'Templates' },
-      { id: 'my-pdfs', label: 'My PDFs' },
+      { id: 'create', label: 'Templates (create PDFs)' },
     ],
   },
   {
     key: 'applications',
     label: 'Applications',
     apps: [
+      { id: 'my-pdfs', label: 'My PDFs' },
       { id: 'analytics', label: 'Analytics' },
       { id: 'profiling', label: 'Profiling' },
       { id: 'fieldeng', label: 'Field Eng' },

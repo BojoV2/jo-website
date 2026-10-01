@@ -6406,72 +6406,6 @@ div.fe-kpi { cursor: default; }
   .noc-toolbar-field select { min-width: 0; width: 100%; }
 }
 
-/* template gallery (PDF Creation → Templates) */
-.tpl-gallery {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 12px;
-}
-
-.tpl-gallery-card {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 16px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--paper);
-}
-
-.tpl-gallery-card.pinned {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 3px var(--primary-soft);
-}
-
-.tpl-gallery-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.tpl-gallery-title {
-  font-family: 'Outfit', 'Plus Jakarta Sans', sans-serif;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--heading);
-}
-
-.tpl-gallery-version {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--muted);
-}
-
-.tpl-gallery-desc {
-  flex: 1;
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.45;
-  color: var(--muted);
-}
-
-.tpl-gallery-actions {
-  display: flex;
-  gap: 8px;
-}
-
-.tpl-gallery-actions button {
-  width: auto;
-  padding: 8px 14px;
-}
-
-.tpl-gallery-actions .tpl-gallery-pin {
-  background: var(--paper);
-  color: var(--primary-strong);
-  border: 1px solid var(--line);
-}
-
 /* inner pages inside the shell: flat NOC-style surfaces */
 .noc-app .card,
 .noc-app .tpl-row-card,
@@ -6563,9 +6497,9 @@ div.fe-kpi { cursor: default; }
   transition: transform 160ms ease, visibility 0s linear 160ms, box-shadow 0s linear 160ms;
 }
 
-.tpl-gallery-desc {
+.noc-card-desc {
   display: -webkit-box;
-  -webkit-line-clamp: 4;
+  -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }

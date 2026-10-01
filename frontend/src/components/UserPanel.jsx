@@ -412,7 +412,7 @@ export default function UserPanel({
   forcedView = null,
   forcedUserSection = null,
   forcedTool = null,
-  onNavigate = null
+  forcedTemplateId = null
 }) {
   const [templates, setTemplates] = useState([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
@@ -814,6 +814,12 @@ export default function UserPanel({
       setSelectedTemplateId(templates[0].id);
     }
   }, [templates, user?.favorite_template_id, user?.id, selectedTemplateId]);
+
+  useEffect(() => {
+    if (forcedTemplateId && forcedTemplateId !== selectedTemplateId && templates.some((tpl) => tpl.id === forcedTemplateId)) {
+      setSelectedTemplateId(forcedTemplateId);
+    }
+  }, [forcedTemplateId, templates, selectedTemplateId]);
 
   useEffect(() => {
     // the empty first-render value must not wipe the choice another view just stored
@@ -1376,45 +1382,8 @@ export default function UserPanel({
         </section>
       )}
 
-      {effectiveView === 'templates' && (
-        <section className="tpl-gallery">
-          {orderedTemplates.map((tpl) => {
-            const pinned = user?.favorite_template_id === tpl.id;
-            return (
-              <article key={tpl.id} className={pinned ? 'tpl-gallery-card pinned' : 'tpl-gallery-card'}>
-                <div className="tpl-gallery-head">
-                  <span className="tpl-gallery-title">{tpl.title}</span>
-                  <span className="tpl-gallery-version">v{tpl.version || 1}</span>
-                </div>
-                <p className="tpl-gallery-desc">{tpl.description || 'No description.'}</p>
-                <div className="tpl-gallery-actions">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      writeStoredTemplateId(user?.id, tpl.id);
-                      setSelectedTemplateId(tpl.id);
-                      if (onNavigate) onNavigate('create');
-                    }}
-                  >
-                    Use template
-                  </button>
-                  <button
-                    type="button"
-                    className="tpl-gallery-pin"
-                    onClick={() => setFavoriteTemplate(tpl.id)}
-                    disabled={pinned}
-                  >
-                    {pinned ? 'Pinned' : 'Pin'}
-                  </button>
-                </div>
-              </article>
-            );
-          })}
-          {templates.length === 0 && <p className="muted">No templates available yet.</p>}
-        </section>
-      )}
-
       {effectiveView === 'create' && (<>
+      {!forcedTemplateId && (
       <section className="tpl-row-card ui-plain">
         <div className="tpl-row-head">
           <h3>Templates</h3>
@@ -1449,6 +1418,7 @@ export default function UserPanel({
           {templates.length === 0 && <div className="tpl-empty">No templates available.</div>}
         </div>
       </section>
+      )}
 
       <details className="tpl-extras ui-plain">
         <summary>

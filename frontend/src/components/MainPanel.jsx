@@ -2,6 +2,7 @@ import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import ProfileSidebar from './ProfileSidebar.jsx';
 import { resolveAvatar } from '../utils/avatar.js';
 import { canOpen } from '../appCatalogue.js';
+import { apiRequest } from '../api.js';
 
 const AdminPanel = lazy(() => import('./AdminPanel.jsx'));
 const UserPanel = lazy(() => import('./UserPanel.jsx'));
@@ -28,21 +29,21 @@ const userCard = (id, chip, title, desc, forcedView, extra = {}) => ({
 const toolCard = (toolId, chip, title, desc) => userCard(`tool-${toolId}`, chip, title, desc, 'tools', { forcedTool: toolId });
 const adminCard = (tab, chip, title, desc) => ({ id: `admin-${tab}`, chip, title, desc, panel: 'admin', forcedTab: tab });
 
-function buildCatalogue(user) {
+function initials(name) {
+  const words = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return 'T';
+  return (words.length > 1 ? words[0][0] + words[1][0] : words[0].slice(0, 2)).toUpperCase();
+}
+
+// every template is its own card; opening one goes straight to its form
+const templateCard = (tpl) => userCard(`tpl-${tpl.id}`, initials(tpl.title), tpl.title,
+  tpl.description || 'Fill in the form and generate the PDF.', 'create', { forcedTemplateId: tpl.id, permKey: 'create' });
+
+function buildCatalogue(user, templates) {
   const isAdmin = user.role === 'super_admin' || user.role === 'admin';
   const sections = [];
 
-  {
-    const cards = [
-      userCard('create', 'PC', 'Create PDF', 'Pick a template, fill in the form and generate the PDF.', 'create'),
-      userCard('templates', 'TP', 'Templates', 'Browse every template, pin your favourite and start from one.', 'templates'),
-      userCard('my-pdfs', 'MP', 'My PDFs', 'Every PDF you generated, with status, filters and history.', 'mypdfs'),
-    ];
-    if (isAdmin) {
-      cards.push(adminCard('workflow', 'WF', 'Workflow', 'All submitted PDFs across every user. Update status and notes.'));
-    }
-    sections.push({ key: 'pdf', label: 'PDF Creation', color: SECTION_COLORS.pdf, cards });
-  }
+  sections.push({ key: 'pdf', label: 'PDF Creation', color: SECTION_COLORS.pdf, cards: templates.map(templateCard) });
 
   {
     sections.push({
@@ -50,6 +51,8 @@ function buildCatalogue(user) {
       label: 'Applications',
       color: SECTION_COLORS.apps,
       cards: [
+        userCard('my-pdfs', 'MP', 'My PDFs', 'Every PDF you generated, with status, filters and history.', 'mypdfs'),
+        ...(isAdmin ? [adminCard('workflow', 'WF', 'Workflow', 'All submitted PDFs across every user. Update status and notes.')] : []),
         userCard('analytics', 'AN', 'Analytics', 'Monthly activity, status breakdown and the template preview mapper.', 'analytics'),
         userCard('profiling', 'PR', 'Profiling', 'Client profile archive by year and month, with folders.', 'profiling'),
         userCard('fieldeng', 'FE', 'Field Eng', 'Job orders for the field team: done, cancel, reschedule.', 'fieldeng'),
@@ -97,7 +100,7 @@ function buildCatalogue(user) {
   return sections
     .map((section) => ({
       ...section,
-      cards: section.cards.filter((card) => card.panel === 'admin' || canOpen(user, GROUP_OF_SECTION[section.key], card.id)),
+      cards: section.cards.filter((card) => card.panel === 'admin' || canOpen(user, GROUP_OF_SECTION[section.key], card.permKey || card.id)),
     }))
     .filter((section) => section.cards.length > 0);
 }
@@ -114,7 +117,16 @@ export default function MainPanel({
   onToggleTheme,
   onSessionUserUpdate,
 }) {
-  const catalogue = useMemo(() => buildCatalogue(user), [user]);
+  const [templates, setTemplates] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    apiRequest('/templates', { token })
+      .then((data) => { if (!cancelled && Array.isArray(data)) setTemplates(data); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [token]);
+
+  const catalogue = useMemo(() => buildCatalogue(user, templates), [user, templates]);
   const cardsById = useMemo(() => {
     const map = new Map();
     catalogue.forEach((section) => section.cards.forEach((card) => map.set(card.id, { ...card, color: section.color, section: section.label })));
@@ -188,7 +200,7 @@ export default function MainPanel({
         embeddedMode
         forcedView={card.forcedView}
         forcedTool={card.forcedTool || null}
-        onNavigate={(id) => open(id)}
+        forcedTemplateId={card.forcedTemplateId || null}
       />
     );
   }
