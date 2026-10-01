@@ -27,8 +27,34 @@ const statusTabs = ['pending', 'done', 'cancelled', 'rescheduled'];
 // read its real content height directly and grow the iframe to match -
 // removes the fixed-height inner scrollbar the user found cramped, letting
 // MAC-Finder's page flow into the normal page scroll instead.
-function MacFinderFrame() {
+const MAC_FINDER_THEME = {
+  light: `:root { --bg: #f4f8fc; --panel: #ffffff; --border: #dce6f0; --text: #15263a; --muted: #5f7186; --accent: #0ea5e9; --ok: #16a34a; --bad: #dc2626; --warn: #b45309; --skip: #94a3b8; }
+    body { background: var(--bg); color: var(--text); }
+    .field, .chart-panel { background: #f1f6fb; }
+    .config-block { background: #f1f6fb; color: #15263a; }
+    input[type=text] { background: #ffffff; }`,
+  dark: `:root { --bg: #050506; --panel: #111214; --border: #26292e; --text: #e6edf3; --muted: #8b949e; --accent: #38bdf8; }
+    .field, .chart-panel { background: #16181b; }
+    .config-block { background: #0c0d0f; color: #c9d1d9; }`,
+};
+
+function MacFinderFrame({ theme = 'light' }) {
   const ref = React.useRef(null);
+
+  const applyTheme = React.useCallback(() => {
+    try {
+      const doc = ref.current?.contentDocument;
+      if (!doc || !doc.head) return;
+      let style = doc.getElementById('jo-theme');
+      if (!style) {
+        style = doc.createElement('style');
+        style.id = 'jo-theme';
+        doc.head.appendChild(style);
+      }
+      style.textContent = MAC_FINDER_THEME[theme === 'dark' ? 'dark' : 'light'];
+    } catch (e) { /* frame mid-navigation - the load handler re-applies */ }
+  }, [theme]);
+
   React.useEffect(() => {
     const frame = ref.current;
     if (!frame) return undefined;
@@ -41,6 +67,7 @@ function MacFinderFrame() {
       } catch (e) { /* cross-origin during a brief navigation - ignore */ }
     }
     function onLoad() {
+      applyTheme();
       resize();
       try {
         observer = new ResizeObserver(resize);
@@ -48,17 +75,19 @@ function MacFinderFrame() {
       } catch (e) { /* ResizeObserver unavailable - the onLoad resize still ran once */ }
     }
     frame.addEventListener('load', onLoad);
+    if (frame.contentDocument?.readyState === 'complete') onLoad();
     return () => {
       frame.removeEventListener('load', onLoad);
       if (observer) observer.disconnect();
     };
-  }, []);
+  }, [applyTheme]);
+
   return (
     <iframe
       ref={ref}
       src="/mac-finder/"
       title="MAC-Finder"
-      style={{ width: '100%', minHeight: '600px', border: 'none', borderRadius: '8px', display: 'block' }}
+      style={{ width: '100%', minHeight: '600px', border: 'none', borderRadius: '6px', display: 'block' }}
     />
   );
 }
@@ -378,7 +407,12 @@ export default function UserPanel({
   onLogout,
   theme = 'light',
   onToggleTheme,
-  onSessionUserUpdate
+  onSessionUserUpdate,
+  embeddedMode = false,
+  forcedView = null,
+  forcedUserSection = null,
+  forcedTool = null,
+  forcedTemplateId = null
 }) {
   const [templates, setTemplates] = useState([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
@@ -405,6 +439,8 @@ export default function UserPanel({
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [activeUserSection, setActiveUserSection] = useState('create');
   const [activeView, setActiveView] = useState('create');
+  const effectiveView = forcedView ?? activeView;
+  const effectiveUserSection = forcedUserSection ?? activeUserSection;
   const [listFilters, setListFilters] = useState(emptyListFilters);   // committed/applied
   const [draftFilters, setDraftFilters] = useState(emptyListFilters); // in-progress input
   const [keepValues, setKeepValues] = useState(() => window.localStorage.getItem('user-panel:keep-values') === 'true');
@@ -780,7 +816,14 @@ export default function UserPanel({
   }, [templates, user?.favorite_template_id, user?.id, selectedTemplateId]);
 
   useEffect(() => {
-    writeStoredTemplateId(user?.id, selectedTemplateId);
+    if (forcedTemplateId && forcedTemplateId !== selectedTemplateId && templates.some((tpl) => tpl.id === forcedTemplateId)) {
+      setSelectedTemplateId(forcedTemplateId);
+    }
+  }, [forcedTemplateId, templates, selectedTemplateId]);
+
+  useEffect(() => {
+    // the empty first-render value must not wipe the choice another view just stored
+    if (selectedTemplateId) writeStoredTemplateId(user?.id, selectedTemplateId);
   }, [selectedTemplateId, user?.id]);
 
   useEffect(() => {
@@ -1283,95 +1326,30 @@ export default function UserPanel({
     }
   }
 
-  return (
-    <div className="layout user-shell">
-      <ProfileSidebar
-        open={isSidebarOpen}
-        onClose={() => setIsSidebarOpen(false)}
-        token={token}
-        user={user}
-        onUserUpdated={onSessionUserUpdate}
-        theme={theme}
-        onToggleTheme={onToggleTheme}
-        onLogout={onLogout}
-      />
-
-      <aside className="user-sidebar">
-        <div className="user-sidebar-brand">
-          <img
-            className="user-brand-logo"
-            src="/imperial-network-logo.svg"
-            alt="Imperial Network Incorporated"
-          />
-          <span className="user-brand-caption">User portal</span>
-        </div>
-
-        <nav className="user-nav user-nav--main">
-          {userViews.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className={activeView === item.id ? 'user-nav-btn active' : 'user-nav-btn'}
-              aria-current={activeView === item.id ? 'page' : undefined}
-              onClick={() => setActiveView(item.id)}
-            >
-              <span className={`user-nav-chip user-nav-chip--${item.id}`}>{item.chip}</span>
-              <span>{item.label}</span>
-            </button>
+  // ── Embedded mode (for MainPanel shell) ────────────────────────────
+  // eslint-disable-next-line react/jsx-no-useless-fragment
+  const embeddedToolbar = embeddedMode && ['analytics', 'mypdfs'].includes(effectiveView) ? (
+    <div className="noc-toolbar">
+      <label className="noc-toolbar-field">
+        <span>Template</span>
+        <select
+          id="embedded-template"
+          name="embedded_template"
+          value={selectedTemplateId}
+          onChange={(e) => setSelectedTemplateId(e.target.value)}
+        >
+          <option value="">Select template</option>
+          {orderedTemplates.map((tpl) => (
+            <option key={tpl.id} value={tpl.id}>{tpl.title}</option>
           ))}
-        </nav>
+        </select>
+      </label>
+    </div>
+  ) : null;
 
-        <div className="user-sidebar-spacer" />
-      </aside>
-
-      <main className="user-main">
-        <header className={`topbar user-main-topbar${activeView === 'tools' ? ' user-main-topbar--compact' : ''}`}>
-          <div>
-            <div className="user-breadcrumb">
-              <span>User portal</span>
-              <span>/</span>
-              <strong>{activeViewMeta.label}</strong>
-              {!['tools', 'profiling', 'fieldeng'].includes(activeView) && selectedTemplate && (
-                <>
-                  <span>/</span>
-                  <span>{selectedTemplate.title}</span>
-                </>
-              )}
-            </div>
-            {activeView !== 'tools' && (
-              <>
-                <h2>{activeViewMeta.title}</h2>
-                <p className="muted user-main-subtitle">{activeViewMeta.description}</p>
-              </>
-            )}
-          </div>
-          <div className="user-topbar-actions">
-            {activeView === 'analytics' && (
-              <label className="user-topbar-template">
-                <span>Template</span>
-                <select
-                  id="user-analytics-template"
-                  name="analytics_template"
-                  value={selectedTemplateId}
-                  onChange={(e) => setSelectedTemplateId(e.target.value)}
-                >
-                  <option value="">Select template</option>
-                  {orderedTemplates.map((tpl) => (
-                    <option key={tpl.id} value={tpl.id}>{tpl.title}</option>
-                  ))}
-                </select>
-              </label>
-            )}
-            <button
-              type="button"
-              className="avatar-trigger user-main-settings"
-              onClick={() => setIsSidebarOpen(true)}
-              title="Open settings"
-            >
-              <img className="avatar avatar-md" src={resolveAvatar(user)} alt={user.name} />
-            </button>
-          </div>
-        </header>
+  const contentArea = (
+    <>
+      {embeddedToolbar}
 
       {message && (
         <div className={`notice ${messageTone(message)}`} role="status" aria-live="polite">
@@ -1380,31 +1358,32 @@ export default function UserPanel({
         </div>
       )}
 
-      {activeView === 'tools' && (
+      {effectiveView === 'tools' && (
         <section className="tools-page">
-          <BillingTools token={token} />
+          <BillingTools token={token} forcedTool={forcedTool} />
         </section>
       )}
 
-      {activeView === 'profiling' && (
+      {effectiveView === 'profiling' && (
         <section className="tools-page">
-          <Profiling token={token} user={user} mode="user" />
+          <Profiling token={token} user={user} mode={user.role === 'super_admin' || user.role === 'admin' ? 'admin' : 'user'} />
         </section>
       )}
 
-      {activeView === 'fieldeng' && (
+      {effectiveView === 'fieldeng' && (
         <section className="tools-page">
           <FieldEngineering token={token} />
         </section>
       )}
 
-      {activeView === 'macfinder' && (
+      {effectiveView === 'macfinder' && (
         <section className="tools-page">
-          <MacFinderFrame />
+          <MacFinderFrame theme={theme} />
         </section>
       )}
 
-      {activeView === 'create' && (<>
+      {effectiveView === 'create' && (<>
+      {!forcedTemplateId && (
       <section className="tpl-row-card ui-plain">
         <div className="tpl-row-head">
           <h3>Templates</h3>
@@ -1439,6 +1418,7 @@ export default function UserPanel({
           {templates.length === 0 && <div className="tpl-empty">No templates available.</div>}
         </div>
       </section>
+      )}
 
       <details className="tpl-extras ui-plain">
         <summary>
@@ -1613,7 +1593,8 @@ export default function UserPanel({
       </div>
       </>)}
 
-      {activeView === 'analytics' && (<>
+      {(effectiveView === 'analytics' || effectiveView === 'mypdfs') && (<>
+      {effectiveView === 'analytics' && (
       <section id="user-section-analytics" className="card">
         <h3>Template Analytics</h3>
         <p className="muted">Current month metrics for the selected template.</p>
@@ -1649,7 +1630,9 @@ export default function UserPanel({
           <p className="muted">Select a template to view analytics.</p>
         )}
       </section>
+      )}
 
+      {(effectiveView === 'mypdfs' || !embeddedMode) && (
       <section id="user-section-history" className="card">
         <div className="actions" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
           <h3>My Generated PDFs</h3>
@@ -1893,7 +1876,9 @@ export default function UserPanel({
         </div>
 
       </section>
+      )}
 
+      {effectiveView === 'analytics' && (
       <section id="user-section-preview" className="card">
         <div className="actions" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
           <h3>Template Preview Mapper</h3>
@@ -1943,9 +1928,108 @@ export default function UserPanel({
           </>
         )}
       </section>
+      )}
 
       </>)}
 
+    </>
+  );
+
+  if (embeddedMode) {
+    return <div className="v2-embedded-panel">{contentArea}</div>;
+  }
+
+
+  return (
+    <div className="layout user-shell">
+      <ProfileSidebar
+        open={isSidebarOpen}
+        onClose={() => setIsSidebarOpen(false)}
+        token={token}
+        user={user}
+        onUserUpdated={onSessionUserUpdate}
+        theme={theme}
+        onToggleTheme={onToggleTheme}
+        onLogout={onLogout}
+      />
+
+      <aside className="user-sidebar">
+        <div className="user-sidebar-brand">
+          <img
+            className="user-brand-logo"
+            src="/imperial-network-logo.svg"
+            alt="Imperial Network Incorporated"
+          />
+          <span className="user-brand-caption">User portal</span>
+        </div>
+
+        <nav className="user-nav user-nav--main">
+          {userViews.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={activeView === item.id ? 'user-nav-btn active' : 'user-nav-btn'}
+              aria-current={activeView === item.id ? 'page' : undefined}
+              onClick={() => setActiveView(item.id)}
+            >
+              <span className={`user-nav-chip user-nav-chip--${item.id}`}>{item.chip}</span>
+              <span>{item.label}</span>
+            </button>
+          ))}
+        </nav>
+
+        <div className="user-sidebar-spacer" />
+      </aside>
+
+      <main className="user-main">
+        <header className={`topbar user-main-topbar${effectiveView === 'tools' ? ' user-main-topbar--compact' : ''}`}>
+          <div>
+            <div className="user-breadcrumb">
+              <span>User portal</span>
+              <span>/</span>
+              <strong>{activeViewMeta.label}</strong>
+              {!['tools', 'profiling', 'fieldeng'].includes(activeView) && selectedTemplate && (
+                <>
+                  <span>/</span>
+                  <span>{selectedTemplate.title}</span>
+                </>
+              )}
+            </div>
+            {effectiveView !== 'tools' && (
+              <>
+                <h2>{activeViewMeta.title}</h2>
+                <p className="muted user-main-subtitle">{activeViewMeta.description}</p>
+              </>
+            )}
+          </div>
+          <div className="user-topbar-actions">
+            {effectiveView === 'analytics' && (
+              <label className="user-topbar-template">
+                <span>Template</span>
+                <select
+                  id="user-analytics-template"
+                  name="analytics_template"
+                  value={selectedTemplateId}
+                  onChange={(e) => setSelectedTemplateId(e.target.value)}
+                >
+                  <option value="">Select template</option>
+                  {orderedTemplates.map((tpl) => (
+                    <option key={tpl.id} value={tpl.id}>{tpl.title}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <button
+              type="button"
+              className="avatar-trigger user-main-settings"
+              onClick={() => setIsSidebarOpen(true)}
+              title="Open settings"
+            >
+              <img className="avatar avatar-md" src={resolveAvatar(user)} alt={user.name} />
+            </button>
+          </div>
+        </header>
+      {contentArea}
       </main>
 
       {showManualAddModal && (

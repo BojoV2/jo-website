@@ -58,6 +58,16 @@ function fileGlyph(file) {
   return 'FILE';
 }
 
+// Letter badge in the NOC card style: template initials, "26" for 2026, "SEP" for September.
+function folderChip(folder) {
+  const name = String(folder.name || '').trim();
+  if (/^\d{4}$/.test(name)) return name.slice(2);
+  if (folder.kind === 'auto') return name.slice(0, 3).toUpperCase();
+  const words = name.split(/\s+/).filter(Boolean);
+  const letters = words.length > 1 ? words[0][0] + words[1][0] : name.slice(0, 2);
+  return letters.toUpperCase() || 'F';
+}
+
 export default function Profiling({ token, user, mode = 'user' }) {
   const isAdmin = mode === 'admin';
   const [folderId, setFolderId] = useState(null);
@@ -581,9 +591,11 @@ export default function Profiling({ token, user, mode = 'user' }) {
             {view.folders.map((folder) => (
               <article key={folder.id} className={`pf-folder${folder.hidden ? ' is-hidden' : ''}`}>
                 <button type="button" className="pf-folder-open" onClick={() => loadFolder(folder.id)}>
-                  <span className={`pf-folder-icon pf-folder-icon--${folder.kind}`} aria-hidden="true" />
-                  <span className="pf-folder-name">{folder.name}</span>
-                  <span className="pf-folder-meta">{folderMeta(folder)}</span>
+                  <span className={`pf-chip pf-chip--${folder.kind}`} aria-hidden="true">{folderChip(folder)}</span>
+                  <span className="pf-folder-text">
+                    <span className="pf-folder-name">{folder.name}</span>
+                    <span className="pf-folder-meta">{folderMeta(folder)}</span>
+                  </span>
                 </button>
                 <div className="pf-folder-badges">
                   {folder.kind === 'template' && <span className="pf-badge pf-badge--template">Template</span>}

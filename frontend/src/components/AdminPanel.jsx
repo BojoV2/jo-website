@@ -5,6 +5,7 @@ import { GlobalWorkerOptions, getDocument } from 'pdfjs-dist/build/pdf.mjs';
 import workerSrc from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import ProfileSidebar from './ProfileSidebar.jsx';
 import { resolveAvatar } from '../utils/avatar.js';
+import { APP_GROUPS, ALL_APPS, isPrivileged, allowedMap, permsFromAllowed } from '../appCatalogue.js';
 import StatusStackedBarChart from './StatusStackedBarChart.jsx';
 import StatusDonutChart from './StatusDonutChart.jsx';
 import VehicleMap from './VehicleMap.jsx';
@@ -97,6 +98,23 @@ const adminTabs = [
   }
 ];
 const templateScopedTabs = ['home', 'templates', 'mapping', 'workflow'];
+
+const ROLE_LABELS = { super_admin: 'Superadmin', admin: 'Admin', user: 'Standard' };
+function roleLabel(role) {
+  return ROLE_LABELS[role] || role;
+}
+
+function relativeTime(value) {
+  if (!value) return 'never';
+  const mins = Math.round((Date.now() - new Date(value).getTime()) / 60000);
+  if (mins < 2) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours} h ago`;
+  const days = Math.round(hours / 24);
+  if (days < 30) return `${days} d ago`;
+  return new Date(value).toLocaleDateString();
+}
 const DEFAULT_MONTHLY_RANGE = '3';
 
 function clampRect(rect) {
@@ -195,7 +213,10 @@ export default function AdminPanel({
   onLogout,
   theme = 'light',
   onToggleTheme,
-  onSessionUserUpdate
+  onSessionUserUpdate,
+  embeddedMode = false,
+  forcedTab = null,
+  onNavigate = null
 }) {
   const [templates, setTemplates] = useState([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
@@ -206,11 +227,17 @@ export default function AdminPanel({
   const [monthlyByStatus, setMonthlyByStatus] = useState([]);
   const [monthlyReportRange, setMonthlyReportRange] = useState(DEFAULT_MONTHLY_RANGE);
   const [activeAdminTab, setActiveAdminTab] = useState('home');
+  const effectiveAdminTab = forcedTab ?? activeAdminTab;
+  const goTab = (tabId) => (embeddedMode && onNavigate ? onNavigate(tabId) : setActiveAdminTab(tabId));
   const [activeStatus, setActiveStatus] = useState('pending');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [openingPdfId, setOpeningPdfId] = useState(null);
   const [users, setUsers] = useState([]);
+  const [manageId, setManageId] = useState(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [accountQuery, setAccountQuery] = useState('');
+  const [auditEvents, setAuditEvents] = useState([]);
   const [presets, setPresets] = useState([]);
   const [editingFieldId, setEditingFieldId] = useState('');
 
@@ -228,6 +255,7 @@ export default function AdminPanel({
     role: 'user'
   });
   const [showCreatePassword, setShowCreatePassword] = useState(false);
+  const [createAllowed, setCreateAllowed] = useState(() => allowedMap(null));
   const [presetForm, setPresetForm] = useState({
     name: '',
     field_type: 'text',
@@ -439,6 +467,51 @@ export default function AdminPanel({
     setUsers(data);
   }
 
+  async function loadAudit() {
+    try {
+      const data = await apiRequest('/users/audit?limit=40', { token });
+      setAuditEvents(Array.isArray(data) ? data : []);
+    } catch (_err) {
+      setAuditEvents([]);
+    }
+  }
+
+  async function accountAction(path, body, okMessage) {
+    setBusy(true);
+    setMessage('');
+    try {
+      await apiRequest(path, { method: 'PATCH', token, body });
+      await loadUsers();
+      await loadAudit();
+      if (okMessage) setMessage(okMessage);
+      return true;
+    } catch (err) {
+      setMessage(err.message);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function setAppAccess(account, appId, allowed) {
+    const next = { ...allowedMap(account), [appId]: allowed };
+    return accountAction(`/users/${account.id}/permissions`, { section_permissions: permsFromAllowed(next) });
+  }
+
+  function setGroupAccess(account, groupKey, allowed) {
+    const next = allowedMap(account);
+    APP_GROUPS.find((g) => g.key === groupKey).apps.forEach((app) => { next[app.id] = allowed; });
+    return accountAction(`/users/${account.id}/permissions`, { section_permissions: permsFromAllowed(next) });
+  }
+
+  function setAccountRole(account, role) {
+    return accountAction(`/users/${account.id}/role`, { role }, `${account.name} is now ${roleLabel(role)}. Their sessions were signed out.`);
+  }
+
+  function setAccountDisabled(account, disabled) {
+    return accountAction(`/users/${account.id}/status`, { disabled }, disabled ? `${account.name} is disabled and signed out.` : `${account.name} is enabled again.`);
+  }
+
   async function loadPresets() {
     const data = await apiRequest('/templates/presets', { token });
     setPresets(data);
@@ -576,21 +649,24 @@ export default function AdminPanel({
   }, [monthlyReportRange]);
 
   useEffect(() => {
-    if (activeAdminTab === 'auto-reply' && !arLoaded) {
+    if (effectiveAdminTab === 'users') {
+      loadAudit();
+    }
+    if (effectiveAdminTab === 'auto-reply' && !arLoaded) {
       loadArMessages().catch((err) => setMessage(err.message));
     }
-    if (activeAdminTab === 'qr-link' && !qrLoaded) {
+    if (effectiveAdminTab === 'qr-link' && !qrLoaded) {
       apiRequest('/qr-link/all', { token })
         .then((data) => { setQrLinks(data); setQrLoaded(true); })
         .catch((err) => setMessage(err.message));
     }
-    if (activeAdminTab === 'tracking' && !trackerLoaded) {
+    if (effectiveAdminTab === 'tracking' && !trackerLoaded) {
       apiRequest('/tracking/admin', { token })
         .then((data) => { setTrackers(data); setTrackerLoaded(true); })
         .catch((err) => setMessage(err.message));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeAdminTab]);
+  }, [effectiveAdminTab]);
 
   useEffect(() => {
     if (!selectedTemplateId) return;
@@ -609,7 +685,7 @@ export default function AdminPanel({
   }, [pdfDoc, fieldForm.page_number]);
 
   useEffect(() => {
-    if (activeAdminTab !== 'mapping' || !pdfDoc) return undefined;
+    if (effectiveAdminTab !== 'mapping' || !pdfDoc) return undefined;
 
     let frameA = 0;
     let frameB = 0;
@@ -624,10 +700,10 @@ export default function AdminPanel({
       if (frameB) cancelAnimationFrame(frameB);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeAdminTab, pdfDoc, fieldForm.page_number]);
+  }, [effectiveAdminTab, pdfDoc, fieldForm.page_number]);
 
   useEffect(() => {
-    if (activeAdminTab !== 'mapping' || !pdfDoc || !stageRef.current || typeof ResizeObserver === 'undefined') {
+    if (effectiveAdminTab !== 'mapping' || !pdfDoc || !stageRef.current || typeof ResizeObserver === 'undefined') {
       return undefined;
     }
 
@@ -646,7 +722,7 @@ export default function AdminPanel({
       if (frame) cancelAnimationFrame(frame);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeAdminTab, pdfDoc, fieldForm.page_number]);
+  }, [effectiveAdminTab, pdfDoc, fieldForm.page_number]);
 
   useEffect(() => {
     const onResize = () => {
@@ -722,11 +798,17 @@ export default function AdminPanel({
       await apiRequest('/users', {
         method: 'POST',
         token,
-        body: userForm
+        body: {
+          ...userForm,
+          section_permissions: userForm.role === 'user' ? permsFromAllowed(createAllowed) : null
+        }
       });
       setUserForm({ name: '', email: '', password: '', role: 'user' });
+      setCreateAllowed(allowedMap(null));
+      setCreateOpen(false);
       await loadUsers();
-      setMessage('User account created.');
+      await loadAudit();
+      setMessage('Account created.');
     } catch (err) {
       setMessage(err.message);
     } finally {
@@ -1377,9 +1459,9 @@ export default function AdminPanel({
       });
       if (result.temp_password) {
         await navigator.clipboard.writeText(result.temp_password);
-        setMessage(`User created. Temporary password copied to clipboard.`);
+        setMessage('Password reset. The temporary password is on your clipboard - paste it to the person. Their sessions were signed out.');
       } else {
-        setMessage('User created successfully.');
+        setMessage('Password reset.');
       }
     } catch (err) {
       setMessage(err.message);
@@ -1388,91 +1470,30 @@ export default function AdminPanel({
     }
   }
 
-  return (
-    <div className="layout user-shell admin-shell">
-      <ProfileSidebar
-        open={isSidebarOpen}
-        onClose={() => setIsSidebarOpen(false)}
-        token={token}
-        user={user}
-        onUserUpdated={onSessionUserUpdate}
-        theme={theme}
-        onToggleTheme={onToggleTheme}
-        onLogout={onLogout}
-      />
-
-      <aside className="user-sidebar">
-        <div className="user-sidebar-brand">
-          <img
-            className="user-brand-logo"
-            src="/imperial-network-logo.svg"
-            alt="Imperial Network Incorporated"
-          />
-          <span className="user-brand-caption">Admin portal</span>
-        </div>
-
-        <nav className="user-nav user-nav--main">
-          {adminTabs.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              className={activeAdminTab === tab.id ? 'user-nav-btn active' : 'user-nav-btn'}
-              aria-current={activeAdminTab === tab.id ? 'page' : undefined}
-              onClick={() => setActiveAdminTab(tab.id)}
-            >
-              <span className={`user-nav-chip user-nav-chip--${tab.id}`}>{tab.chip}</span>
-              <span>{tab.label}</span>
-            </button>
+  // ── Embedded mode (for MainPanel shell) ────────────────────────────
+  // eslint-disable-next-line react/jsx-no-useless-fragment
+  const embeddedToolbar = embeddedMode && templateScopedTabs.includes(effectiveAdminTab) ? (
+    <div className="noc-toolbar">
+      <label className="noc-toolbar-field">
+        <span>Focus template</span>
+        <select
+          id="embedded-admin-template"
+          name="embedded_focus_template"
+          value={selectedTemplateId}
+          onChange={(e) => setSelectedTemplateId(e.target.value)}
+        >
+          <option value="">Select template</option>
+          {templates.map((tpl) => (
+            <option key={tpl.id} value={tpl.id}>{tpl.title}</option>
           ))}
-        </nav>
+        </select>
+      </label>
+    </div>
+  ) : null;
 
-        <div className="user-sidebar-spacer" />
-      </aside>
-
-      <main className="user-main">
-        <header className="topbar user-main-topbar">
-          <div>
-            <div className="user-breadcrumb">
-              <span>Admin console</span>
-              <span>/</span>
-              <strong>{activeTabMeta.label}</strong>
-              {templateScopedTabs.includes(activeAdminTab) && selectedTemplate && (
-                <>
-                  <span>/</span>
-                  <span>{selectedTemplate.title}</span>
-                </>
-              )}
-            </div>
-            <h2>{activeTabMeta.title}</h2>
-            <p className="muted user-main-subtitle">{activeTabMeta.description}</p>
-          </div>
-          <div className="admin-topbar-actions">
-            {templateScopedTabs.includes(activeAdminTab) && (
-              <label className="admin-topbar-template">
-                <span>Focus template</span>
-                <select
-                  id="admin-topbar-template"
-                  name="focus_template"
-                  value={selectedTemplateId}
-                  onChange={(e) => setSelectedTemplateId(e.target.value)}
-                >
-                  <option value="">Select template</option>
-                  {templates.map((tpl) => (
-                    <option key={tpl.id} value={tpl.id}>{tpl.title}</option>
-                  ))}
-                </select>
-              </label>
-            )}
-            <button
-              type="button"
-              className="avatar-trigger user-main-settings"
-              onClick={() => setIsSidebarOpen(true)}
-              title="Open settings"
-            >
-              <img className="avatar avatar-md" src={resolveAvatar(user)} alt={user.name} />
-            </button>
-          </div>
-        </header>
+  const contentArea = (
+    <>
+      {embeddedToolbar}
 
       {message && (
         <div className={`notice ${messageTone(message)}`}>
@@ -1481,7 +1502,7 @@ export default function AdminPanel({
         </div>
       )}
 
-      {activeAdminTab === 'home' && (
+      {effectiveAdminTab === 'home' && (
         <section className="admin-quick ui-plain">
           <div className="admin-quick-copy">
             <strong>Quick actions</strong>
@@ -1492,23 +1513,23 @@ export default function AdminPanel({
             </span>
           </div>
           <div className="admin-quick-actions">
-            <button type="button" onClick={() => setActiveAdminTab('templates')}>Manage Templates</button>
-            <button type="button" onClick={() => setActiveAdminTab('mapping')}>Map Fields</button>
-            <button type="button" onClick={() => setActiveAdminTab('workflow')}>Open Workflow</button>
+            <button type="button" onClick={() => goTab('templates')}>Manage Templates</button>
+            <button type="button" onClick={() => goTab('mapping')}>Map Fields</button>
+            <button type="button" onClick={() => goTab('workflow')}>Open Workflow</button>
           </div>
         </section>
       )}
 
 
-      {activeAdminTab === 'fieldeng' && (
+      {effectiveAdminTab === 'fieldeng' && (
         <FieldEngineering token={token} />
       )}
 
-      {activeAdminTab === 'profiling' && (
+      {effectiveAdminTab === 'profiling' && (
         <Profiling token={token} user={user} mode="admin" />
       )}
 
-      {activeAdminTab === 'templates' && (
+      {effectiveAdminTab === 'templates' && (
       <>
       <section className="grid two">
         <form className="card" onSubmit={submitTemplate}>
@@ -1662,121 +1683,259 @@ export default function AdminPanel({
       </>
       )}
 
-      {activeAdminTab === 'users' && (
-      <section className="grid two">
-        <form className="card" onSubmit={submitUser}>
-          <h3>Create User Account</h3>
-          <p className="muted">User can login using name or email.</p>
-          <label htmlFor="admin-user-name">Name</label>
-          <input
-            id="admin-user-name"
-            name="name"
-            value={userForm.name}
-            onChange={(e) => setUserForm({ ...userForm, name: e.target.value })}
-            autoComplete="name"
-            required
-          />
-          <label htmlFor="admin-user-email">Email</label>
-          <input
-            id="admin-user-email"
-            name="email"
-            type="email"
-            value={userForm.email}
-            onChange={(e) => setUserForm({ ...userForm, email: e.target.value })}
-            autoComplete="email"
-            required
-          />
-          <label htmlFor="admin-user-password">Password</label>
-          <p className="field-hint">
-            At least 10 characters, with both letters and numbers. Obvious ones
-            (starting with "password", "imperial", "admin", "welcome", "qwerty") are refused.
-          </p>
-          <input
-            id="admin-user-password"
-            name="password"
-            type={showCreatePassword ? 'text' : 'password'}
-            value={userForm.password}
-            onChange={(e) => setUserForm({ ...userForm, password: e.target.value })}
-            autoComplete="new-password"
-            minLength={10}
-            required
-          />
-          <label className="checkbox-line" htmlFor="admin-show-create-password">
+      {effectiveAdminTab === 'users' && (() => {
+        const q = accountQuery.trim().toLowerCase();
+        const shown = users.filter((u) => !q || `${u.name} ${u.email} ${u.role}`.toLowerCase().includes(q));
+        const managed = users.find((u) => u.id === manageId) || null;
+        const canTouch = (u) => user.role === 'super_admin' || !isPrivileged(u);
+        return (
+        <>
+          <div className="um-toolbar">
             <input
-              id="admin-show-create-password"
-              name="show_create_password"
-              type="checkbox"
-              checked={showCreatePassword}
-              onChange={(e) => setShowCreatePassword(e.target.checked)}
+              type="search"
+              className="um-search"
+              placeholder="Find an account..."
+              value={accountQuery}
+              onChange={(e) => setAccountQuery(e.target.value)}
+              aria-label="Find an account"
             />
-            View typed password
-          </label>
-          <label htmlFor="admin-user-role">Role</label>
-          <select
-            id="admin-user-role"
-            name="role"
-            value={userForm.role}
-            onChange={(e) => setUserForm({ ...userForm, role: e.target.value })}
-          >
-            <option value="user">user</option>
-            <option value="admin">admin</option>
-            {user.role === 'super_admin' && <option value="super_admin">super_admin</option>}
-          </select>
-          <button disabled={busy}>{busy ? 'Saving...' : 'Create User'}</button>
-        </form>
-
-        <div className="card">
-          <h3>User Accounts</h3>
-          <p className="muted">Stored passwords are hashed. Use "View Temp" to reset and reveal a temporary password. Deleting an account keeps its PDFs and tickets, but they lose the owner name.</p>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Email</th>
-                  <th>Role</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {users.map((u) => (
-                  <tr key={u.id}>
-                    <td>
-                      <div className="user-cell">
-                        <img className="avatar avatar-sm" src={resolveAvatar(u)} alt={u.name} />
-                        <span>{u.name}</span>
-                      </div>
-                    </td>
-                    <td>{u.email}</td>
-                    <td>{u.role}</td>
-                    <td className="actions">
-                      <button type="button" onClick={() => changeUserPassword(u.id)}>Change</button>
-                      <button type="button" onClick={() => resetAndShowUserPassword(u.id)}>View Temp</button>
-                      <button
-                        type="button"
-                        className="btn-danger"
-                        disabled={busy || u.id === user.id}
-                        title={u.id === user.id ? 'You cannot delete your own account' : 'Delete this account'}
-                        onClick={() => deleteUser(u)}
-                      >
-                        Delete
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {users.length === 0 && (
-                  <tr>
-                    <td colSpan="4">No users found.</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+            <button type="button" className="um-create" onClick={() => setCreateOpen(true)}>+ Create account</button>
           </div>
-        </div>
-      </section>
-      )}
 
-      {activeAdminTab === 'mapping' && (
+          <section className="um-card">
+            <div className="table-wrap um-table-wrap">
+              <table className="um-table">
+                <thead>
+                  <tr>
+                    <th>Account</th>
+                    <th>Role</th>
+                    <th>Application access</th>
+                    <th>Last active</th>
+                    <th>Status</th>
+                    <th aria-label="Actions" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {shown.map((u) => {
+                    const allowed = allowedMap(u);
+                    const blocked = ALL_APPS.filter((app) => !allowed[app.id]);
+                    return (
+                      <tr key={u.id} className={u.disabled_at ? 'um-row-disabled' : ''}>
+                        <td>
+                          <div className="um-account">
+                            <strong>{u.name}</strong>
+                            <span>{u.email}</span>
+                          </div>
+                        </td>
+                        <td><span className={`um-role um-role-${u.role}`}>{roleLabel(u.role)}</span></td>
+                        <td>
+                          {isPrivileged(u) || blocked.length === 0 ? (
+                            <span className="um-everything">everything</span>
+                          ) : (
+                            <div className="um-pills">
+                              {ALL_APPS.filter((app) => allowed[app.id]).map((app) => (
+                                <span key={app.id} className="um-pill">{app.label}</span>
+                              ))}
+                              {blocked.length === ALL_APPS.length && <span className="um-everything">nothing</span>}
+                            </div>
+                          )}
+                        </td>
+                        <td className="um-muted">{relativeTime(u.last_active_at)}</td>
+                        <td>
+                          <span className={u.disabled_at ? 'um-status um-status-off' : 'um-status'}>
+                            {u.disabled_at ? 'disabled' : 'active'}
+                          </span>
+                        </td>
+                        <td className="um-actions">
+                          <button type="button" className="um-manage" onClick={() => setManageId(u.id)}>Manage</button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {shown.length === 0 && (
+                    <tr><td colSpan="6" className="um-muted">No account matches.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section className="um-card um-audit">
+            <h3>Audit trail <small>last {auditEvents.length} events</small></h3>
+            {auditEvents.length === 0 && <p className="um-muted">Nothing recorded yet. Sign-ins and account changes appear here.</p>}
+            <ul>
+              {auditEvents.map((ev) => (
+                <li key={ev.id}>
+                  <span className={/fail|denied|disable|delete/.test(ev.action) ? 'um-dot bad' : 'um-dot'} />
+                  <div className="um-audit-body">
+                    <div><strong>{ev.action}</strong>{ev.actor_name ? ` · ${ev.actor_name}` : ''}</div>
+                    <code>
+                      {[ev.target_name && ev.target_name !== ev.actor_name ? `target=${ev.target_name}` : '', ev.detail || '', ev.ip ? `from ${ev.ip}` : '']
+                        .filter(Boolean).join(' ')}
+                    </code>
+                  </div>
+                  <time>{new Date(ev.at).toLocaleString()}</time>
+                </li>
+              ))}
+            </ul>
+          </section>
+
+          {managed && (
+            <div className="modal-backdrop" role="presentation" onClick={() => setManageId(null)}>
+              <div className="modal-card um-modal" role="dialog" aria-modal="true" aria-labelledby="um-manage-title" onClick={(e) => e.stopPropagation()}>
+                <h3 id="um-manage-title">Manage {managed.name}</h3>
+                <p className="um-muted um-modal-sub">{managed.email}</p>
+
+                <div className="um-label">Role {user.role !== 'super_admin' && <em>(only a superadmin can change roles)</em>}</div>
+                <div className="um-seg um-seg-wide">
+                  {['user', 'admin', ...(user.role === 'super_admin' || managed.role === 'super_admin' ? ['super_admin'] : [])].map((r) => (
+                    <button
+                      key={r}
+                      type="button"
+                      className={managed.role === r ? 'on' : ''}
+                      disabled={busy || user.role !== 'super_admin' || managed.id === user.id}
+                      onClick={() => managed.role !== r && setAccountRole(managed, r)}
+                    >
+                      {roleLabel(r)}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="um-label">
+                  Application access
+                  {isPrivileged(managed) && <em> — admins and superadmins already open every application, plus Administration</em>}
+                </div>
+                <div className="um-apps">
+                  {APP_GROUPS.map((group) => {
+                    const allowed = allowedMap(managed);
+                    return (
+                      <div key={group.key} className="um-group">
+                        <div className="um-group-head">
+                          <span>{group.label}</span>
+                          {!isPrivileged(managed) && (
+                            <span className="um-group-all">
+                              <button type="button" disabled={busy || !canTouch(managed)} onClick={() => setGroupAccess(managed, group.key, true)}>All</button>
+                              <button type="button" disabled={busy || !canTouch(managed)} onClick={() => setGroupAccess(managed, group.key, false)}>None</button>
+                            </span>
+                          )}
+                        </div>
+                        {group.apps.map((app) => {
+                          const on = isPrivileged(managed) || allowed[app.id];
+                          return (
+                            <div key={app.id} className="um-app-row">
+                              <span>{app.label}</span>
+                              <div className="um-seg">
+                                <button type="button" className={!on ? 'on' : ''} disabled={busy || isPrivileged(managed) || !canTouch(managed)} onClick={() => on && setAppAccess(managed, app.id, false)}>No access</button>
+                                <button type="button" className={on ? 'on' : ''} disabled={busy || isPrivileged(managed) || !canTouch(managed)} onClick={() => !on && setAppAccess(managed, app.id, true)}>Access</button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="um-modal-foot">
+                  <button type="button" className="um-ghost" disabled={busy || !canTouch(managed)} onClick={() => resetAndShowUserPassword(managed.id)}>Reset password</button>
+                  <button type="button" className="um-ghost" disabled={busy || !canTouch(managed)} onClick={() => changeUserPassword(managed.id)}>Set password</button>
+                  <button
+                    type="button"
+                    className="um-ghost"
+                    disabled={busy || managed.id === user.id || !canTouch(managed)}
+                    onClick={() => setAccountDisabled(managed, !managed.disabled_at)}
+                  >
+                    {managed.disabled_at ? 'Enable account' : 'Disable account'}
+                  </button>
+                  <button
+                    type="button"
+                    className="um-ghost um-danger"
+                    disabled={busy || managed.id === user.id || !canTouch(managed)}
+                    onClick={async () => { await deleteUser(managed); await loadAudit(); }}
+                  >
+                    Delete
+                  </button>
+                  <button type="button" className="um-done" onClick={() => setManageId(null)}>Done</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {createOpen && (
+            <div className="modal-backdrop" role="presentation" onClick={() => setCreateOpen(false)}>
+              <form className="modal-card um-modal" role="dialog" aria-modal="true" aria-labelledby="um-create-title" onClick={(e) => e.stopPropagation()} onSubmit={submitUser}>
+                <h3 id="um-create-title">Create account</h3>
+                <p className="um-muted um-modal-sub">They can sign in with the name or the email.</p>
+                <div className="um-form-grid">
+                  <label htmlFor="admin-user-name">Name
+                    <input id="admin-user-name" name="name" value={userForm.name} onChange={(e) => setUserForm({ ...userForm, name: e.target.value })} required />
+                  </label>
+                  <label htmlFor="admin-user-email">Email
+                    <input id="admin-user-email" name="email" type="email" value={userForm.email} onChange={(e) => setUserForm({ ...userForm, email: e.target.value })} required />
+                  </label>
+                </div>
+                <label htmlFor="admin-user-password">Password
+                  <input
+                    id="admin-user-password"
+                    name="password"
+                    type={showCreatePassword ? 'text' : 'password'}
+                    value={userForm.password}
+                    onChange={(e) => setUserForm({ ...userForm, password: e.target.value })}
+                    autoComplete="new-password"
+                    required
+                  />
+                </label>
+                <p className="um-hint">At least 10 characters, with both letters and numbers. Obvious ones (starting with "password", "imperial", "admin", "welcome", "qwerty") are refused.</p>
+                <label className="perm-check">
+                  <input type="checkbox" checked={showCreatePassword} onChange={(e) => setShowCreatePassword(e.target.checked)} />
+                  <span>Show password</span>
+                </label>
+
+                <div className="um-label">Role</div>
+                <div className="um-seg um-seg-wide">
+                  {['user', 'admin', ...(user.role === 'super_admin' ? ['super_admin'] : [])].map((r) => (
+                    <button key={r} type="button" className={userForm.role === r ? 'on' : ''} onClick={() => setUserForm({ ...userForm, role: r })}>
+                      {roleLabel(r)}
+                    </button>
+                  ))}
+                </div>
+
+                {userForm.role === 'user' ? (
+                  <>
+                    <div className="um-label">Application access</div>
+                    <div className="um-apps">
+                      {APP_GROUPS.map((group) => (
+                        <div key={group.key} className="um-group">
+                          <div className="um-group-head"><span>{group.label}</span></div>
+                          {group.apps.map((app) => (
+                            <div key={app.id} className="um-app-row">
+                              <span>{app.label}</span>
+                              <div className="um-seg">
+                                <button type="button" className={!createAllowed[app.id] ? 'on' : ''} onClick={() => setCreateAllowed({ ...createAllowed, [app.id]: false })}>No access</button>
+                                <button type="button" className={createAllowed[app.id] ? 'on' : ''} onClick={() => setCreateAllowed({ ...createAllowed, [app.id]: true })}>Access</button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <p className="um-hint">Admins and superadmins open every application, plus Administration.</p>
+                )}
+
+                <div className="um-modal-foot">
+                  <button type="button" className="um-ghost" onClick={() => setCreateOpen(false)}>Cancel</button>
+                  <button type="submit" className="um-done" disabled={busy}>{busy ? 'Creating...' : 'Create account'}</button>
+                </div>
+              </form>
+            </div>
+          )}
+        </>
+        );
+      })()}
+
+      {effectiveAdminTab === 'mapping' && (
       <>
       <section className="card admin-context-card">
         <div>
@@ -1784,7 +1943,7 @@ export default function AdminPanel({
           <p className="muted">{selectedTemplate ? `Currently editing ${selectedTemplate.title}.` : 'Select a template in the Templates tab before mapping fields.'}</p>
         </div>
         <div className="actions">
-          <button type="button" onClick={() => setActiveAdminTab('templates')}>Open Templates Tab</button>
+          <button type="button" onClick={() => goTab('templates')}>Open Templates Tab</button>
         </div>
       </section>
 
@@ -2212,7 +2371,7 @@ export default function AdminPanel({
       </>
       )}
 
-      {activeAdminTab === 'home' && (
+      {effectiveAdminTab === 'home' && (
       <>
       <section className="admin-stats-grid">
         {adminOverviewStats.map((stat) => (
@@ -2266,7 +2425,7 @@ export default function AdminPanel({
       </>
       )}
 
-      {activeAdminTab === 'workflow' && (
+      {effectiveAdminTab === 'workflow' && (
       <>
       <section className="card admin-context-card">
         <div>
@@ -2274,7 +2433,7 @@ export default function AdminPanel({
           <p className="muted">{selectedTemplate ? `Managing ${selectedTemplate.title}.` : 'Select a template in the Templates tab before managing workflow.'}</p>
         </div>
         <div className="actions">
-          <button type="button" onClick={() => setActiveAdminTab('templates')}>Open Templates Tab</button>
+          <button type="button" onClick={() => goTab('templates')}>Open Templates Tab</button>
         </div>
       </section>
 
@@ -2458,7 +2617,7 @@ export default function AdminPanel({
       </>
       )}
 
-      {activeAdminTab === 'auto-reply' && (
+      {effectiveAdminTab === 'auto-reply' && (
       <>
       {/* ── Lightbox ── */}
       {arLightbox && (
@@ -2740,7 +2899,7 @@ export default function AdminPanel({
       )}
 
       {/* ── QR Link tab ── */}
-      {activeAdminTab === 'qr-link' && (
+      {effectiveAdminTab === 'qr-link' && (
         <section className="card">
           <h3>QR Link</h3>
           <p className="muted" style={{ marginBottom: 16 }}>
@@ -2876,7 +3035,7 @@ export default function AdminPanel({
       )}
 
       {/* ── Tracking tab ── */}
-      {activeAdminTab === 'tracking' && (
+      {effectiveAdminTab === 'tracking' && (
         <section className="card">
           <h3>Tracker Configuration</h3>
           <p className="muted" style={{ marginBottom: 16 }}>
@@ -3185,12 +3344,106 @@ export default function AdminPanel({
       )}
 
       {/* ── Tracking live map ── */}
-      {activeAdminTab === 'tracking' && (
+      {effectiveAdminTab === 'tracking' && (
         <section className="card" style={{ marginTop: 24 }}>
           <h3>Live Vehicle Map</h3>
           <VehicleMap token={token} />
         </section>
       )}
+    </>
+  );
+
+  if (embeddedMode) {
+    return <div className="v2-embedded-panel">{contentArea}</div>;
+  }
+
+
+  return (
+    <div className="layout user-shell admin-shell">
+      <ProfileSidebar
+        open={isSidebarOpen}
+        onClose={() => setIsSidebarOpen(false)}
+        token={token}
+        user={user}
+        onUserUpdated={onSessionUserUpdate}
+        theme={theme}
+        onToggleTheme={onToggleTheme}
+        onLogout={onLogout}
+      />
+
+      <aside className="user-sidebar">
+        <div className="user-sidebar-brand">
+          <img
+            className="user-brand-logo"
+            src="/imperial-network-logo.svg"
+            alt="Imperial Network Incorporated"
+          />
+          <span className="user-brand-caption">Admin portal</span>
+        </div>
+
+        <nav className="user-nav user-nav--main">
+          {adminTabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              className={activeAdminTab === tab.id ? 'user-nav-btn active' : 'user-nav-btn'}
+              aria-current={activeAdminTab === tab.id ? 'page' : undefined}
+              onClick={() => setActiveAdminTab(tab.id)}
+            >
+              <span className={`user-nav-chip user-nav-chip--${tab.id}`}>{tab.chip}</span>
+              <span>{tab.label}</span>
+            </button>
+          ))}
+        </nav>
+
+        <div className="user-sidebar-spacer" />
+      </aside>
+
+      <main className="user-main">
+        <header className="topbar user-main-topbar">
+          <div>
+            <div className="user-breadcrumb">
+              <span>Admin console</span>
+              <span>/</span>
+              <strong>{activeTabMeta.label}</strong>
+              {templateScopedTabs.includes(activeAdminTab) && selectedTemplate && (
+                <>
+                  <span>/</span>
+                  <span>{selectedTemplate.title}</span>
+                </>
+              )}
+            </div>
+            <h2>{activeTabMeta.title}</h2>
+            <p className="muted user-main-subtitle">{activeTabMeta.description}</p>
+          </div>
+          <div className="admin-topbar-actions">
+            {templateScopedTabs.includes(activeAdminTab) && (
+              <label className="admin-topbar-template">
+                <span>Focus template</span>
+                <select
+                  id="admin-topbar-template"
+                  name="focus_template"
+                  value={selectedTemplateId}
+                  onChange={(e) => setSelectedTemplateId(e.target.value)}
+                >
+                  <option value="">Select template</option>
+                  {templates.map((tpl) => (
+                    <option key={tpl.id} value={tpl.id}>{tpl.title}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <button
+              type="button"
+              className="avatar-trigger user-main-settings"
+              onClick={() => setIsSidebarOpen(true)}
+              title="Open settings"
+            >
+              <img className="avatar avatar-md" src={resolveAvatar(user)} alt={user.name} />
+            </button>
+          </div>
+        </header>
+      {contentArea}
       </main>
     </div>
   );

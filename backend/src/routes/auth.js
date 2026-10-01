@@ -5,6 +5,7 @@ import rateLimit from 'express-rate-limit';
 import { v4 as uuidv4 } from 'uuid';
 import { query } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
+import { logAccount } from '../services/accountAudit.js';
 
 const router = express.Router();
 const allowedRoles = ['super_admin', 'admin', 'user'];
@@ -75,7 +76,8 @@ function mapUser(row) {
     role: row.role,
     avatar_url: row.avatar_url || null,
     favorite_template_id: row.favorite_template_id || null,
-    last_active_at: row.last_active_at || null
+    last_active_at: row.last_active_at || null,
+    section_permissions: row.section_permissions || null
   };
 }
 
@@ -153,19 +155,20 @@ router.post('/login', authLimiter, async (req, res) => {
     }
 
     let result = await query(
-      'SELECT id, name, email, password_hash, role, avatar_url, favorite_template_id, last_active_at, token_version FROM users WHERE LOWER(email) = $1',
+      'SELECT id, name, email, password_hash, role, avatar_url, favorite_template_id, last_active_at, token_version, section_permissions, disabled_at FROM users WHERE LOWER(email) = $1',
       [normalizedLogin]
     );
 
     if (result.rowCount === 0) {
       result = await query(
-        'SELECT id, name, email, password_hash, role, avatar_url, favorite_template_id, last_active_at, token_version FROM users WHERE LOWER(name) = $1',
+        'SELECT id, name, email, password_hash, role, avatar_url, favorite_template_id, last_active_at, token_version, section_permissions, disabled_at FROM users WHERE LOWER(name) = $1',
         [normalizedLogin]
       );
     }
 
     if (result.rowCount === 0) {
       noteFailedLogin(normalizedLogin);
+      await logAccount(req, { action: 'login.fail', actor: null, targetName: null, detail: 'unknown account name' });
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
@@ -178,7 +181,13 @@ router.post('/login', authLimiter, async (req, res) => {
 
     if (!valid) {
       noteFailedLogin(normalizedLogin);
+      await logAccount(req, { action: 'login.fail', actor: null, targetName: user.name, detail: 'wrong password' });
       return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    if (user.disabled_at) {
+      await logAccount(req, { action: 'login.denied', actor: null, targetName: user.name, detail: 'account disabled' });
+      return res.status(403).json({ error: 'This account is disabled. Ask an administrator to enable it.' });
     }
 
     failedLogins.delete(normalizedLogin);
@@ -198,6 +207,8 @@ router.post('/login', authLimiter, async (req, res) => {
       { expiresIn: remember_me ? '7d' : '12h' }
     );
 
+    await logAccount(req, { action: 'login.ok', actor: user, targetName: user.name });
+
     return res.json({
       token,
       user: mapUser(user)
@@ -210,7 +221,7 @@ router.post('/login', authLimiter, async (req, res) => {
 router.get('/me', requireAuth, async (req, res) => {
   try {
     const result = await query(
-      'SELECT id, name, email, role, avatar_url, favorite_template_id, last_active_at FROM users WHERE id = $1',
+      'SELECT id, name, email, role, avatar_url, favorite_template_id, last_active_at, section_permissions FROM users WHERE id = $1',
       [req.user.id]
     );
     if (result.rowCount === 0) {
@@ -280,7 +291,7 @@ router.patch('/me', requireAuth, async (req, res) => {
       `UPDATE users
        SET ${updates.join(', ')}
        WHERE id = $${params.length}
-       RETURNING id, name, email, role, avatar_url, favorite_template_id, last_active_at`,
+       RETURNING id, name, email, role, avatar_url, favorite_template_id, last_active_at, section_permissions`,
       params
     );
 
