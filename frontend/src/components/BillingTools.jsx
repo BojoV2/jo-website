@@ -1012,10 +1012,20 @@ const TOOL_COMPONENTS = {
   ticketing:           Ticketing,
 };
 
-export default function BillingTools({ token }) {
+export default function BillingTools({ token, forcedTool = null }) {
   const [activeTool, setActiveTool] = useState('client-lookup');
-  const ActiveComponent = TOOL_COMPONENTS[activeTool];
   const effectiveToken = token || getSessionToken();
+
+  if (forcedTool && TOOL_COMPONENTS[forcedTool]) {
+    const ForcedComponent = TOOL_COMPONENTS[forcedTool];
+    return (
+      <div className="card bt-single">
+        <ForcedComponent key={forcedTool} token={effectiveToken} />
+      </div>
+    );
+  }
+
+  const ActiveComponent = TOOL_COMPONENTS[activeTool];
 
   return (
     <div className="card bt-shell">

@@ -197,7 +197,8 @@ export default function AdminPanel({
   onToggleTheme,
   onSessionUserUpdate,
   embeddedMode = false,
-  forcedTab = null
+  forcedTab = null,
+  onNavigate = null
 }) {
   const [templates, setTemplates] = useState([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
@@ -209,6 +210,7 @@ export default function AdminPanel({
   const [monthlyReportRange, setMonthlyReportRange] = useState(DEFAULT_MONTHLY_RANGE);
   const [activeAdminTab, setActiveAdminTab] = useState('home');
   const effectiveAdminTab = forcedTab ?? activeAdminTab;
+  const goTab = (tabId) => (embeddedMode && onNavigate ? onNavigate(tabId) : setActiveAdminTab(tabId));
   const [activeStatus, setActiveStatus] = useState('pending');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -232,6 +234,7 @@ export default function AdminPanel({
     role: 'user'
   });
   const [showCreatePassword, setShowCreatePassword] = useState(false);
+  const [createPerms, setCreatePerms] = useState({ pdf_creation: true, applications: true, tools: true });
   const [presetForm, setPresetForm] = useState({
     name: '',
     field_type: 'text',
@@ -613,7 +616,7 @@ export default function AdminPanel({
         .catch((err) => setMessage(err.message));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeAdminTab]);
+  }, [effectiveAdminTab]);
 
   useEffect(() => {
     if (!selectedTemplateId) return;
@@ -647,7 +650,7 @@ export default function AdminPanel({
       if (frameB) cancelAnimationFrame(frameB);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeAdminTab, pdfDoc, fieldForm.page_number]);
+  }, [effectiveAdminTab, pdfDoc, fieldForm.page_number]);
 
   useEffect(() => {
     if (effectiveAdminTab !== 'mapping' || !pdfDoc || !stageRef.current || typeof ResizeObserver === 'undefined') {
@@ -669,7 +672,7 @@ export default function AdminPanel({
       if (frame) cancelAnimationFrame(frame);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeAdminTab, pdfDoc, fieldForm.page_number]);
+  }, [effectiveAdminTab, pdfDoc, fieldForm.page_number]);
 
   useEffect(() => {
     const onResize = () => {
@@ -742,12 +745,21 @@ export default function AdminPanel({
     setBusy(true);
     setMessage('');
     try {
-      await apiRequest('/users', {
+      const created = await apiRequest('/users', {
         method: 'POST',
         token,
         body: userForm
       });
+      const restricted = Object.values(createPerms).some((allowed) => !allowed);
+      if (userForm.role === 'user' && restricted && created?.id) {
+        await apiRequest(`/users/${created.id}/permissions`, {
+          method: 'PATCH',
+          token,
+          body: { section_permissions: createPerms }
+        });
+      }
       setUserForm({ name: '', email: '', password: '', role: 'user' });
+      setCreatePerms({ pdf_creation: true, applications: true, tools: true });
       await loadUsers();
       setMessage('User account created.');
     } catch (err) {
@@ -1413,8 +1425,28 @@ export default function AdminPanel({
 
   // ── Embedded mode (for MainPanel shell) ────────────────────────────
   // eslint-disable-next-line react/jsx-no-useless-fragment
+  const embeddedToolbar = embeddedMode && templateScopedTabs.includes(effectiveAdminTab) ? (
+    <div className="noc-toolbar">
+      <label className="noc-toolbar-field">
+        <span>Focus template</span>
+        <select
+          id="embedded-admin-template"
+          name="embedded_focus_template"
+          value={selectedTemplateId}
+          onChange={(e) => setSelectedTemplateId(e.target.value)}
+        >
+          <option value="">Select template</option>
+          {templates.map((tpl) => (
+            <option key={tpl.id} value={tpl.id}>{tpl.title}</option>
+          ))}
+        </select>
+      </label>
+    </div>
+  ) : null;
+
   const contentArea = (
     <>
+      {embeddedToolbar}
 
       {message && (
         <div className={`notice ${messageTone(message)}`}>
@@ -1434,9 +1466,9 @@ export default function AdminPanel({
             </span>
           </div>
           <div className="admin-quick-actions">
-            <button type="button" onClick={() => setActiveAdminTab('templates')}>Manage Templates</button>
-            <button type="button" onClick={() => setActiveAdminTab('mapping')}>Map Fields</button>
-            <button type="button" onClick={() => setActiveAdminTab('workflow')}>Open Workflow</button>
+            <button type="button" onClick={() => goTab('templates')}>Manage Templates</button>
+            <button type="button" onClick={() => goTab('mapping')}>Map Fields</button>
+            <button type="button" onClick={() => goTab('workflow')}>Open Workflow</button>
           </div>
         </section>
       )}
@@ -1605,7 +1637,7 @@ export default function AdminPanel({
       )}
 
       {effectiveAdminTab === 'users' && (
-      <section className="grid two">
+      <section className="grid two users-grid">
         <form className="card" onSubmit={submitUser}>
           <h3>Create User Account</h3>
           <p className="muted">User can login using name or email.</p>
@@ -1664,6 +1696,25 @@ export default function AdminPanel({
             <option value="admin">admin</option>
             {user.role === 'super_admin' && <option value="super_admin">super_admin</option>}
           </select>
+          {userForm.role === 'user' && (
+            <fieldset className="perm-fieldset">
+              <legend>Section access</legend>
+              {[
+                { key: 'pdf_creation', label: 'PDF Creation' },
+                { key: 'applications', label: 'Applications' },
+                { key: 'tools', label: 'Tools' },
+              ].map(({ key, label }) => (
+                <label key={key} className="perm-check">
+                  <input
+                    type="checkbox"
+                    checked={createPerms[key]}
+                    onChange={() => setCreatePerms({ ...createPerms, [key]: !createPerms[key] })}
+                  />
+                  <span>{label}</span>
+                </label>
+              ))}
+            </fieldset>
+          )}
           <button disabled={busy}>{busy ? 'Saving...' : 'Create User'}</button>
         </form>
 
@@ -1677,6 +1728,7 @@ export default function AdminPanel({
                   <th>Name</th>
                   <th>Email</th>
                   <th>Role</th>
+                  <th>Access</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -1691,7 +1743,14 @@ export default function AdminPanel({
                     </td>
                     <td>{u.email}</td>
                     <td>{u.role}</td>
-                    <td className="actions">
+                    <td>
+                      {u.role !== 'user'
+                        ? <span className="perm-pill all">Everything</span>
+                        : [['pdf_creation', 'PDF'], ['applications', 'Apps'], ['tools', 'Tools']].map(([key, label]) => (
+                          <span key={key} className={u.section_permissions?.[key] === false ? 'perm-pill off' : 'perm-pill'}>{label}</span>
+                        ))}
+                    </td>
+                    <td className="actions user-actions">
                       <button type="button" onClick={() => changeUserPassword(u.id)}>Change PW</button>
                       <button type="button" onClick={() => resetAndShowUserPassword(u.id)}>View Temp</button>
                       {u.role === 'user' && (
@@ -1713,7 +1772,7 @@ export default function AdminPanel({
                 ))}
                 {users.length === 0 && (
                   <tr>
-                    <td colSpan="4">No users found.</td>
+                    <td colSpan="5">No users found.</td>
                   </tr>
                 )}
               </tbody>
@@ -1787,7 +1846,7 @@ export default function AdminPanel({
           <p className="muted">{selectedTemplate ? `Currently editing ${selectedTemplate.title}.` : 'Select a template in the Templates tab before mapping fields.'}</p>
         </div>
         <div className="actions">
-          <button type="button" onClick={() => setActiveAdminTab('templates')}>Open Templates Tab</button>
+          <button type="button" onClick={() => goTab('templates')}>Open Templates Tab</button>
         </div>
       </section>
 
@@ -2277,7 +2336,7 @@ export default function AdminPanel({
           <p className="muted">{selectedTemplate ? `Managing ${selectedTemplate.title}.` : 'Select a template in the Templates tab before managing workflow.'}</p>
         </div>
         <div className="actions">
-          <button type="button" onClick={() => setActiveAdminTab('templates')}>Open Templates Tab</button>
+          <button type="button" onClick={() => goTab('templates')}>Open Templates Tab</button>
         </div>
       </section>
 

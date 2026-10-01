@@ -381,7 +381,9 @@ export default function UserPanel({
   onSessionUserUpdate,
   embeddedMode = false,
   forcedView = null,
-  forcedUserSection = null
+  forcedUserSection = null,
+  forcedTool = null,
+  onNavigate = null
 }) {
   const [templates, setTemplates] = useState([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
@@ -785,7 +787,8 @@ export default function UserPanel({
   }, [templates, user?.favorite_template_id, user?.id, selectedTemplateId]);
 
   useEffect(() => {
-    writeStoredTemplateId(user?.id, selectedTemplateId);
+    // the empty first-render value must not wipe the choice another view just stored
+    if (selectedTemplateId) writeStoredTemplateId(user?.id, selectedTemplateId);
   }, [selectedTemplateId, user?.id]);
 
   useEffect(() => {
@@ -1290,8 +1293,28 @@ export default function UserPanel({
 
   // ── Embedded mode (for MainPanel shell) ────────────────────────────
   // eslint-disable-next-line react/jsx-no-useless-fragment
+  const embeddedToolbar = embeddedMode && ['analytics', 'mypdfs'].includes(effectiveView) ? (
+    <div className="noc-toolbar">
+      <label className="noc-toolbar-field">
+        <span>Template</span>
+        <select
+          id="embedded-template"
+          name="embedded_template"
+          value={selectedTemplateId}
+          onChange={(e) => setSelectedTemplateId(e.target.value)}
+        >
+          <option value="">Select template</option>
+          {orderedTemplates.map((tpl) => (
+            <option key={tpl.id} value={tpl.id}>{tpl.title}</option>
+          ))}
+        </select>
+      </label>
+    </div>
+  ) : null;
+
   const contentArea = (
     <>
+      {embeddedToolbar}
 
       {message && (
         <div className={`notice ${messageTone(message)}`} role="status" aria-live="polite">
@@ -1302,13 +1325,13 @@ export default function UserPanel({
 
       {effectiveView === 'tools' && (
         <section className="tools-page">
-          <BillingTools token={token} />
+          <BillingTools token={token} forcedTool={forcedTool} />
         </section>
       )}
 
       {effectiveView === 'profiling' && (
         <section className="tools-page">
-          <Profiling token={token} user={user} mode="user" />
+          <Profiling token={token} user={user} mode={user.role === 'super_admin' || user.role === 'admin' ? 'admin' : 'user'} />
         </section>
       )}
 
@@ -1321,6 +1344,44 @@ export default function UserPanel({
       {effectiveView === 'macfinder' && (
         <section className="tools-page">
           <MacFinderFrame />
+        </section>
+      )}
+
+      {effectiveView === 'templates' && (
+        <section className="tpl-gallery">
+          {orderedTemplates.map((tpl) => {
+            const pinned = user?.favorite_template_id === tpl.id;
+            return (
+              <article key={tpl.id} className={pinned ? 'tpl-gallery-card pinned' : 'tpl-gallery-card'}>
+                <div className="tpl-gallery-head">
+                  <span className="tpl-gallery-title">{tpl.title}</span>
+                  <span className="tpl-gallery-version">v{tpl.version || 1}</span>
+                </div>
+                <p className="tpl-gallery-desc">{tpl.description || 'No description.'}</p>
+                <div className="tpl-gallery-actions">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      writeStoredTemplateId(user?.id, tpl.id);
+                      setSelectedTemplateId(tpl.id);
+                      if (onNavigate) onNavigate('create');
+                    }}
+                  >
+                    Use template
+                  </button>
+                  <button
+                    type="button"
+                    className="tpl-gallery-pin"
+                    onClick={() => setFavoriteTemplate(tpl.id)}
+                    disabled={pinned}
+                  >
+                    {pinned ? 'Pinned' : 'Pin'}
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+          {templates.length === 0 && <p className="muted">No templates available yet.</p>}
         </section>
       )}
 
@@ -1533,7 +1594,8 @@ export default function UserPanel({
       </div>
       </>)}
 
-      {effectiveView === 'analytics' && (<>
+      {(effectiveView === 'analytics' || effectiveView === 'mypdfs') && (<>
+      {effectiveView === 'analytics' && (
       <section id="user-section-analytics" className="card">
         <h3>Template Analytics</h3>
         <p className="muted">Current month metrics for the selected template.</p>
@@ -1569,7 +1631,9 @@ export default function UserPanel({
           <p className="muted">Select a template to view analytics.</p>
         )}
       </section>
+      )}
 
+      {(effectiveView === 'mypdfs' || !embeddedMode) && (
       <section id="user-section-history" className="card">
         <div className="actions" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
           <h3>My Generated PDFs</h3>
@@ -1813,7 +1877,9 @@ export default function UserPanel({
         </div>
 
       </section>
+      )}
 
+      {effectiveView === 'analytics' && (
       <section id="user-section-preview" className="card">
         <div className="actions" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
           <h3>Template Preview Mapper</h3>
@@ -1863,6 +1929,7 @@ export default function UserPanel({
           </>
         )}
       </section>
+      )}
 
       </>)}
 
