@@ -18,6 +18,42 @@ async function tokenVersionFor(userId) {
   return value;
 }
 
+// Shared by both entry points so a disabled, signed-out or deleted account is
+// refused everywhere, including the <img> routes that carry the token in the URL.
+function acceptToken(token, req, res, next, { heartbeat }) {
+  let decoded;
+  try {
+    decoded = jwt.verify(String(token), process.env.JWT_SECRET);
+  } catch (_err) {
+    return res.status(401).json({ error: 'Invalid token' });
+  }
+
+  if (!decoded?.id) {
+    req.user = decoded;
+    return next();
+  }
+
+  return tokenVersionFor(decoded.id)
+    .then((current) => {
+      if (current === null) {
+        return res.status(401).json({ error: 'Account no longer exists' });
+      }
+      if (current === 'disabled') {
+        return res.status(401).json({ error: 'This account is disabled.' });
+      }
+      if (Number(decoded.tv ?? 0) !== Number(current)) {
+        return res.status(401).json({ error: 'Session ended. Please sign in again.' });
+      }
+      req.user = decoded;
+      if (heartbeat) {
+        // Best-effort activity heartbeat; never block request flow if it fails.
+        void query('UPDATE users SET last_active_at = NOW() WHERE id = $1', [decoded.id]).catch(() => {});
+      }
+      return next();
+    })
+    .catch(() => res.status(401).json({ error: 'Invalid token' }));
+}
+
 export function requireAuth(req, res, next) {
   const authHeader = req.headers.authorization || '';
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
@@ -25,35 +61,7 @@ export function requireAuth(req, res, next) {
   if (!token) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
-
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-    if (decoded?.id) {
-      return tokenVersionFor(decoded.id)
-        .then((current) => {
-          if (current === null) {
-            return res.status(401).json({ error: 'Account no longer exists' });
-          }
-          if (current === 'disabled') {
-            return res.status(401).json({ error: 'This account is disabled.' });
-          }
-          if (Number(decoded.tv ?? 0) !== Number(current)) {
-            return res.status(401).json({ error: 'Session ended. Please sign in again.' });
-          }
-          req.user = decoded;
-          // Best-effort activity heartbeat; never block request flow if it fails.
-          void query('UPDATE users SET last_active_at = NOW() WHERE id = $1', [decoded.id]).catch(() => {});
-          return next();
-        })
-        .catch(() => res.status(401).json({ error: 'Invalid token' }));
-    }
-
-    req.user = decoded;
-    return next();
-  } catch (_err) {
-    return res.status(401).json({ error: 'Invalid token' });
-  }
+  return acceptToken(token, req, res, next, { heartbeat: true });
 }
 
 /* <img src> cannot send an Authorization header, which is why the image routes
@@ -66,13 +74,7 @@ export function requireAuthOrQueryToken(req, res, next) {
   if (!token) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
-
-  try {
-    req.user = jwt.verify(String(token), process.env.JWT_SECRET);
-    return next();
-  } catch (_err) {
-    return res.status(401).json({ error: 'Invalid token' });
-  }
+  return acceptToken(token, req, res, next, { heartbeat: false });
 }
 
 export function forgetTokenVersion(userId) {

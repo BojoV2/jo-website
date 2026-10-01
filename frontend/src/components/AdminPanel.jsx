@@ -235,6 +235,7 @@ export default function AdminPanel({
   const [openingPdfId, setOpeningPdfId] = useState(null);
   const [users, setUsers] = useState([]);
   const [manageId, setManageId] = useState(null);
+  const [tempPassword, setTempPassword] = useState(null); // { name, value, copied }
   const [createOpen, setCreateOpen] = useState(false);
   const [accountQuery, setAccountQuery] = useState('');
   const [auditEvents, setAuditEvents] = useState([]);
@@ -1457,12 +1458,14 @@ export default function AdminPanel({
         method: 'POST',
         token
       });
+      // the password is shown, not only copied: a failed clipboard write must not
+      // leave an account with a password nobody knows
+      const account = users.find((u) => u.id === userId);
       if (result.temp_password) {
-        await navigator.clipboard.writeText(result.temp_password);
-        setMessage('Password reset. The temporary password is on your clipboard - paste it to the person. Their sessions were signed out.');
-      } else {
-        setMessage('Password reset.');
+        setTempPassword({ name: account?.name || 'this account', value: result.temp_password, copied: false });
       }
+      setMessage('Password reset. Their sessions were signed out.');
+      await loadAudit();
     } catch (err) {
       setMessage(err.message);
     } finally {
@@ -1856,6 +1859,38 @@ export default function AdminPanel({
                     Delete
                   </button>
                   <button type="button" className="um-done" onClick={() => setManageId(null)}>Done</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {tempPassword && (
+            <div className="modal-backdrop" role="presentation">
+              <div className="modal-card um-modal um-temp" role="dialog" aria-modal="true" aria-labelledby="um-temp-title">
+                <h3 id="um-temp-title">Temporary password for {tempPassword.name}</h3>
+                <p className="um-muted um-modal-sub">Give this to the person. It is shown only once; they can change it from their profile after signing in.</p>
+                <div className="um-temp-row">
+                  <code className="um-temp-value">{tempPassword.value}</code>
+                  <button
+                    type="button"
+                    className="um-ghost"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(tempPassword.value);
+                        setTempPassword({ ...tempPassword, copied: true });
+                      } catch (_err) {
+                        setTempPassword({ ...tempPassword, copied: 'failed' });
+                      }
+                    }}
+                  >
+                    {tempPassword.copied === true ? 'Copied' : 'Copy'}
+                  </button>
+                </div>
+                {tempPassword.copied === 'failed' && (
+                  <p className="um-hint">Copy is blocked in this browser - select the password above and copy it by hand.</p>
+                )}
+                <div className="um-modal-foot">
+                  <button type="button" className="um-done" onClick={() => setTempPassword(null)}>Done</button>
                 </div>
               </div>
             </div>

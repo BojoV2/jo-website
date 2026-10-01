@@ -7,6 +7,9 @@
 #   sudo docker compose up -d
 services:
   backend:
+    # plain node, not nodemon: a stray file edit must not restart the live API,
+    # and a crash is left to the restart policy + healthcheck to surface
+    command: sh -c "npm install && npm start"
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://localhost:8080/health >/dev/null || exit 1"]
       interval: 30s

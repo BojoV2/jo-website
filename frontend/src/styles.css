@@ -7249,3 +7249,27 @@ div.fe-kpi { cursor: default; }
 .pf .pf-folder-admin button.btn-danger {
   margin-left: 0;
 }
+
+/* one-time temporary password after a reset */
+.noc-shell .um-temp {
+  width: min(480px, 94vw);
+}
+
+.um-temp-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.um-temp-value {
+  flex: 1;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-subtle);
+  color: var(--heading);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 15px;
+  user-select: all;
+  word-break: break-all;
+}
