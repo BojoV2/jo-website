@@ -14,6 +14,20 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS favorite_template_id UUID;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active_at TIMESTAMP;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS section_permissions JSONB DEFAULT NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS disabled_at TIMESTAMP NULL;
+
+CREATE TABLE IF NOT EXISTS account_audit (
+    id BIGSERIAL PRIMARY KEY,
+    at TIMESTAMP NOT NULL DEFAULT NOW(),
+    action VARCHAR(60) NOT NULL,
+    actor_id UUID,
+    actor_name VARCHAR(150),
+    target_name VARCHAR(150),
+    detail TEXT,
+    ip VARCHAR(64)
+);
+
+CREATE INDEX IF NOT EXISTS account_audit_at_idx ON account_audit (at DESC);
 
 CREATE TABLE IF NOT EXISTS pdf_templates (
     id UUID PRIMARY KEY,

@@ -10,9 +10,10 @@ const VERSION_TTL_MS = 30 * 1000;
 async function tokenVersionFor(userId) {
   const cached = tokenVersions.get(userId);
   if (cached && Date.now() - cached.at < VERSION_TTL_MS) return cached.value;
-  const result = await query('SELECT token_version FROM users WHERE id = $1', [userId]);
+  const result = await query('SELECT token_version, disabled_at FROM users WHERE id = $1', [userId]);
   if (result.rowCount === 0) return null;
-  const value = result.rows[0].token_version ?? 0;
+  // a disabled account has no valid version, so every token it holds is refused
+  const value = result.rows[0].disabled_at ? 'disabled' : (result.rows[0].token_version ?? 0);
   tokenVersions.set(userId, { value, at: Date.now() });
   return value;
 }
@@ -33,6 +34,9 @@ export function requireAuth(req, res, next) {
         .then((current) => {
           if (current === null) {
             return res.status(401).json({ error: 'Account no longer exists' });
+          }
+          if (current === 'disabled') {
+            return res.status(401).json({ error: 'This account is disabled.' });
           }
           if (Number(decoded.tv ?? 0) !== Number(current)) {
             return res.status(401).json({ error: 'Session ended. Please sign in again.' });
@@ -69,6 +73,10 @@ export function requireAuthOrQueryToken(req, res, next) {
   } catch (_err) {
     return res.status(401).json({ error: 'Invalid token' });
   }
+}
+
+export function forgetTokenVersion(userId) {
+  tokenVersions.delete(userId);
 }
 
 export function requireRole(...roles) {

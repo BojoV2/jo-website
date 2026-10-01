@@ -27,8 +27,34 @@ const statusTabs = ['pending', 'done', 'cancelled', 'rescheduled'];
 // read its real content height directly and grow the iframe to match -
 // removes the fixed-height inner scrollbar the user found cramped, letting
 // MAC-Finder's page flow into the normal page scroll instead.
-function MacFinderFrame() {
+const MAC_FINDER_THEME = {
+  light: `:root { --bg: #f4f8fc; --panel: #ffffff; --border: #dce6f0; --text: #15263a; --muted: #5f7186; --accent: #0ea5e9; --ok: #16a34a; --bad: #dc2626; --warn: #b45309; --skip: #94a3b8; }
+    body { background: var(--bg); color: var(--text); }
+    .field, .chart-panel { background: #f1f6fb; }
+    .config-block { background: #f1f6fb; color: #15263a; }
+    input[type=text] { background: #ffffff; }`,
+  dark: `:root { --bg: #050506; --panel: #111214; --border: #26292e; --text: #e6edf3; --muted: #8b949e; --accent: #38bdf8; }
+    .field, .chart-panel { background: #16181b; }
+    .config-block { background: #0c0d0f; color: #c9d1d9; }`,
+};
+
+function MacFinderFrame({ theme = 'light' }) {
   const ref = React.useRef(null);
+
+  const applyTheme = React.useCallback(() => {
+    try {
+      const doc = ref.current?.contentDocument;
+      if (!doc || !doc.head) return;
+      let style = doc.getElementById('jo-theme');
+      if (!style) {
+        style = doc.createElement('style');
+        style.id = 'jo-theme';
+        doc.head.appendChild(style);
+      }
+      style.textContent = MAC_FINDER_THEME[theme === 'dark' ? 'dark' : 'light'];
+    } catch (e) { /* frame mid-navigation - the load handler re-applies */ }
+  }, [theme]);
+
   React.useEffect(() => {
     const frame = ref.current;
     if (!frame) return undefined;
@@ -41,6 +67,7 @@ function MacFinderFrame() {
       } catch (e) { /* cross-origin during a brief navigation - ignore */ }
     }
     function onLoad() {
+      applyTheme();
       resize();
       try {
         observer = new ResizeObserver(resize);
@@ -48,17 +75,19 @@ function MacFinderFrame() {
       } catch (e) { /* ResizeObserver unavailable - the onLoad resize still ran once */ }
     }
     frame.addEventListener('load', onLoad);
+    if (frame.contentDocument?.readyState === 'complete') onLoad();
     return () => {
       frame.removeEventListener('load', onLoad);
       if (observer) observer.disconnect();
     };
-  }, []);
+  }, [applyTheme]);
+
   return (
     <iframe
       ref={ref}
       src="/mac-finder/"
       title="MAC-Finder"
-      style={{ width: '100%', minHeight: '600px', border: 'none', borderRadius: '8px', display: 'block' }}
+      style={{ width: '100%', minHeight: '600px', border: 'none', borderRadius: '6px', display: 'block' }}
     />
   );
 }
@@ -1343,7 +1372,7 @@ export default function UserPanel({
 
       {effectiveView === 'macfinder' && (
         <section className="tools-page">
-          <MacFinderFrame />
+          <MacFinderFrame theme={theme} />
         </section>
       )}
 

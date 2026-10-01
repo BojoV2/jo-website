@@ -1,6 +1,7 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import ProfileSidebar from './ProfileSidebar.jsx';
 import { resolveAvatar } from '../utils/avatar.js';
+import { canOpen } from '../appCatalogue.js';
 
 const AdminPanel = lazy(() => import('./AdminPanel.jsx'));
 const UserPanel = lazy(() => import('./UserPanel.jsx'));
@@ -12,10 +13,7 @@ const SECTION_COLORS = {
   admin: '#9333ea',
 };
 
-function canAccess(user, key) {
-  if (!user.section_permissions) return true;
-  return user.section_permissions[key] !== false;
-}
+const GROUP_OF_SECTION = { pdf: 'pdf_creation', apps: 'applications', tools: 'tools' };
 
 function greeting() {
   const h = new Date().getHours();
@@ -34,7 +32,7 @@ function buildCatalogue(user) {
   const isAdmin = user.role === 'super_admin' || user.role === 'admin';
   const sections = [];
 
-  if (canAccess(user, 'pdf_creation')) {
+  {
     const cards = [
       userCard('create', 'PC', 'Create PDF', 'Pick a template, fill in the form and generate the PDF.', 'create'),
       userCard('templates', 'TP', 'Templates', 'Browse every template, pin your favourite and start from one.', 'templates'),
@@ -46,7 +44,7 @@ function buildCatalogue(user) {
     sections.push({ key: 'pdf', label: 'PDF Creation', color: SECTION_COLORS.pdf, cards });
   }
 
-  if (canAccess(user, 'applications')) {
+  {
     sections.push({
       key: 'apps',
       label: 'Applications',
@@ -60,7 +58,7 @@ function buildCatalogue(user) {
     });
   }
 
-  if (canAccess(user, 'tools')) {
+  {
     sections.push({
       key: 'tools',
       label: 'Tools',
@@ -95,7 +93,13 @@ function buildCatalogue(user) {
     });
   }
 
-  return sections;
+  // per-application access: admin-only cards are role-gated above, the rest follow the account's grants
+  return sections
+    .map((section) => ({
+      ...section,
+      cards: section.cards.filter((card) => card.panel === 'admin' || canOpen(user, GROUP_OF_SECTION[section.key], card.id)),
+    }))
+    .filter((section) => section.cards.length > 0);
 }
 
 function readHash() {

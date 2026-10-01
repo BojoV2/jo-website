@@ -6497,32 +6497,6 @@ div.fe-kpi { cursor: default; }
   box-shadow: 0 0 0 3px var(--primary-soft);
 }
 
-/* user management: form narrow, table wide; actions inline instead of a tall stack */
-.noc-app .users-grid {
-  grid-template-columns: minmax(280px, 1fr) minmax(0, 2.2fr);
-  align-items: start;
-}
-
-.noc-app .users-grid .table-wrap {
-  overflow-x: auto;
-}
-
-.noc-app td.user-actions {
-  white-space: nowrap;
-}
-
-.noc-app td.user-actions button {
-  display: inline-block;
-  width: auto;
-  padding: 6px 10px;
-  margin: 2px 4px 2px 0;
-  font-size: 12px;
-}
-
-@media (max-width: 1100px) {
-  .noc-app .users-grid { grid-template-columns: 1fr; }
-}
-
 .perm-pill {
   display: inline-block;
   margin: 0 4px 4px 0;
@@ -6594,4 +6568,750 @@ div.fe-kpi { cursor: default; }
   -webkit-line-clamp: 4;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+/* User Management (NOC portal look) */
+.um-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+
+.noc-app input.um-search {
+  width: 240px;
+  height: 36px;
+  margin: 0;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.noc-app button.um-create {
+  width: auto;
+  height: 36px;
+  padding: 0 16px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.um-card {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--paper);
+  overflow: hidden;
+}
+
+.noc-app .um-table-wrap {
+  margin: 0;
+  border: 0;
+  overflow-x: auto;
+}
+
+.noc-app table.um-table {
+  border: 0;
+  border-radius: 0;
+  font-size: 13px;
+}
+
+.noc-app .um-table thead th {
+  background: var(--surface-subtle);
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.noc-app .um-table td {
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+  background: transparent;
+}
+
+.noc-app .um-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.um-row-disabled td {
+  opacity: 0.55;
+}
+
+.um-account {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.um-account strong {
+  color: var(--heading);
+  font-weight: 700;
+}
+
+.um-account span,
+.um-muted {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.um-role,
+.um-status,
+.um-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.um-role-super_admin { background: var(--primary-soft); color: var(--primary-strong); }
+.um-role-admin { background: rgba(147, 51, 234, 0.12); color: #7e22ce; }
+.um-role-user { background: var(--surface-strong); color: var(--muted); }
+
+.um-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.um-pill {
+  background: rgba(22, 163, 74, 0.1);
+  color: #15803d;
+  font-weight: 500;
+}
+
+.um-everything {
+  color: var(--muted);
+}
+
+.um-status { background: rgba(22, 163, 74, 0.12); color: #15803d; }
+.um-status-off { background: rgba(220, 38, 38, 0.12); color: #b91c1c; }
+
+.um-actions {
+  text-align: right;
+}
+
+.noc-app button.um-manage,
+.noc-app button.um-ghost {
+  width: auto;
+  padding: 6px 14px;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.noc-app button.um-manage:hover,
+.noc-app button.um-ghost:hover {
+  border-color: var(--primary);
+  filter: none;
+}
+
+.noc-app button.um-danger {
+  color: #dc2626;
+  border-color: rgba(220, 38, 38, 0.35);
+}
+
+/* audit trail */
+.um-audit {
+  padding: 16px 18px;
+}
+
+.um-audit h3 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+
+.um-audit h3 small {
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.um-audit ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.um-audit li {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.um-audit li:last-child {
+  border-bottom: 0;
+}
+
+.um-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: #16a34a;
+}
+
+.um-dot.bad {
+  background: #dc2626;
+}
+
+.um-audit-body {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.um-audit-body strong {
+  color: var(--heading);
+}
+
+.um-audit-body code {
+  display: block;
+  margin-top: 2px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.um-audit time {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* manage / create dialogs */
+.noc-shell .um-modal {
+  width: min(680px, 94vw);
+  max-height: 90vh;
+  overflow: auto;
+  padding: 20px 20px 16px;
+  border-radius: 10px;
+  background: var(--paper);
+}
+
+.um-modal h3 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.um-modal-sub {
+  margin: 2px 0 14px;
+}
+
+.um-label {
+  margin: 14px 0 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.um-label em {
+  font-style: normal;
+}
+
+.um-seg {
+  display: inline-flex;
+  padding: 3px;
+  gap: 2px;
+  border-radius: 999px;
+  background: var(--surface-strong);
+}
+
+.um-seg-wide {
+  display: flex;
+}
+
+.um-seg-wide button {
+  flex: 1;
+}
+
+.noc-shell .um-seg button {
+  width: auto;
+  padding: 6px 14px;
+  margin: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: none;
+}
+
+.noc-shell .um-seg button:hover {
+  transform: none;
+  filter: none;
+  color: var(--ink);
+}
+
+.noc-shell .um-seg button.on {
+  background: var(--paper);
+  color: var(--primary-strong);
+  box-shadow: 0 1px 3px rgba(15, 34, 53, 0.15);
+}
+
+.noc-shell .um-seg button:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+.noc-shell .um-seg button:disabled:not(.on) {
+  opacity: 0.5;
+}
+
+.um-apps {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.um-group-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: var(--surface-subtle);
+  border-bottom: 1px solid var(--line);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.um-group-all {
+  display: flex;
+  gap: 4px;
+}
+
+.noc-shell .um-group-all button {
+  width: auto;
+  padding: 2px 8px;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.um-app-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--heading);
+}
+
+.um-group:last-child .um-app-row:last-child {
+  border-bottom: 0;
+}
+
+.um-modal-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.noc-shell button.um-done {
+  width: auto;
+  margin: 0 0 0 auto;
+  padding: 8px 20px;
+  border-radius: 999px;
+}
+
+.um-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.um-modal label:not(.perm-check) {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: none;
+}
+
+.um-modal label input {
+  margin: 0;
+}
+
+.um-hint {
+  margin: -4px 0 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+:root[data-theme='dark'] .um-pill,
+:root[data-theme='dark'] .um-status { color: #4ade80; }
+:root[data-theme='dark'] .um-status-off { color: #f87171; }
+:root[data-theme='dark'] .um-role-admin { color: #c084fc; }
+
+@media (max-width: 640px) {
+  .um-form-grid { grid-template-columns: 1fr; }
+  .noc-app input.um-search { width: 100%; }
+  .um-toolbar { flex-wrap: wrap; }
+}
+
+/* Profiling restyle (NOC portal look) — same markup and behaviour, flat surfaces */
+.pf {
+  gap: 14px;
+}
+
+.pf .pf-stats {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--paper);
+  overflow: hidden;
+}
+
+.pf .pf-stat {
+  border: 0;
+  border-right: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  padding: 12px 16px;
+}
+
+.pf .pf-stat:last-child {
+  border-right: 0;
+}
+
+.pf .pf-stat span {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.pf .pf-stat strong {
+  font-family: 'Outfit', 'Plus Jakarta Sans', sans-serif;
+  font-size: 22px;
+  color: var(--heading);
+}
+
+.pf .pf-bar,
+.pf .pf-section,
+.pf .pf-upload,
+.pf .pf-message {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--paper);
+  box-shadow: none;
+}
+
+.pf .pf-crumb {
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.pf .pf-crumb:hover {
+  background: var(--primary-soft);
+  color: var(--primary-strong);
+}
+
+.pf .pf-crumb.active {
+  background: transparent;
+  color: var(--heading);
+}
+
+.pf .pf-search {
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-subtle);
+  font-size: 13px;
+}
+
+.pf .pf-search:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-soft);
+}
+
+.pf .pf-bar-actions button {
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.pf .pf-bar-actions button:not(.pf-primary) {
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.pf .pf-section-head h4 {
+  font-family: 'Outfit', 'Plus Jakarta Sans', sans-serif;
+  font-size: 15px;
+}
+
+.pf .pf-count {
+  background: var(--surface-strong);
+  color: var(--muted);
+}
+
+/* folder cards = NOC home cards */
+.pf .pf-folder-grid {
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 12px;
+}
+
+.pf .pf-folder {
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--paper);
+  box-shadow: 0 1px 2px rgba(15, 34, 53, 0.04);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.pf .pf-folder:hover {
+  border-color: var(--primary);
+  box-shadow: 0 6px 18px rgba(14, 165, 233, 0.12);
+}
+
+.pf .pf-folder-open {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.pf .pf-folder-open:hover {
+  transform: none;
+  filter: none;
+}
+
+.pf-chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  background: #0ea5e9;
+}
+
+.pf-chip--auto { background: #16a34a; }
+.pf-chip--manual { background: #6366f1; }
+
+.pf-folder-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.pf .pf-folder-name {
+  font-family: 'Outfit', 'Plus Jakarta Sans', sans-serif;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--heading);
+}
+
+.pf .pf-folder-meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.pf .pf-folder-badges:empty {
+  display: none;
+}
+
+.pf .pf-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.pf .pf-badge--template { background: var(--primary-soft); color: var(--primary-strong); }
+.pf .pf-badge--auto { background: rgba(22, 163, 74, 0.12); color: #15803d; }
+
+/* admin actions: quiet text buttons instead of a wall of solid buttons */
+.pf .pf-folder-admin {
+  gap: 2px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.pf .pf-folder-admin button {
+  padding: 3px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.pf .pf-folder-admin button:hover {
+  transform: none;
+  filter: none;
+  background: var(--primary-soft);
+  color: var(--primary-strong);
+}
+
+.pf .pf-folder-admin button.btn-danger {
+  margin-left: auto;
+  color: #dc2626;
+}
+
+.pf .pf-folder-admin button.btn-danger:hover {
+  background: rgba(220, 38, 38, 0.1);
+  color: #b91c1c;
+}
+
+/* tables like the User Management table */
+.pf .table-wrap {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow-x: auto;
+}
+
+.pf .pf-table {
+  border: 0;
+  border-radius: 0;
+}
+
+.pf .pf-table thead th {
+  background: var(--surface-subtle);
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align: left;
+}
+
+.pf .pf-table td {
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+}
+
+.pf .pf-table .actions button,
+.pf .pf-more button,
+.pf .pf-clear-search {
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.pf .pf-table .actions button.btn-danger {
+  color: #dc2626;
+  border-color: rgba(220, 38, 38, 0.35);
+}
+
+.pf .pf-file-glyph {
+  width: 34px;
+  height: 28px;
+  border-radius: 6px;
+}
+
+/* dialogs */
+.pf .pf-modal-backdrop {
+  z-index: 70;
+  backdrop-filter: none;
+}
+
+.pf .pf-modal {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper);
+  box-shadow: 0 24px 60px rgba(10, 25, 45, 0.25);
+}
+
+.pf .pf-modal-actions button {
+  border-radius: 999px;
+}
+
+.pf .pf-locked-note {
+  border-radius: 6px;
+}
+
+:root[data-theme='dark'] .pf .pf-badge--auto { color: #4ade80; }
+
+.pf .pf-folder-admin {
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.pf .pf-folder-admin button {
+  padding: 3px 6px;
+  white-space: nowrap;
+}
+
+:root[data-theme='dark'] .pf .pf-folder-admin button.btn-danger,
+.pf .pf-folder-admin button.btn-danger {
+  background: transparent;
+  border: 0;
+}
+
+/* keep Reset / Disable / Delete / Done in view while the app list scrolls */
+.noc-shell .um-modal .um-modal-foot {
+  position: sticky;
+  bottom: -16px;
+  margin: 18px -20px -16px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--line);
+  background: var(--paper);
+}
+
+.pf .pf-folder-admin {
+  justify-content: space-between;
+  overflow: visible;
+}
+
+.pf .pf-folder-admin button {
+  padding: 2px 4px;
+  font-size: 11.5px;
+}
+
+.pf .pf-folder-admin button.btn-danger {
+  margin-left: 0;
 }
