@@ -7,9 +7,9 @@
   --heading: #112b47;
   --muted: #62748b;
   --line: #d7e1ee;
-  --primary: #1e5db8;
-  --primary-strong: #184b93;
-  --primary-soft: #eaf2ff;
+  --primary: #e5252a;
+  --primary-strong: #c11f24;
+  --primary-soft: #fff0f0;
   --accent: #2090f3;
   --danger: #c93434;
   --surface-subtle: #f7faff;
@@ -140,7 +140,7 @@ select:focus {
 
 button {
   border: 0;
-  background: linear-gradient(90deg, var(--primary) 0%, #1173d1 100%);
+  background: linear-gradient(90deg, var(--primary) 0%, var(--primary-strong) 100%);
   color: #fff;
   font-weight: 700;
   cursor: pointer;
@@ -1570,7 +1570,7 @@ tbody tr:nth-child(even) {
 }
 
 .theme-btn {
-  background: linear-gradient(90deg, var(--primary) 0%, #1173d1 100%);
+  background: linear-gradient(90deg, var(--primary) 0%, var(--primary-strong) 100%);
 }
 
 .logout-btn {
@@ -2060,7 +2060,7 @@ button.warn {
 }
 
 .pager-page.active {
-  background: linear-gradient(90deg, var(--primary) 0%, #1173d1 100%);
+  background: linear-gradient(90deg, var(--primary) 0%, var(--primary-strong) 100%);
   color: #fff;
   border-color: #2d6cb4;
 }
@@ -2584,9 +2584,9 @@ input[list]::-webkit-calendar-picker-indicator {
   --heading: #f4f8ff;
   --muted: #90a4c1;
   --line: #263b58;
-  --primary: #4e9bff;
-  --primary-strong: #2f7ee6;
-  --primary-soft: #102844;
+  --primary: #ff5a5e;
+  --primary-strong: #ff3a40;
+  --primary-soft: #2a0a0a;
   --accent: #61b7ff;
   --danger: #df4e4e;
   --surface-subtle: #0c1828;
@@ -6022,4 +6022,168 @@ div.fe-kpi { cursor: default; }
 .user-nav-chip--fieldeng {
   background: rgba(234, 88, 12, 0.14);
   color: #c2410c;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v2 unified shell — MainPanel top-nav layout
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.v2-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* ── Top bar ─────────────────────────────────────────────────────────────── */
+.v2-topbar {
+  all: unset;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  width: 100%;
+  height: 56px;
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+  box-sizing: border-box;
+  padding: 0 20px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.v2-brand {
+  all: unset;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: default;
+  margin-right: 32px;
+  flex-shrink: 0;
+}
+
+.v2-brand-logo {
+  height: 28px;
+  width: auto;
+}
+
+.v2-brand-name {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--primary);
+  letter-spacing: -0.3px;
+}
+
+.v2-brand-sub {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 500;
+  letter-spacing: 0.5px;
+  margin-top: 1px;
+}
+
+/* ── Primary nav ─────────────────────────────────────────────────────────── */
+.v2-nav {
+  all: unset;
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  height: 100%;
+  flex: 1;
+}
+
+.v2-nav-item {
+  all: unset;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+  color: var(--muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+  box-sizing: border-box;
+  user-select: none;
+}
+
+.v2-nav-item:hover {
+  color: var(--text);
+}
+
+.v2-nav-item.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+
+/* ── Top bar right side ──────────────────────────────────────────────────── */
+.v2-topbar-right {
+  all: unset;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+/* ── Sub-tab bar ─────────────────────────────────────────────────────────── */
+.v2-subtabs {
+  all: unset;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 20px;
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+  box-sizing: border-box;
+  overflow-x: auto;
+}
+
+.v2-subtab {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 14px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.v2-subtab:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.v2-subtab.active {
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-weight: 600;
+}
+
+/* ── Section content area ────────────────────────────────────────────────── */
+.v2-content {
+  flex: 1;
+  overflow: auto;
+}
+
+/* ── Embedded panel (strips outer shell from AdminPanel / UserPanel) ──────── */
+.v2-embedded-panel {
+  flex: 1;
+  overflow: auto;
+}
+
+/* Keep the inner panel's padded content area intact */
+.v2-embedded-panel .user-main-content,
+.v2-embedded-panel .admin-main-content {
+  padding-top: 0;
 }

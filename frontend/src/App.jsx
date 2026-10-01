@@ -26,8 +26,7 @@ function lazyWithReload(loader) {
   );
 }
 
-const AdminPanel = lazyWithReload(() => import('./components/AdminPanel.jsx'));
-const UserPanel = lazyWithReload(() => import('./components/UserPanel.jsx'));
+const MainPanel = lazyWithReload(() => import('./components/MainPanel.jsx'));
 
 function readSession() {
   const raw = localStorage.getItem('pdfwf.session') || sessionStorage.getItem('pdfwf.session');
@@ -154,17 +153,9 @@ export default function App() {
     onSessionUserUpdate: handleSessionUserUpdate
   };
 
-  if (session.user.role === 'super_admin' || session.user.role === 'admin') {
-    return (
-      <Suspense fallback={<div className="meta">Loading admin console...</div>}>
-        <AdminPanel {...sharedProps} />
-      </Suspense>
-    );
-  }
-
   return (
-    <Suspense fallback={<div className="meta">Loading user portal...</div>}>
-      <UserPanel {...sharedProps} />
+    <Suspense fallback={<div className="meta">Loading…</div>}>
+      <MainPanel {...sharedProps} />
     </Suspense>
   );
 }

@@ -195,7 +195,9 @@ export default function AdminPanel({
   onLogout,
   theme = 'light',
   onToggleTheme,
-  onSessionUserUpdate
+  onSessionUserUpdate,
+  embeddedMode = false,
+  forcedTab = null
 }) {
   const [templates, setTemplates] = useState([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
@@ -206,11 +208,13 @@ export default function AdminPanel({
   const [monthlyByStatus, setMonthlyByStatus] = useState([]);
   const [monthlyReportRange, setMonthlyReportRange] = useState(DEFAULT_MONTHLY_RANGE);
   const [activeAdminTab, setActiveAdminTab] = useState('home');
+  const effectiveAdminTab = forcedTab ?? activeAdminTab;
   const [activeStatus, setActiveStatus] = useState('pending');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [openingPdfId, setOpeningPdfId] = useState(null);
   const [users, setUsers] = useState([]);
+  const [permModal, setPermModal] = useState(null); // { id, name, section_permissions }
   const [presets, setPresets] = useState([]);
   const [editingFieldId, setEditingFieldId] = useState('');
 
@@ -439,6 +443,25 @@ export default function AdminPanel({
     setUsers(data);
   }
 
+  async function savePermissions(userId, perms) {
+    setBusy(true);
+    setMessage('');
+    try {
+      await apiRequest(`/users/${userId}/permissions`, {
+        method: 'PATCH',
+        token,
+        body: { section_permissions: perms }
+      });
+      setMessage('Section permissions updated.');
+      await loadUsers();
+      setPermModal(null);
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function loadPresets() {
     const data = await apiRequest('/templates/presets', { token });
     setPresets(data);
@@ -576,15 +599,15 @@ export default function AdminPanel({
   }, [monthlyReportRange]);
 
   useEffect(() => {
-    if (activeAdminTab === 'auto-reply' && !arLoaded) {
+    if (effectiveAdminTab === 'auto-reply' && !arLoaded) {
       loadArMessages().catch((err) => setMessage(err.message));
     }
-    if (activeAdminTab === 'qr-link' && !qrLoaded) {
+    if (effectiveAdminTab === 'qr-link' && !qrLoaded) {
       apiRequest('/qr-link/all', { token })
         .then((data) => { setQrLinks(data); setQrLoaded(true); })
         .catch((err) => setMessage(err.message));
     }
-    if (activeAdminTab === 'tracking' && !trackerLoaded) {
+    if (effectiveAdminTab === 'tracking' && !trackerLoaded) {
       apiRequest('/tracking/admin', { token })
         .then((data) => { setTrackers(data); setTrackerLoaded(true); })
         .catch((err) => setMessage(err.message));
@@ -609,7 +632,7 @@ export default function AdminPanel({
   }, [pdfDoc, fieldForm.page_number]);
 
   useEffect(() => {
-    if (activeAdminTab !== 'mapping' || !pdfDoc) return undefined;
+    if (effectiveAdminTab !== 'mapping' || !pdfDoc) return undefined;
 
     let frameA = 0;
     let frameB = 0;
@@ -627,7 +650,7 @@ export default function AdminPanel({
   }, [activeAdminTab, pdfDoc, fieldForm.page_number]);
 
   useEffect(() => {
-    if (activeAdminTab !== 'mapping' || !pdfDoc || !stageRef.current || typeof ResizeObserver === 'undefined') {
+    if (effectiveAdminTab !== 'mapping' || !pdfDoc || !stageRef.current || typeof ResizeObserver === 'undefined') {
       return undefined;
     }
 
@@ -1388,91 +1411,10 @@ export default function AdminPanel({
     }
   }
 
-  return (
-    <div className="layout user-shell admin-shell">
-      <ProfileSidebar
-        open={isSidebarOpen}
-        onClose={() => setIsSidebarOpen(false)}
-        token={token}
-        user={user}
-        onUserUpdated={onSessionUserUpdate}
-        theme={theme}
-        onToggleTheme={onToggleTheme}
-        onLogout={onLogout}
-      />
-
-      <aside className="user-sidebar">
-        <div className="user-sidebar-brand">
-          <img
-            className="user-brand-logo"
-            src="/imperial-network-logo.svg"
-            alt="Imperial Network Incorporated"
-          />
-          <span className="user-brand-caption">Admin portal</span>
-        </div>
-
-        <nav className="user-nav user-nav--main">
-          {adminTabs.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              className={activeAdminTab === tab.id ? 'user-nav-btn active' : 'user-nav-btn'}
-              aria-current={activeAdminTab === tab.id ? 'page' : undefined}
-              onClick={() => setActiveAdminTab(tab.id)}
-            >
-              <span className={`user-nav-chip user-nav-chip--${tab.id}`}>{tab.chip}</span>
-              <span>{tab.label}</span>
-            </button>
-          ))}
-        </nav>
-
-        <div className="user-sidebar-spacer" />
-      </aside>
-
-      <main className="user-main">
-        <header className="topbar user-main-topbar">
-          <div>
-            <div className="user-breadcrumb">
-              <span>Admin console</span>
-              <span>/</span>
-              <strong>{activeTabMeta.label}</strong>
-              {templateScopedTabs.includes(activeAdminTab) && selectedTemplate && (
-                <>
-                  <span>/</span>
-                  <span>{selectedTemplate.title}</span>
-                </>
-              )}
-            </div>
-            <h2>{activeTabMeta.title}</h2>
-            <p className="muted user-main-subtitle">{activeTabMeta.description}</p>
-          </div>
-          <div className="admin-topbar-actions">
-            {templateScopedTabs.includes(activeAdminTab) && (
-              <label className="admin-topbar-template">
-                <span>Focus template</span>
-                <select
-                  id="admin-topbar-template"
-                  name="focus_template"
-                  value={selectedTemplateId}
-                  onChange={(e) => setSelectedTemplateId(e.target.value)}
-                >
-                  <option value="">Select template</option>
-                  {templates.map((tpl) => (
-                    <option key={tpl.id} value={tpl.id}>{tpl.title}</option>
-                  ))}
-                </select>
-              </label>
-            )}
-            <button
-              type="button"
-              className="avatar-trigger user-main-settings"
-              onClick={() => setIsSidebarOpen(true)}
-              title="Open settings"
-            >
-              <img className="avatar avatar-md" src={resolveAvatar(user)} alt={user.name} />
-            </button>
-          </div>
-        </header>
+  // ── Embedded mode (for MainPanel shell) ────────────────────────────
+  // eslint-disable-next-line react/jsx-no-useless-fragment
+  const contentArea = (
+    <>
 
       {message && (
         <div className={`notice ${messageTone(message)}`}>
@@ -1481,7 +1423,7 @@ export default function AdminPanel({
         </div>
       )}
 
-      {activeAdminTab === 'home' && (
+      {effectiveAdminTab === 'home' && (
         <section className="admin-quick ui-plain">
           <div className="admin-quick-copy">
             <strong>Quick actions</strong>
@@ -1500,15 +1442,15 @@ export default function AdminPanel({
       )}
 
 
-      {activeAdminTab === 'fieldeng' && (
+      {effectiveAdminTab === 'fieldeng' && (
         <FieldEngineering token={token} />
       )}
 
-      {activeAdminTab === 'profiling' && (
+      {effectiveAdminTab === 'profiling' && (
         <Profiling token={token} user={user} mode="admin" />
       )}
 
-      {activeAdminTab === 'templates' && (
+      {effectiveAdminTab === 'templates' && (
       <>
       <section className="grid two">
         <form className="card" onSubmit={submitTemplate}>
@@ -1662,7 +1604,7 @@ export default function AdminPanel({
       </>
       )}
 
-      {activeAdminTab === 'users' && (
+      {effectiveAdminTab === 'users' && (
       <section className="grid two">
         <form className="card" onSubmit={submitUser}>
           <h3>Create User Account</h3>
@@ -1750,8 +1692,13 @@ export default function AdminPanel({
                     <td>{u.email}</td>
                     <td>{u.role}</td>
                     <td className="actions">
-                      <button type="button" onClick={() => changeUserPassword(u.id)}>Change</button>
+                      <button type="button" onClick={() => changeUserPassword(u.id)}>Change PW</button>
                       <button type="button" onClick={() => resetAndShowUserPassword(u.id)}>View Temp</button>
+                      {u.role === 'user' && (
+                        <button type="button" onClick={() => setPermModal({ id: u.id, name: u.name, section_permissions: u.section_permissions || {} })}>
+                          Permissions
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="btn-danger"
@@ -1776,7 +1723,63 @@ export default function AdminPanel({
       </section>
       )}
 
-      {activeAdminTab === 'mapping' && (
+      {/* ── Section permissions modal ── */}
+      {permModal && (
+        <div className="modal-backdrop" role="presentation" onClick={() => setPermModal(null)}>
+          <div
+            className="modal-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="perm-modal-title"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: 400 }}
+          >
+            <h3 id="perm-modal-title" style={{ marginBottom: 4 }}>Section Access</h3>
+            <p className="muted" style={{ marginBottom: 16 }}>
+              Control which sections <strong>{permModal.name}</strong> can access.
+              Unchecking a section hides it from their navigation.
+            </p>
+            {[
+              { key: 'pdf_creation', label: 'PDF Creation' },
+              { key: 'applications', label: 'Applications' },
+              { key: 'tools',        label: 'Tools' },
+            ].map(({ key, label }) => {
+              const checked = permModal.section_permissions[key] !== false;
+              return (
+                <label key={key} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    style={{ width: 'auto' }}
+                    checked={checked}
+                    onChange={() => {
+                      const next = { ...permModal.section_permissions, [key]: !checked };
+                      setPermModal({ ...permModal, section_permissions: next });
+                    }}
+                  />
+                  {label}
+                </label>
+              );
+            })}
+            <div className="actions" style={{ marginTop: 20 }}>
+              <button type="button" onClick={() => setPermModal(null)}>Cancel</button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  // If all are true, save null (all allowed)
+                  const p = permModal.section_permissions;
+                  const allTrue = ['pdf_creation','applications','tools'].every(k => p[k] !== false);
+                  savePermissions(permModal.id, allTrue ? null : p);
+                }}
+              >
+                {busy ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {effectiveAdminTab === 'mapping' && (
       <>
       <section className="card admin-context-card">
         <div>
@@ -2212,7 +2215,7 @@ export default function AdminPanel({
       </>
       )}
 
-      {activeAdminTab === 'home' && (
+      {effectiveAdminTab === 'home' && (
       <>
       <section className="admin-stats-grid">
         {adminOverviewStats.map((stat) => (
@@ -2266,7 +2269,7 @@ export default function AdminPanel({
       </>
       )}
 
-      {activeAdminTab === 'workflow' && (
+      {effectiveAdminTab === 'workflow' && (
       <>
       <section className="card admin-context-card">
         <div>
@@ -2458,7 +2461,7 @@ export default function AdminPanel({
       </>
       )}
 
-      {activeAdminTab === 'auto-reply' && (
+      {effectiveAdminTab === 'auto-reply' && (
       <>
       {/* ── Lightbox ── */}
       {arLightbox && (
@@ -2740,7 +2743,7 @@ export default function AdminPanel({
       )}
 
       {/* ── QR Link tab ── */}
-      {activeAdminTab === 'qr-link' && (
+      {effectiveAdminTab === 'qr-link' && (
         <section className="card">
           <h3>QR Link</h3>
           <p className="muted" style={{ marginBottom: 16 }}>
@@ -2876,7 +2879,7 @@ export default function AdminPanel({
       )}
 
       {/* ── Tracking tab ── */}
-      {activeAdminTab === 'tracking' && (
+      {effectiveAdminTab === 'tracking' && (
         <section className="card">
           <h3>Tracker Configuration</h3>
           <p className="muted" style={{ marginBottom: 16 }}>
@@ -3185,12 +3188,106 @@ export default function AdminPanel({
       )}
 
       {/* ── Tracking live map ── */}
-      {activeAdminTab === 'tracking' && (
+      {effectiveAdminTab === 'tracking' && (
         <section className="card" style={{ marginTop: 24 }}>
           <h3>Live Vehicle Map</h3>
           <VehicleMap token={token} />
         </section>
       )}
+    </>
+  );
+
+  if (embeddedMode) {
+    return <div className="v2-embedded-panel">{contentArea}</div>;
+  }
+
+
+  return (
+    <div className="layout user-shell admin-shell">
+      <ProfileSidebar
+        open={isSidebarOpen}
+        onClose={() => setIsSidebarOpen(false)}
+        token={token}
+        user={user}
+        onUserUpdated={onSessionUserUpdate}
+        theme={theme}
+        onToggleTheme={onToggleTheme}
+        onLogout={onLogout}
+      />
+
+      <aside className="user-sidebar">
+        <div className="user-sidebar-brand">
+          <img
+            className="user-brand-logo"
+            src="/imperial-network-logo.svg"
+            alt="Imperial Network Incorporated"
+          />
+          <span className="user-brand-caption">Admin portal</span>
+        </div>
+
+        <nav className="user-nav user-nav--main">
+          {adminTabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              className={activeAdminTab === tab.id ? 'user-nav-btn active' : 'user-nav-btn'}
+              aria-current={activeAdminTab === tab.id ? 'page' : undefined}
+              onClick={() => setActiveAdminTab(tab.id)}
+            >
+              <span className={`user-nav-chip user-nav-chip--${tab.id}`}>{tab.chip}</span>
+              <span>{tab.label}</span>
+            </button>
+          ))}
+        </nav>
+
+        <div className="user-sidebar-spacer" />
+      </aside>
+
+      <main className="user-main">
+        <header className="topbar user-main-topbar">
+          <div>
+            <div className="user-breadcrumb">
+              <span>Admin console</span>
+              <span>/</span>
+              <strong>{activeTabMeta.label}</strong>
+              {templateScopedTabs.includes(activeAdminTab) && selectedTemplate && (
+                <>
+                  <span>/</span>
+                  <span>{selectedTemplate.title}</span>
+                </>
+              )}
+            </div>
+            <h2>{activeTabMeta.title}</h2>
+            <p className="muted user-main-subtitle">{activeTabMeta.description}</p>
+          </div>
+          <div className="admin-topbar-actions">
+            {templateScopedTabs.includes(activeAdminTab) && (
+              <label className="admin-topbar-template">
+                <span>Focus template</span>
+                <select
+                  id="admin-topbar-template"
+                  name="focus_template"
+                  value={selectedTemplateId}
+                  onChange={(e) => setSelectedTemplateId(e.target.value)}
+                >
+                  <option value="">Select template</option>
+                  {templates.map((tpl) => (
+                    <option key={tpl.id} value={tpl.id}>{tpl.title}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <button
+              type="button"
+              className="avatar-trigger user-main-settings"
+              onClick={() => setIsSidebarOpen(true)}
+              title="Open settings"
+            >
+              <img className="avatar avatar-md" src={resolveAvatar(user)} alt={user.name} />
+            </button>
+          </div>
+        </header>
+      {contentArea}
       </main>
     </div>
   );

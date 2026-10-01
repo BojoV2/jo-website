@@ -75,7 +75,8 @@ function mapUser(row) {
     role: row.role,
     avatar_url: row.avatar_url || null,
     favorite_template_id: row.favorite_template_id || null,
-    last_active_at: row.last_active_at || null
+    last_active_at: row.last_active_at || null,
+    section_permissions: row.section_permissions || null
   };
 }
 
@@ -153,13 +154,13 @@ router.post('/login', authLimiter, async (req, res) => {
     }
 
     let result = await query(
-      'SELECT id, name, email, password_hash, role, avatar_url, favorite_template_id, last_active_at, token_version FROM users WHERE LOWER(email) = $1',
+      'SELECT id, name, email, password_hash, role, avatar_url, favorite_template_id, last_active_at, token_version, section_permissions FROM users WHERE LOWER(email) = $1',
       [normalizedLogin]
     );
 
     if (result.rowCount === 0) {
       result = await query(
-        'SELECT id, name, email, password_hash, role, avatar_url, favorite_template_id, last_active_at, token_version FROM users WHERE LOWER(name) = $1',
+        'SELECT id, name, email, password_hash, role, avatar_url, favorite_template_id, last_active_at, token_version, section_permissions FROM users WHERE LOWER(name) = $1',
         [normalizedLogin]
       );
     }
@@ -210,7 +211,7 @@ router.post('/login', authLimiter, async (req, res) => {
 router.get('/me', requireAuth, async (req, res) => {
   try {
     const result = await query(
-      'SELECT id, name, email, role, avatar_url, favorite_template_id, last_active_at FROM users WHERE id = $1',
+      'SELECT id, name, email, role, avatar_url, favorite_template_id, last_active_at, section_permissions FROM users WHERE id = $1',
       [req.user.id]
     );
     if (result.rowCount === 0) {
@@ -280,7 +281,7 @@ router.patch('/me', requireAuth, async (req, res) => {
       `UPDATE users
        SET ${updates.join(', ')}
        WHERE id = $${params.length}
-       RETURNING id, name, email, role, avatar_url, favorite_template_id, last_active_at`,
+       RETURNING id, name, email, role, avatar_url, favorite_template_id, last_active_at, section_permissions`,
       params
     );
 

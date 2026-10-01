@@ -54,11 +54,38 @@ router.post('/', async (req, res) => {
 router.get('/', async (_req, res) => {
   try {
     const users = await query(
-      `SELECT id, name, email, role, avatar_url, last_active_at, created_at
+      `SELECT id, name, email, role, avatar_url, last_active_at, created_at, section_permissions
        FROM users
        ORDER BY created_at DESC`
     );
     return res.json(users.rows);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+router.patch('/:userId/permissions', async (req, res) => {
+  try {
+    const target = await query('SELECT id, role FROM users WHERE id = $1', [req.params.userId]);
+    if (target.rowCount === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    if (target.rows[0].role !== 'user') {
+      return res.status(400).json({ error: 'Section permissions only apply to user-role accounts' });
+    }
+    const { section_permissions } = req.body;
+    // null = all allowed; object must only contain known boolean keys
+    let perms = null;
+    if (section_permissions !== null && section_permissions !== undefined) {
+      const known = ['pdf_creation', 'applications', 'tools'];
+      const invalid = Object.keys(section_permissions).filter(k => !known.includes(k));
+      if (invalid.length > 0) {
+        return res.status(400).json({ error: `Unknown permission keys: ${invalid.join(', ')}` });
+      }
+      perms = section_permissions;
+    }
+    await query('UPDATE users SET section_permissions = $1 WHERE id = $2', [perms ? JSON.stringify(perms) : null, req.params.userId]);
+    return res.json({ success: true, section_permissions: perms });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
