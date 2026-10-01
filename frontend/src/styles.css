@@ -6187,3 +6187,243 @@ div.fe-kpi { cursor: default; }
 .v2-embedded-panel .admin-main-content {
   padding-top: 0;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   NOC-home layout — JO website matching the .204 NOC website card grid
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Shell ───────────────────────────────────────────────────────────────── */
+.noc-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background: #f3f4f6;
+  color: var(--text);
+}
+
+[data-theme='dark'] .noc-shell {
+  background: #111827;
+}
+
+/* ── Top bar ─────────────────────────────────────────────────────────────── */
+.noc-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 56px;
+  padding: 0 24px;
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  box-sizing: border-box;
+}
+
+.noc-topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.noc-brand {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--primary);
+  letter-spacing: -0.2px;
+  user-select: none;
+}
+
+.noc-breadcrumb {
+  font-size: 14px;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.noc-back-btn {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--primary);
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: 6px;
+  transition: background 0.12s;
+}
+
+.noc-back-btn:hover {
+  background: var(--primary-soft);
+}
+
+.noc-topbar-right {
+  display: flex;
+  align-items: center;
+}
+
+.noc-user-btn {
+  all: unset;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: 8px;
+  transition: background 0.12s;
+}
+
+.noc-user-btn:hover {
+  background: var(--hover);
+}
+
+.noc-user-email {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+/* ── Home page ───────────────────────────────────────────────────────────── */
+.noc-home {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 48px 24px 80px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* ── Hero ────────────────────────────────────────────────────────────────── */
+.noc-hero {
+  text-align: center;
+  margin-bottom: 48px;
+}
+
+.noc-hero-title {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--heading, #111827);
+  margin: 0 0 10px;
+  letter-spacing: -0.4px;
+  line-height: 1.25;
+}
+
+.noc-hero-sub {
+  font-size: 14px;
+  color: var(--muted);
+  margin: 0;
+  line-height: 1.6;
+}
+
+/* ── Section ─────────────────────────────────────────────────────────────── */
+.noc-section {
+  margin-bottom: 36px;
+}
+
+.noc-section-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+
+/* ── Card grid ───────────────────────────────────────────────────────────── */
+.noc-card-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 960px) {
+  .noc-card-grid { grid-template-columns: repeat(3, 1fr); }
+}
+
+@media (max-width: 680px) {
+  .noc-card-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 440px) {
+  .noc-card-grid { grid-template-columns: 1fr; }
+}
+
+/* ── Card ────────────────────────────────────────────────────────────────── */
+.noc-card {
+  all: unset;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px;
+  cursor: pointer;
+  transition: box-shadow 0.15s, transform 0.1s;
+  box-sizing: border-box;
+  text-align: left;
+}
+
+.noc-card:hover {
+  box-shadow: 0 4px 16px rgba(0,0,0,.10);
+  transform: translateY(-1px);
+}
+
+.noc-card:active {
+  transform: translateY(0);
+}
+
+/* ── Badge chip ──────────────────────────────────────────────────────────── */
+.noc-chip {
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 0.3px;
+  user-select: none;
+}
+
+/* ── Card text ───────────────────────────────────────────────────────────── */
+.noc-card-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.noc-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--heading, #111827);
+  margin-bottom: 4px;
+  line-height: 1.3;
+}
+
+.noc-card-desc {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+/* ── Panel wrap (inside a card) ──────────────────────────────────────────── */
+.noc-panel-wrap {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.noc-panel-wrap .v2-embedded-panel {
+  flex: 1;
+}
+
+/* ── Loading state ───────────────────────────────────────────────────────── */
+.noc-home-loading {
+  padding: 60px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 14px;
+}

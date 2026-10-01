@@ -5,42 +5,197 @@ import { resolveAvatar } from '../utils/avatar.js';
 const AdminPanel = lazy(() => import('./AdminPanel.jsx'));
 const UserPanel  = lazy(() => import('./UserPanel.jsx'));
 
-// ── section permission check ──────────────────────────────────────────────
+// ── helpers ───────────────────────────────────────────────────────────────
 function canAccess(user, key) {
   if (!user.section_permissions) return true;
   return user.section_permissions[key] !== false;
 }
 
-// ── section / sub-tab definitions ────────────────────────────────────────
-const SECTIONS = [
-  { id: 'pdf-creation', label: 'PDF Creation', permKey: 'pdf_creation' },
-  { id: 'applications', label: 'Applications',  permKey: 'applications' },
-  { id: 'tools',        label: 'Tools',          permKey: 'tools' },
-  { id: 'administration', label: 'Administration', adminOnly: true },
-];
+function greeting() {
+  const h = new Date().getHours();
+  if (h < 12) return 'Good morning';
+  if (h < 18) return 'Good afternoon';
+  return 'Good evening';
+}
 
-const PDF_TABS = [
-  { id: 'create',   label: 'Create' },
-  { id: 'my-pdfs',  label: 'My PDFs' },
-  { id: 'workflow', label: 'Workflow', adminOnly: true },
-];
+// ── card / section catalogue ──────────────────────────────────────────────
+function buildCatalogue(user) {
+  const isAdmin = user.role === 'super_admin' || user.role === 'admin';
 
-const APP_TABS = [
-  { id: 'analytics', label: 'Analytics' },
-  { id: 'profiling', label: 'Profiling' },
-  { id: 'fieldeng',  label: 'Field Eng' },
-  { id: 'macfinder', label: 'MAC Finder' },
-];
+  const sections = [];
 
-const ADMIN_TABS = [
-  { id: 'templates',  label: 'Templates Mgmt', chip: 'TP' },
-  { id: 'mapping',    label: 'Field Mapping',   chip: 'FM' },
-  { id: 'users',      label: 'Users',           chip: 'US' },
-  { id: 'auto-reply', label: 'Auto Reply',      chip: 'AR' },
-  { id: 'qr-link',    label: 'QR Link',         chip: 'QR' },
-  { id: 'tracking',   label: 'Tracking',        chip: 'TK' },
-];
+  // ── PDF CREATION ─────────────────────────────────────────────────────────
+  if (canAccess(user, 'pdf_creation')) {
+    const cards = [
+      {
+        chip: 'PC', color: '#e5252a',
+        title: 'Create PDF',
+        desc: 'Fill in a template and generate a signed PDF.',
+        panel: 'user', forcedView: 'create', forcedUserSection: 'create',
+      },
+      {
+        chip: 'MP', color: '#f97316',
+        title: 'My PDFs',
+        desc: 'Your generated PDFs, status updates and history.',
+        panel: 'user', forcedView: 'create', forcedUserSection: 'history',
+      },
+    ];
+    if (isAdmin) {
+      cards.push({
+        chip: 'WF', color: '#7c3aed',
+        title: 'Workflow',
+        desc: 'All submitted PDFs across every user — approve, update status.',
+        panel: 'admin', forcedTab: 'workflow',
+      });
+    }
+    sections.push({ label: 'PDF CREATION', cards });
+  }
 
+  // ── APPLICATIONS ──────────────────────────────────────────────────────────
+  if (canAccess(user, 'applications')) {
+    sections.push({
+      label: 'APPLICATIONS',
+      cards: [
+        {
+          chip: 'AN', color: '#7c3aed',
+          title: 'Analytics',
+          desc: 'Template usage stats, monthly activity and status breakdown.',
+          panel: 'user', forcedView: 'analytics', forcedUserSection: null,
+        },
+        {
+          chip: 'PR', color: '#0ea5e9',
+          title: 'Profiling',
+          desc: 'Client profile archive, free-depth folders and admin controls.',
+          panel: 'user', forcedView: 'profiling', forcedUserSection: null,
+        },
+        {
+          chip: 'FE', color: '#059669',
+          title: 'Field Eng',
+          desc: 'Job orders, scheduling, Done / Cancel / Reschedule and team notes.',
+          panel: 'user', forcedView: 'fieldeng', forcedUserSection: null,
+        },
+        {
+          chip: 'MF', color: '#d97706',
+          title: 'MAC Finder',
+          desc: 'Look up a client\'s connected device by MAC address across OLTs.',
+          panel: 'user', forcedView: 'macfinder', forcedUserSection: null,
+        },
+      ],
+    });
+  }
+
+  // ── TOOLS ─────────────────────────────────────────────────────────────────
+  if (canAccess(user, 'tools')) {
+    sections.push({
+      label: 'TOOLS',
+      cards: [
+        {
+          chip: 'CL', color: '#2563eb',
+          title: 'Client Lookup',
+          desc: 'Search and view client account and status details.',
+          panel: 'user', forcedView: 'tools', forcedUserSection: null,
+        },
+        {
+          chip: 'BA', color: '#0d9488',
+          title: 'Bill Adjustment',
+          desc: 'Credit and debit adjustments applied to billing.',
+          panel: 'user', forcedView: 'tools', forcedUserSection: null,
+        },
+        {
+          chip: 'BC', color: '#4f46e5',
+          title: 'Bill Calculator',
+          desc: 'Calculate prorated and monthly billing amounts.',
+          panel: 'user', forcedView: 'tools', forcedUserSection: null,
+        },
+        {
+          chip: 'CE', color: '#be185d',
+          title: 'Contract End Date',
+          desc: 'Look up contract end dates per client account.',
+          panel: 'user', forcedView: 'tools', forcedUserSection: null,
+        },
+        {
+          chip: 'PD', color: '#ea580c',
+          title: 'Percentage Discount',
+          desc: 'Apply and calculate percentage-based discounts.',
+          panel: 'user', forcedView: 'tools', forcedUserSection: null,
+        },
+        {
+          chip: 'AR', color: '#475569',
+          title: 'Auto Reply',
+          desc: 'View and compose the automated response message.',
+          panel: 'user', forcedView: 'tools', forcedUserSection: null,
+        },
+        {
+          chip: 'QR', color: '#7c3aed',
+          title: 'QR Link',
+          desc: 'Generate QR codes that point to any URL.',
+          panel: 'user', forcedView: 'tools', forcedUserSection: null,
+        },
+        {
+          chip: 'IT', color: '#16a34a',
+          title: 'Imperial Tracking',
+          desc: 'Live vehicle tracking map for the field team.',
+          panel: 'user', forcedView: 'tools', forcedUserSection: null,
+        },
+        {
+          chip: 'TK', color: '#dc2626',
+          title: 'Ticketing',
+          desc: 'Create and manage client support tickets.',
+          panel: 'user', forcedView: 'tools', forcedUserSection: null,
+        },
+      ],
+    });
+  }
+
+  // ── ADMINISTRATION ────────────────────────────────────────────────────────
+  if (isAdmin) {
+    sections.push({
+      label: 'ADMINISTRATION',
+      cards: [
+        {
+          chip: 'TP', color: '#374151',
+          title: 'Templates Mgmt',
+          desc: 'Upload, version and manage every PDF template.',
+          panel: 'admin', forcedTab: 'templates',
+        },
+        {
+          chip: 'FM', color: '#374151',
+          title: 'Field Mapping',
+          desc: 'Map template fields to their canvas positions.',
+          panel: 'admin', forcedTab: 'mapping',
+        },
+        {
+          chip: 'US', color: '#374151',
+          title: 'User Accounts',
+          desc: 'Create accounts, set access permissions and manage passwords.',
+          panel: 'admin', forcedTab: 'users',
+        },
+        {
+          chip: 'AR', color: '#4b5563',
+          title: 'Auto Reply Config',
+          desc: 'Edit the automated response that users see.',
+          panel: 'admin', forcedTab: 'auto-reply',
+        },
+        {
+          chip: 'QR', color: '#4b5563',
+          title: 'QR Link Config',
+          desc: 'Manage QR code generation settings.',
+          panel: 'admin', forcedTab: 'qr-link',
+        },
+        {
+          chip: 'TK', color: '#4b5563',
+          title: 'Tracking Config',
+          desc: 'Configure the live vehicle tracking map.',
+          panel: 'admin', forcedTab: 'tracking',
+        },
+      ],
+    });
+  }
+
+  return sections;
+}
+
+// ── main component ────────────────────────────────────────────────────────
 export default function MainPanel({
   token,
   user,
@@ -49,139 +204,35 @@ export default function MainPanel({
   onToggleTheme,
   onSessionUserUpdate,
 }) {
-  const isAdmin = user.role === 'super_admin' || user.role === 'admin';
-
-  // Build visible sections
-  const visibleSections = SECTIONS.filter(s => {
-    if (s.adminOnly) return isAdmin;
-    return canAccess(user, s.permKey);
-  });
-
-  // Pick first available section as default
-  const defaultSection = visibleSections[0]?.id ?? 'tools';
-
-  const [section,    setSection]    = useState(defaultSection);
-  const [pdfTab,     setPdfTab]     = useState('create');
-  const [appTab,     setAppTab]     = useState('analytics');
-  const [adminTab,   setAdminTab]   = useState('templates');
+  const [activeCard, setActiveCard]   = useState(null); // null = home
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  // Compute sub-tabs for current section
-  const pdfTabs   = PDF_TABS.filter(t => !t.adminOnly || isAdmin);
-  const appTabs   = APP_TABS;
-  const adminTabs = ADMIN_TABS;
+  const catalogue = buildCatalogue(user);
+  const shared = { token, user, onLogout, theme, onToggleTheme, onSessionUserUpdate };
 
-  // Derive UserPanel forcedView / forcedUserSection
-  function userPanelProps() {
-    if (section === 'pdf-creation') {
-      if (pdfTab === 'my-pdfs') return { forcedView: 'create', forcedUserSection: 'history' };
-      return { forcedView: 'create', forcedUserSection: 'create' };
-    }
-    if (section === 'applications') {
-      const map = { analytics: 'analytics', profiling: 'profiling', fieldeng: 'fieldeng', macfinder: 'macfinder' };
-      return { forcedView: map[appTab] ?? 'analytics', forcedUserSection: null };
-    }
-    if (section === 'tools') {
-      return { forcedView: 'tools', forcedUserSection: null };
-    }
-    return { forcedView: 'create', forcedUserSection: 'create' };
-  }
-
-  // Derive AdminPanel forcedTab
-  function adminPanelTab() {
-    if (section === 'pdf-creation' && pdfTab === 'workflow') return 'workflow';
-    if (section === 'administration') return adminTab;
-    return null;
-  }
-
-  // Decide which panel to render
-  function renderPanel() {
-    const shared = { token, user, onLogout, theme, onToggleTheme, onSessionUserUpdate };
-
-    // Workflow inside PDF Creation → AdminPanel
-    if (section === 'pdf-creation' && pdfTab === 'workflow' && isAdmin) {
+  // ── panel inside a card ──────────────────────────────────────────────────
+  function renderPanel(card) {
+    if (card.panel === 'admin') {
       return (
-        <Suspense fallback={<div className="meta">Loading…</div>}>
-          <AdminPanel {...shared} embeddedMode forcedTab="workflow" />
+        <Suspense fallback={<div className="noc-home-loading">Loading…</div>}>
+          <AdminPanel {...shared} embeddedMode forcedTab={card.forcedTab} />
         </Suspense>
       );
     }
-
-    // Administration section → AdminPanel
-    if (section === 'administration') {
-      return (
-        <Suspense fallback={<div className="meta">Loading…</div>}>
-          <AdminPanel {...shared} embeddedMode forcedTab={adminTab} />
-        </Suspense>
-      );
-    }
-
-    // Everything else → UserPanel
-    const { forcedView, forcedUserSection } = userPanelProps();
     return (
-      <Suspense fallback={<div className="meta">Loading…</div>}>
+      <Suspense fallback={<div className="noc-home-loading">Loading…</div>}>
         <UserPanel
           {...shared}
           embeddedMode
-          forcedView={forcedView}
-          forcedUserSection={forcedUserSection}
+          forcedView={card.forcedView}
+          forcedUserSection={card.forcedUserSection}
         />
       </Suspense>
     );
   }
 
-  // Sub-tab bar for current section
-  function renderSubTabs() {
-    if (section === 'pdf-creation') {
-      return (
-        <div className="v2-subtabs">
-          {pdfTabs.map(t => (
-            <button
-              key={t.id}
-              className={`v2-subtab${pdfTab === t.id ? ' active' : ''}`}
-              onClick={() => setPdfTab(t.id)}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-      );
-    }
-    if (section === 'applications') {
-      return (
-        <div className="v2-subtabs">
-          {appTabs.map(t => (
-            <button
-              key={t.id}
-              className={`v2-subtab${appTab === t.id ? ' active' : ''}`}
-              onClick={() => setAppTab(t.id)}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-      );
-    }
-    if (section === 'administration') {
-      return (
-        <div className="v2-subtabs">
-          {adminTabs.map(t => (
-            <button
-              key={t.id}
-              className={`v2-subtab${adminTab === t.id ? ' active' : ''}`}
-              onClick={() => setAdminTab(t.id)}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-      );
-    }
-    return null; // Tools has no sub-tabs
-  }
-
   return (
-    <div className="v2-shell">
+    <div className="noc-shell" data-theme={theme}>
       <ProfileSidebar
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
@@ -194,50 +245,86 @@ export default function MainPanel({
       />
 
       {/* ── Top bar ── */}
-      <div className="v2-topbar">
-        <div className="v2-brand">
-          <img
-            className="v2-brand-logo"
-            src="/imperial-network-logo.svg"
-            alt="Imperial Network"
-          />
-          <div>
-            <div className="v2-brand-name">Imperial</div>
-            <div className="v2-brand-sub">PDF Workflow</div>
-          </div>
-        </div>
-
-        <nav className="v2-nav" aria-label="Main navigation">
-          {visibleSections.map(s => (
+      <header className="noc-topbar">
+        <div className="noc-topbar-left">
+          {activeCard ? (
             <button
-              key={s.id}
-              className={`v2-nav-item${section === s.id ? ' active' : ''}`}
-              onClick={() => setSection(s.id)}
+              type="button"
+              className="noc-back-btn"
+              onClick={() => setActiveCard(null)}
+              aria-label="Back to home"
             >
-              {s.label}
+              ← Back
             </button>
-          ))}
-        </nav>
-
-        <div className="v2-topbar-right">
+          ) : null}
+          <span className="noc-brand">Imperial PDF Workflow</span>
+          {activeCard && (
+            <span className="noc-breadcrumb">/ {activeCard.title}</span>
+          )}
+        </div>
+        <div className="noc-topbar-right">
           <button
             type="button"
-            className="avatar-trigger"
+            className="noc-user-btn"
             onClick={() => setSidebarOpen(true)}
-            title="Open settings"
           >
-            <img className="avatar avatar-md" src={resolveAvatar(user)} alt={user.name} />
+            <img
+              className="avatar avatar-sm"
+              src={resolveAvatar(user)}
+              alt={user.name}
+            />
+            <span className="noc-user-email">{user.email}</span>
           </button>
         </div>
-      </div>
-
-      {/* ── Sub-tab bar ── */}
-      {renderSubTabs()}
+      </header>
 
       {/* ── Content ── */}
-      <div className="v2-content">
-        {renderPanel()}
-      </div>
+      {activeCard ? (
+        <div className="noc-panel-wrap">
+          {renderPanel(activeCard)}
+        </div>
+      ) : (
+        <main className="noc-home">
+          {/* hero */}
+          <div className="noc-hero">
+            <h1 className="noc-hero-title">
+              Every PDF workflow tool you need, in one place
+            </h1>
+            <p className="noc-hero-sub">
+              {greeting()}, <strong>{user.name}</strong>.
+              Create PDFs, track jobs and manage the team from one screen.
+            </p>
+          </div>
+
+          {/* card grid */}
+          {catalogue.map((section) => (
+            <section key={section.label} className="noc-section">
+              <div className="noc-section-label">{section.label}</div>
+              <div className="noc-card-grid">
+                {section.cards.map((card) => (
+                  <button
+                    key={`${card.chip}-${card.title}`}
+                    type="button"
+                    className="noc-card"
+                    onClick={() => setActiveCard(card)}
+                  >
+                    <div
+                      className="noc-chip"
+                      style={{ background: card.color }}
+                    >
+                      {card.chip}
+                    </div>
+                    <div className="noc-card-body">
+                      <div className="noc-card-title">{card.title}</div>
+                      <div className="noc-card-desc">{card.desc}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </section>
+          ))}
+        </main>
+      )}
     </div>
   );
 }
