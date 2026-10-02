@@ -133,6 +133,12 @@ function validateFieldValue(field, value) {
   }
 
   const strValue = String(value);
+  if (field.field_type === 'dropdown' && rules.strict_options) {
+    const options = Array.isArray(field.field_options) ? field.field_options.map((v) => String(v).trim()) : [];
+    if (options.length && !options.includes(strValue)) {
+      return `${field.field_name}: pick one from the list`;
+    }
+  }
   if (rules.min_length !== undefined && strValue.length < Number(rules.min_length)) {
     return `Field ${field.field_name} must be at least ${rules.min_length} characters`;
   }
@@ -218,7 +224,7 @@ router.post('/generate', requireAuth, async (req, res) => {
     }
 
     const fieldsResult = await query(
-      `SELECT id, field_name, field_type, validation_rules, page_number, x_position, y_position, box_width, box_height, font_size, auto_font, required
+      `SELECT id, field_name, field_type, field_options, validation_rules, page_number, x_position, y_position, box_width, box_height, font_size, auto_font, required
        FROM pdf_fields
        WHERE template_id = $1
        ORDER BY created_at ASC`,

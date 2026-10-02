@@ -62,6 +62,8 @@ function noteFailedLogin(key) {
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
+  // only failed attempts count: a shared office IP must not lock everyone out at shift start
+  skipSuccessfulRequests: true,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many requests, please try again later.' }

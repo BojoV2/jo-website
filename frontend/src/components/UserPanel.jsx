@@ -203,6 +203,7 @@ function validateFieldValue(field, value, formValues) {
   }
   if (field.field_type !== 'checkbox' && value !== undefined && value !== null && String(value) !== '') {
     const str = String(value);
+    if (isOffList(field, str)) return 'Pick one from the list';
     if (rules.min_length && str.length < Number(rules.min_length)) return `Min ${rules.min_length} characters`;
     if (rules.max_length && str.length > Number(rules.max_length)) return `Max ${rules.max_length} characters`;
     if (rules.regex) {
@@ -250,6 +251,21 @@ function toDatetimeLocal(value) {
 
 function nowDatetimeLocal() {
   return toDatetimeLocal(new Date().toISOString());
+}
+
+// "799 - 50mbps" -> "799 - 50 Mbps": same text ignoring case and spaces snaps to the listed option.
+function snapToOption(field, value) {
+  if (field.field_type !== 'dropdown' || value === undefined || value === null) return value;
+  const squash = (v) => String(v).toLowerCase().replace(/\s+/g, '');
+  const key = squash(value);
+  if (!key) return value;
+  return parseFieldOptions(field.field_options).find((opt) => squash(opt) === key) ?? value;
+}
+
+function isOffList(field, value) {
+  if (field.field_type !== 'dropdown' || !field.validation_rules?.strict_options) return false;
+  const options = parseFieldOptions(field.field_options);
+  return options.length > 0 && !options.includes(String(value));
 }
 
 function parseFieldOptions(raw) {
@@ -348,7 +364,8 @@ function messageTone(message) {
     text.includes('not found') || text.includes('required') || text.includes('forbidden') ||
     text.includes('must ') || text.includes('too easy') || text.includes('cannot') ||
     text.includes('not allowed') || text.includes('already') || text.includes('denied') ||
-    text.includes('did not match') || text.includes('too many')
+    text.includes('did not match') || text.includes('too many') ||
+    text.includes('pick one') || text.includes('highlighted')
   ) {
     return 'is-error';
   }
@@ -601,7 +618,7 @@ export default function UserPanel({
       });
       onSessionUserUpdate?.(result.user);
       setSelectedTemplateId(templateId);
-      setMessage('Favorite template saved. It will auto-select on your next login.');
+      setMessage('Pinned. This template now shows first under PDF Creation.');
     } catch (err) {
       setMessage(err.message);
     }
@@ -924,6 +941,9 @@ export default function UserPanel({
       }
       if (field.field_type !== 'checkbox' && value !== undefined && value !== null && String(value) !== '') {
         const str = String(value);
+        if (isOffList(field, str)) {
+          throw new Error(`${field.field_name}: pick one from the list`);
+        }
         if (rules.min_length !== undefined && str.length < Number(rules.min_length)) {
           throw new Error(`${field.field_name} must be at least ${rules.min_length} characters`);
         }
@@ -967,7 +987,7 @@ export default function UserPanel({
           ? (autoDownloadFailed
             ? 'PDF generated. It could not be opened automatically, use Open PDF in Pending.'
             : 'PDF generated, opened in a new tab, and queued as pending.')
-          : 'PDF added to My Generated PDFs. Open it any time from the list under Analytics.'
+          : 'PDF added to Generated PDFs. Open it any time from the list under Analytics.'
       )
     );
 
@@ -992,9 +1012,15 @@ export default function UserPanel({
     const errorMsg = isMain && touched ? fieldErrors[field.field_name] : '';
 
     function handleBlur() {
+      let current = values[field.field_name];
+      const snapped = snapToOption(field, current);
+      if (snapped !== current) {
+        current = snapped;
+        setFieldValue(snapped);
+      }
       if (!isMain) return;
       setFieldTouched((prev) => ({ ...prev, [field.field_name]: true }));
-      const err = validateFieldValue(field, values[field.field_name], values);
+      const err = validateFieldValue(field, current, { ...values, [field.field_name]: current });
       setFieldErrors((prev) => ({ ...prev, [field.field_name]: err }));
     }
 
@@ -1074,12 +1100,39 @@ export default function UserPanel({
     );
   }
 
+  function highlightInvalidFields(values) {
+    const errors = {};
+    let first = null;
+    for (const field of fields) {
+      const err = validateFieldValue(field, values[field.field_name], values);
+      if (err) {
+        errors[field.field_name] = err;
+        if (!first) first = field;
+      }
+    }
+    setFieldTouched(Object.fromEntries(fields.map((f) => [f.field_name, true])));
+    setFieldErrors(errors);
+    if (first) {
+      setMessage(`Fix the highlighted field: ${first.field_name}`);
+      const el = document.getElementById(`main-field-${first.id}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.focus({ preventScroll: true });
+      }
+    }
+    return !first;
+  }
+
   async function submitGeneration(e) {
     e.preventDefault();
     if (!selectedTemplateId) {
       setMessage('Please select a template.');
       return;
     }
+    const snappedValues = { ...formValues };
+    for (const field of fields) snappedValues[field.field_name] = snapToOption(field, formValues[field.field_name]);
+    setFormValues(snappedValues);
+    if (!highlightInvalidFields(snappedValues)) return;
     if (!validateDocFiles()) return;
 
     setLoading(true);
@@ -1089,7 +1142,7 @@ export default function UserPanel({
       // Upload the supporting documents FIRST when there are any: the generated
       // PDF is assembled at download time, so opening it before the upload would
       // show page 1 only.
-      const created = await createGeneratedPdf(formValues, { autoDownload: !hasDocs });
+      const created = await createGeneratedPdf(snappedValues, { autoDownload: !hasDocs });
       if (created?.id && hasDocs) {
         try {
           await uploadDocFiles(created.id);
@@ -1113,7 +1166,13 @@ export default function UserPanel({
         setFieldErrors({});
       }
     } catch (err) {
-      setMessage(err.message);
+      const missing = /^Required field missing: (.+)$/.exec(err.message || '');
+      if (missing && !fields.some((f) => f.field_name === missing[1])) {
+        await loadFields(selectedTemplateId).catch(() => {});
+        setMessage('This form was updated by an admin. Please check the highlighted fields and submit again.');
+      } else {
+        setMessage(err.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -1419,6 +1478,18 @@ export default function UserPanel({
         </div>
       </section>
       )}
+      {forcedTemplateId && (
+        <div className="noc-toolbar">
+          <button
+            type="button"
+            className={user?.favorite_template_id === forcedTemplateId ? 'tpl-card-pin active' : 'tpl-card-pin'}
+            onClick={() => setFavoriteTemplate(forcedTemplateId)}
+            disabled={user?.favorite_template_id === forcedTemplateId}
+          >
+            {user?.favorite_template_id === forcedTemplateId ? 'Pinned' : 'Pin this template'}
+          </button>
+        </div>
+      )}
 
       <details className="tpl-extras ui-plain">
         <summary>
@@ -1470,7 +1541,7 @@ export default function UserPanel({
       </details>
 
       <div className="user-work-grid user-work-grid--single">
-        <form className="card user-form-card" onSubmit={submitGeneration}>
+        <form className="card user-form-card" onSubmit={submitGeneration} noValidate>
           <div className="section-heading">
             <div>
               <h3>Fill Form Fields</h3>
@@ -1632,10 +1703,10 @@ export default function UserPanel({
       </section>
       )}
 
-      {(effectiveView === 'mypdfs' || !embeddedMode) && (
+      {(effectiveView === 'analytics' || effectiveView === 'mypdfs' || !embeddedMode) && (
       <section id="user-section-history" className="card">
         <div className="actions" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-          <h3>My Generated PDFs</h3>
+          <h3>Generated PDFs</h3>
           <button
             ref={manualAddTriggerRef}
             type="button"
@@ -2042,7 +2113,7 @@ export default function UserPanel({
             aria-labelledby="manual-add-modal-title"
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 id="manual-add-modal-title">Manual Add To My Generated PDFs</h3>
+            <h3 id="manual-add-modal-title">Manual Add To Generated PDFs</h3>
             <p className="muted">This creates the PDF record without opening it immediately. Use Open PDF later from the list.</p>
             <form className="sidebar-form" onSubmit={submitManualAdd}>
               {fields.map((field) => renderFormField(field, manualAddValues, setManualAddValues, 'manual'))}

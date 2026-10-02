@@ -281,7 +281,9 @@ export default function AdminPanel({
     y_position: 0,
     box_width: 0,
     box_height: 0,
+    font_size: 12,
     auto_font: true,
+    strict_options: false,
     required: false
   });
 
@@ -858,7 +860,9 @@ export default function AdminPanel({
       y_position: Number(field.y_position),
       box_width: Number(field.box_width || 0),
       box_height: Number(field.box_height || 0),
+      font_size: Number(field.font_size || 12),
       auto_font: field.auto_font !== false,
+      strict_options: Boolean(rules.strict_options),
       required: Boolean(field.required)
     });
 
@@ -919,15 +923,16 @@ export default function AdminPanel({
           max_length: fieldForm.max_length === '' ? undefined : Number(fieldForm.max_length),
           required_if: fieldForm.required_if_field
             ? { field: fieldForm.required_if_field, equals: fieldForm.required_if_value }
-            : undefined
+            : undefined,
+          strict_options: fieldForm.field_type === 'dropdown' && fieldForm.strict_options ? true : undefined
         },
         page_number: Number(fieldForm.page_number),
         x_position: Number(fieldForm.x_position),
         y_position: Number(fieldForm.y_position),
         box_width: Number(fieldForm.box_width),
         box_height: Number(fieldForm.box_height),
-        font_size: Math.round(Number(fieldForm.box_height) * 0.75),
-        auto_font: true,
+        font_size: Math.min(72, Math.max(6, Math.round(Number(fieldForm.font_size) || 12))),
+        auto_font: Boolean(fieldForm.auto_font),
         required: fieldForm.required
       };
 
@@ -2126,6 +2131,16 @@ export default function AdminPanel({
                 placeholder={'Option 1\nOption 2\nOption 3'}
                 required
               />
+              <label className="checkbox-line" htmlFor="field-strict-options">
+                <input
+                  id="field-strict-options"
+                  name="strict_options"
+                  type="checkbox"
+                  checked={Boolean(fieldForm.strict_options)}
+                  onChange={(e) => setFieldForm({ ...fieldForm, strict_options: e.target.checked })}
+                />
+                Only allow listed options
+              </label>
             </>
           )}
           <label htmlFor="field-regex">Regex Rule (optional)</label>
@@ -2189,8 +2204,28 @@ export default function AdminPanel({
           <input id="field-box-width" name="box_width" type="number" value={fieldForm.box_width} readOnly />
           <label htmlFor="field-box-height">Box Height</label>
           <input id="field-box-height" name="box_height" type="number" value={fieldForm.box_height} readOnly />
-          <label htmlFor="field-auto-font-size">Auto Font Size</label>
-          <input id="field-auto-font-size" name="auto_font_size" type="number" value={Math.max(6, Math.round(Number(fieldForm.box_height || 0) * 0.75))} readOnly />
+          <label className="checkbox-line" htmlFor="field-auto-font">
+            <input
+              id="field-auto-font"
+              name="auto_font"
+              type="checkbox"
+              checked={Boolean(fieldForm.auto_font)}
+              onChange={(e) => setFieldForm({ ...fieldForm, auto_font: e.target.checked })}
+            />
+            Auto-fit text to the box
+          </label>
+          <label htmlFor="field-font-size">Font Size (pt)</label>
+          <input
+            id="field-font-size"
+            name="font_size"
+            type="number"
+            min="6"
+            max="72"
+            value={fieldForm.auto_font ? Math.max(6, Math.round(Number(fieldForm.box_height || 0) * 0.75)) : fieldForm.font_size}
+            onChange={(e) => setFieldForm({ ...fieldForm, font_size: e.target.value })}
+            disabled={Boolean(fieldForm.auto_font)}
+            title={fieldForm.auto_font ? 'Turn off Auto-fit to set your own size' : ''}
+          />
           <label className="checkbox-line" htmlFor="field-required">
             <input
               id="field-required"
@@ -2271,7 +2306,7 @@ export default function AdminPanel({
                 <th>Y</th>
                 <th>W</th>
                 <th>H</th>
-                <th>Auto Font</th>
+                <th>Font</th>
                 <th>Req</th>
                 <th>Rules</th>
                 <th>Actions</th>
@@ -2287,7 +2322,7 @@ export default function AdminPanel({
                   <td>{field.y_position}</td>
                   <td>{field.box_width || '-'}</td>
                   <td>{field.box_height || '-'}</td>
-                  <td>{field.auto_font ? 'Yes' : 'No'}</td>
+                  <td>{field.auto_font ? 'Auto' : `${field.font_size || 12}pt`}</td>
                   <td>{field.required ? 'Yes' : 'No'}</td>
                   <td>
                     {field.validation_rules

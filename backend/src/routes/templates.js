@@ -86,6 +86,9 @@ function normalizeValidationRules(rawRules) {
       equals: rawRules.required_if.equals
     };
   }
+  if (rawRules.strict_options === true) {
+    rules.strict_options = true;
+  }
   return rules;
 }
 

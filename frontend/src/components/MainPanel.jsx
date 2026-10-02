@@ -43,7 +43,9 @@ function buildCatalogue(user, templates) {
   const isAdmin = user.role === 'super_admin' || user.role === 'admin';
   const sections = [];
 
-  sections.push({ key: 'pdf', label: 'PDF Creation', color: SECTION_COLORS.pdf, cards: templates.map(templateCard) });
+  const pinned = user?.favorite_template_id;
+  const ordered = [...templates].sort((a, b) => (b.id === pinned) - (a.id === pinned));
+  sections.push({ key: 'pdf', label: 'PDF Creation', color: SECTION_COLORS.pdf, cards: ordered.map(templateCard) });
 
   {
     sections.push({
@@ -86,6 +88,7 @@ function buildCatalogue(user, templates) {
       cards: [
         adminCard('templates', 'TP', 'Templates', 'Upload, version and manage the PDF templates.'),
         adminCard('mapping', 'FM', 'Field Mapping', 'Place each form field on the template pages.'),
+        adminCard('workflow', 'WF', 'Workflow', 'Every generated PDF: bulk status changes, notes and history.'),
         adminCard('users', 'UM', 'User Management', 'Create accounts, set section access and reset passwords.'),
         adminCard('auto-reply', 'AR', 'Auto Reply Library', 'Add and edit the replies staff can copy.'),
         adminCard('qr-link', 'QL', 'QR Links', 'Every QR link staff have created.'),
