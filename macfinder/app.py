@@ -600,7 +600,24 @@ ONU_AUTH_ROW_RE = re.compile(
     r"<td>([^<]*)</td><td>([^<]*)</td><td>[^<]*</td><td>[^<]*</td>\s*<td>([^<]*)</td>",
     re.IGNORECASE,
 )
-MAX_PON_PROBE = 8  # safe upper bound: requesting a PON beyond an OLT's real port count just returns an empty table
+MAX_PON_PROBE = 16  # largest OLT in the fleet has 16 PONs; a PON beyond the real port count just returns an empty table
+PON_OPTION_RE = re.compile(r">\s*PON(\d+)\s*<", re.IGNORECASE)
+
+
+def _auth_params(prefix, pon):
+    """Query for one PON of the ONU auth table. Classic onu* pages pick the PON
+    with select=; gpononu* pages (.200, .213) ignore select and want
+    slotid=0&portid=<pon>, otherwise they return PON 1 whatever is asked."""
+    p = {"who": 100, "select": pon, "authmode": 0}
+    if prefix == "gpononu":
+        p.update({"slotid": 0, "portid": pon})
+    return p
+
+
+def _pon_count(text):
+    """PONs this OLT really has, from the page's own PON1..PONn selector."""
+    found = [int(n) for n in PON_OPTION_RE.findall(text)]
+    return min(max(found), MAX_PON_PROBE) if found else MAX_PON_PROBE
 
 
 def _sn_suffix(s):
@@ -621,7 +638,7 @@ def find_onu_by_serial(sess, host, target_sn):
         try:
             probe = sess.get(
                 f"https://{host}/action/{prefix}authinfo.html",
-                params={"who": 100, "select": 1, "authmode": 0},
+                params=_auth_params(prefix, 1),
                 timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
             )
         except requests.exceptions.RequestException:
@@ -629,20 +646,22 @@ def find_onu_by_serial(sess, host, target_sn):
         if "ONU ID" not in probe.text:
             continue  # wrong firmware prefix for this OLT
 
-        for pon in range(1, MAX_PON_PROBE + 1):
+        for pon in range(1, _pon_count(probe.text) + 1):
             if pon == 1:
                 text = probe.text
             else:
                 try:
                     r = sess.get(
                         f"https://{host}/action/{prefix}authinfo.html",
-                        params={"who": 100, "select": pon, "authmode": 0},
+                        params=_auth_params(prefix, pon),
                         timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
                     )
                 except requests.exceptions.RequestException:
                     continue
                 text = r.text
             for row_pon, row_onu, _status, description, model, serial in ONU_AUTH_ROW_RE.findall(text):
+                if row_pon != str(pon):
+                    continue  # page ignored the PON we asked for; don't count another PON's rows
                 if _sn_suffix(serial) == target_sn:
                     return row_pon, row_onu, description.strip(), model.strip()
         return None  # right firmware, scanned every PON, genuinely not here
@@ -656,7 +675,7 @@ def fetch_onu_status(sess, ip, prefix, pon, onu):
     try:
         r = sess.get(
             f"https://{ip}/action/{prefix}authinfo.html",
-            params={"who": 100, "select": pon, "authmode": 0},
+            params=_auth_params(prefix, pon),
             timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
         )
     except requests.exceptions.RequestException:
