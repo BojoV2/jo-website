@@ -1351,11 +1351,12 @@ def api_history(raw_mac):
 
 @app.route("/api/refresh-fleet", methods=["POST"])
 def api_refresh_fleet():
-    """Re-pulls the authoritative OLT list from oltmon.olt_meta via .186 (only
-    host allowed to reach .204:3306). Uses a dedicated SSH key whose
-    authorized_keys entry on .186 pins it to the one read-only olt_meta query
-    (forced command) — no passwords live in this app. The key and a pinned
-    known_hosts sit in config/ (gitignored)."""
+    """Re-pulls the authoritative OLT list from oltmon.olt_meta on .204 (the
+    EMS-OLT server). .204:3306 is closed to the LAN since the 2026-10-08
+    hardening, so this SSHes to .204 itself with a dedicated key whose
+    authorized_keys entry there (from="10.86.0.173", restrict) pins it to one
+    forced command that prints the olt_meta list — no passwords live in this
+    app. The key and a pinned known_hosts sit in config/ (gitignored)."""
     if not os.path.exists(REFRESH_KEY_PATH):
         return jsonify({"error": "fleet refresh key missing (config/refresh_key)"}), 500
     try:
@@ -1367,12 +1368,12 @@ def api_refresh_fleet():
                 "-o", "StrictHostKeyChecking=yes",
                 "-o", f"UserKnownHostsFile={REFRESH_KNOWN_HOSTS}",
                 "-o", "ConnectTimeout=8",
-                "imperial999@10.86.0.186",
+                "openbpm@10.86.0.204",
             ],
             capture_output=True, text=True, timeout=30,
         )
     except subprocess.TimeoutExpired:
-        return jsonify({"error": "SSH to vmwarenms (.186) timed out"}), 504
+        return jsonify({"error": "SSH to the EMS-OLT server (.204) timed out"}), 504
 
     if proc.returncode != 0:
         return jsonify({"error": proc.stderr.strip() or "refresh failed"}), 500
