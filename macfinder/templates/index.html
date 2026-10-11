@@ -289,6 +289,7 @@ async function runSearch() {
         div.innerHTML = `
           <div class="olt-name">${h.label || h.location || h.ip} <span class="${statusClass}">${online ? '· ' + online : ''}</span></div>
           <div class="olt-ip">${h.ip}${h.location ? ' · ' + h.location : ''} — PON ${h.pon ?? '—'} / ONU ${h.onu ?? '—'} / VLAN ${h.vlan ?? '—'}</div>
+          ${h.snmp_note ? `<div class="olt-ip" style="color:var(--warn)">${h.snmp_note}</div>` : ''}
 
           <div class="section">
             <div class="section-title">Optical Status</div>

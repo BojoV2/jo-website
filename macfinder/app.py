@@ -21,7 +21,7 @@ import requests
 import urllib3
 from pysnmp.hlapi.v3arch.asyncio import (
     SnmpEngine, CommunityData, UdpTransportTarget, ContextData,
-    ObjectType, ObjectIdentity, get_cmd,
+    ObjectType, ObjectIdentity, get_cmd, bulk_cmd,
 )
 from flask import Flask, jsonify, render_template, request
 from librouteros.query import Key
@@ -421,9 +421,9 @@ PON_OCTETS_OID = "1.3.6.1.4.1.37950.1.1.5.10.1.2.2.1.3"
 SNMP_SAMPLE_GAP_S = 2.5
 
 
-async def _snmp_get_int(ip, community, port, oid):
+async def _snmp_get_int(ip, community, port, oid, timeout=3):
     engine = SnmpEngine()
-    transport = await UdpTransportTarget.create((ip, port), timeout=3, retries=0)
+    transport = await UdpTransportTarget.create((ip, port), timeout=timeout, retries=0)
     auth = CommunityData(community, mpModel=1)
     errorIndication, errorStatus, _errorIndex, varBinds = await get_cmd(
         engine, auth, transport, ContextData(), ObjectType(ObjectIdentity(oid)),
@@ -436,6 +436,111 @@ async def _snmp_get_int(ip, community, port, oid):
         except (TypeError, ValueError):
             return None
     return None
+
+
+# GPON ONU registration table in the same vendor MIB. Index is <pon>.<onu> on
+# some firmware and <slot>.<pon>.<onu> on others; the last two parts are always
+# pon and onu. Column 5 = registered serial, 6 = model; optics table col 7 = Rx.
+GPON_SN_OID = "1.3.6.1.4.1.37950.1.1.6.1.1.2.1.5"
+GPON_MODEL_OID = "1.3.6.1.4.1.37950.1.1.6.1.1.2.1.6"
+GPON_RX_OID = "1.3.6.1.4.1.37950.1.1.6.1.1.3.1.7"
+SNMP_WALK_MAX_ROWS = 4096
+SNMP_END_TYPES = ("EndOfMibView", "NoSuchObject", "NoSuchInstance")
+
+
+async def _snmp_walk_serials(ip, community, port):
+    """Read-only GETBULK walk of the serial column (20 rows per request).
+    Returns [(index, pon, onu, serial)], or None if the OLT gave no answer."""
+    engine = SnmpEngine()
+    transport = await UdpTransportTarget.create((ip, port), timeout=3, retries=1)
+    auth = CommunityData(community, mpModel=1)
+    prefix = GPON_SN_OID + "."
+    rows, oid = [], GPON_SN_OID
+    while len(rows) < SNMP_WALK_MAX_ROWS:
+        errorIndication, errorStatus, _errorIndex, varBinds = await bulk_cmd(
+            engine, auth, transport, ContextData(), 0, 20, ObjectType(ObjectIdentity(oid)),
+        )
+        if errorIndication or errorStatus:
+            return rows or None
+        flat = [vb for row in varBinds for vb in (row if isinstance(row, (list, tuple)) and not hasattr(row, "prettyPrint") else [row])]
+        if not flat:
+            break
+        for name, val in flat:
+            name = str(name)
+            if not name.startswith(prefix) or type(val).__name__ in SNMP_END_TYPES:
+                return rows
+            index = name[len(prefix):]
+            parts = index.split(".")
+            rows.append((index, parts[-2], parts[-1], str(val)))
+            oid = name
+    return rows
+
+
+async def _snmp_get_strs(ip, community, port, oids):
+    engine = SnmpEngine()
+    transport = await UdpTransportTarget.create((ip, port), timeout=3, retries=1)
+    errorIndication, errorStatus, _errorIndex, varBinds = await get_cmd(
+        engine, CommunityData(community, mpModel=1), transport, ContextData(),
+        *[ObjectType(ObjectIdentity(o)) for o in oids],
+    )
+    if errorIndication or errorStatus:
+        return [None] * len(oids)
+    return [None if type(v).__name__ in SNMP_END_TYPES else (str(v).strip() or None) for _n, v in varBinds]
+
+
+def search_serial_via_snmp(ip, target_sn):
+    """Serial lookup from the OLT's SNMP registration table, for OLTs whose web
+    UI MAC Finder cannot reach. None = no SNMP answer either."""
+    try:
+        cfg = load_json(SNMP_PATH)
+    except (OSError, json.JSONDecodeError):
+        return None
+    community, port = cfg.get("community", "public"), cfg.get("port", 161)
+    # one quick GET first, so a dead OLT costs ~1.5 s instead of a full walk's timeouts
+    if asyncio.run(_snmp_get_int(ip, community, port, "1.3.6.1.2.1.1.3.0", timeout=1.5)) is None:
+        return None
+    rows = asyncio.run(_snmp_walk_serials(ip, community, port))
+    if not rows:
+        return None
+    target = _sn_suffix(target_sn)
+    for index, pon, onu, serial in rows:
+        if _sn_suffix(serial) == target:
+            model, rx = asyncio.run(_snmp_get_strs(ip, community, port, [f"{GPON_MODEL_OID}.{index}", f"{GPON_RX_OID}.{index}"]))
+            m = re.search(r"(-?\d+(?:\.\d+)?)\s*dBm", rx or "")
+            return {"found": True, "count": len(rows), "pon": pon, "onu": onu, "serial": serial,
+                    "model": model, "rx": m.group(1) if m else rx}
+    return {"found": False, "count": len(rows)}
+
+
+def _apply_snmp_serial_fallback(result, ip, target_sn):
+    """Web UI unreachable: answer from SNMP instead, and say so in the result."""
+    try:
+        snmp = search_serial_via_snmp(ip, target_sn)
+    except Exception:  # noqa: BLE001 — fallback only; keep the original "unreachable"
+        return
+    if snmp is None:
+        return
+    why = result.get("detail") or "unreachable"
+    if not snmp["found"]:
+        result["status"] = "not_found"
+        result["detail"] = f"web UI {why}; checked {snmp['count']} ONUs via SNMP"
+        return
+    pon, onu = snmp["pon"], snmp["onu"]
+    result.update({
+        "status": "found",
+        "source": "snmp",
+        "pon": pon,
+        "onu": onu,
+        "auth_model": snmp["model"],
+        "auth_serial": snmp["serial"],
+        "rx_power_dbm": snmp["rx"],
+        "detail": f"found via SNMP (web UI {why})",
+        "snmp_note": "Found via SNMP — this OLT's web UI is unreachable from MAC Finder, so status, WAN and config are not shown.",
+        "running_config": (
+            f"gpon-onu {pon}:{onu}  (found via SNMP — OLT web UI unreachable from MAC Finder)\n"
+            f"  serial {snmp['serial']}  model {snmp['model'] or '—'}  Rx {snmp['rx'] or '—'} dBm"
+        ),
+    })
 
 
 def fetch_pon_traffic(ip, pon):
@@ -1164,6 +1269,8 @@ def search_olt_by_sn(olt, target_sn, creds_cfg):
     except Exception as e:  # noqa: BLE001
         result["status"] = "error"
         result["detail"] = str(e)
+    if result["status"] == "unreachable":
+        _apply_snmp_serial_fallback(result, ip, target_sn)
     return result
 
 
